@@ -103,6 +103,7 @@
   "file": {
     "modal": {
       "title": "文件管理于 \"{{name}}\"",
+      "description": "管理和查看数据源中的文件",
       "uploadFile": "上传文件",
       "table": {
         "fileName": "文件名",
@@ -190,6 +191,18 @@
     "default": "默认",
     "knowledge_base": "知识库",
     "sql_table_from_file": "格式化数据表",
-    "hybrid": "混合"
+    "hybrid": "混合数据源"
+  },
+  "hybridDataSourceDescription": "混合数据源支持多种文件类型：CSV/Excel文件将进行SQL处理，TXT/PDF/Word文件将进行RAG处理",
+  "hybridDataSourceHelp": "适用于需要同时处理结构化数据（表格）和非结构化数据（文档）的场景",
+  "deleteConfirmation": {
+    "title": "确认删除",
+    "datasourceTitle": "删除数据源",
+    "fileTitle": "删除文件", 
+    "datasourceMessage": "您确定要删除数据源 \"{{name}}\" 吗？此操作将删除数据源及其所有关联文件和处理过的数据，且不可恢复。",
+    "fileMessage": "您确定要删除文件 \"{{name}}\" 吗？此操作将删除文件及其所有处理过的数据，且不可恢复。",
+    "warning": "此操作不可撤销，请谨慎操作！",
+    "cancel": "取消",
+    "confirm": "确认删除"
   }
 } 

@@ -71,6 +71,9 @@ async def process_uploaded_file(
     """
     Background task to process uploaded files.
     - If data source type is SQL_TABLE_FROM_FILE and file is CSV/XLSX, parse and store in a new table.
+    - If data source type is HYBRID:
+      - CSV/XLSX files -> SQL table processing
+      - TXT/PDF/DOCX files -> RAG processing (knowledge base)
     - Other cases (e.g., knowledge base files) currently simulate processing and update status.
     """
     logger.info(f"[FileProcessor] Starting processing for file ID: {file_id}, DS_ID: {datasource_id}, Name: {original_filename}")
@@ -88,8 +91,11 @@ async def process_uploaded_file(
         await update_file_processing_status(file_id, status=ProcessingStatus.PROCESSING.value)
         logger.info(f"[FileProcessor] File ID: {file_id} - Status set to PROCESSING. Datasource type: {ds_type}")
 
-        if ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value and file_type.lower() in [FileType.CSV.value, FileType.XLSX.value]:
-            logger.info(f"[FileProcessor] Processing '{file_type}' file '{original_filename}' for SQL table ingestion.")
+        # Handle SQL table processing for SQL_TABLE_FROM_FILE and HYBRID data sources
+        if ((ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value) or 
+            (ds_type == DataSourceType.HYBRID.value)) and file_type.lower() in [FileType.CSV.value, FileType.XLSX.value]:
+            
+            logger.info(f"[FileProcessor] Processing '{file_type}' file '{original_filename}' for SQL table ingestion (DS type: {ds_type}).")
             
             if not file_path.exists():
                 logger.error(f"[FileProcessor] File not found at path: {file_path}. Cannot ingest.")
@@ -127,57 +133,20 @@ async def process_uploaded_file(
             await update_file_processing_status(file_id, status=ProcessingStatus.COMPLETED.value, chunks=len(df))
             logger.info(f"[FileProcessor] File ID: {file_id} - SQL table ingestion COMPLETED. Rows: {len(df)}")
 
-        else:
-            # Handle knowledge_base files or other types that need text processing for RAG
-            logger.info(f"[FileProcessor] File ID: {file_id} - Processing for knowledge base/RAG. File type: {file_type}")
+        # Handle RAG processing for KNOWLEDGE_BASE and HYBRID data sources
+        elif ((ds_type == DataSourceType.KNOWLEDGE_BASE.value) or 
+              (ds_type == DataSourceType.HYBRID.value and file_type.lower() in [FileType.TXT.value, FileType.TEXT.value, FileType.PDF.value, FileType.DOCX.value])):
             
-            if ds_type == DataSourceType.KNOWLEDGE_BASE.value:
-                try:
-                    # For knowledge base files, we'll do a basic processing simulation
-                    # In a real implementation, this would extract text, chunk it, and create embeddings
-                    
-                    if not file_path.exists():
-                        logger.error(f"[FileProcessor] File not found at path: {file_path}")
-                        raise FileNotFoundError(f"Source file {original_filename} not found at {file_path}")
-                    
-                    # Get file size for processing estimation
-                    file_size = file_path.stat().st_size
-                    
-                    # Simulate text extraction and chunking
-                    # In a real implementation, this would call text extraction functions
-                    # based on file type (PDF, DOCX, TXT, etc.)
-                    
-                    if file_type.lower() in [FileType.TXT.value, FileType.TEXT.value]:
-                        # For text files, we can easily process them
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            text_content = f.read()
-                        estimated_chunks = max(1, len(text_content) // 1000)  # Rough estimate
-                        
-                    elif file_type.lower() == FileType.PDF.value:
-                        # For PDF files, estimate chunks based on file size
-                        estimated_chunks = max(1, file_size // 5000)  # Rough estimate
-                        
-                    elif file_type.lower() == FileType.DOCX.value:
-                        # For DOCX files, estimate chunks based on file size
-                        estimated_chunks = max(1, file_size // 3000)  # Rough estimate
-                        
-                    elif file_type.lower() in [FileType.CSV.value, FileType.XLSX.value]:
-                        # For CSV/XLSX in knowledge base, treat as structured text
-                        estimated_chunks = max(1, file_size // 2000)  # Rough estimate
-                        
-                    else:
-                        estimated_chunks = 1  # Unknown file type, minimal processing
-                    
-                    # Simulate processing time proportional to estimated chunks
-                    processing_time = min(10, max(2, estimated_chunks * 0.5))  # 2-10 seconds
-                    await asyncio.sleep(processing_time)
-                    
-                    await update_file_processing_status(file_id, status=ProcessingStatus.COMPLETED.value, chunks=estimated_chunks)
-                    logger.info(f"[FileProcessor] File ID: {file_id} - Knowledge base processing COMPLETED. Estimated chunks: {estimated_chunks}")
-                    
-                except Exception as e:
-                    logger.error(f"[FileProcessor] Error in knowledge base processing for file ID: {file_id}. Error: {str(e)}")
-                    raise
+            logger.info(f"[FileProcessor] Processing '{file_type}' file '{original_filename}' for RAG/knowledge base (DS type: {ds_type}).")
+            await _process_for_rag(file_id, file_path, original_filename, file_type)
+
+        else:
+            # For other data source types or unsupported file types in HYBRID mode
+            if ds_type == DataSourceType.HYBRID.value:
+                logger.warning(f"[FileProcessor] File ID: {file_id} - Unsupported file type '{file_type}' for HYBRID data source. Expected CSV/XLSX for SQL or TXT/PDF/DOCX for RAG.")
+                await update_file_processing_status(file_id, status=ProcessingStatus.FAILED.value, 
+                                                  error_message=f"Unsupported file type '{file_type}' for hybrid data source. Use CSV/XLSX for SQL processing or TXT/PDF/DOCX for RAG processing.")
+                return
             else:
                 # For other data source types, use placeholder processing
                 logger.info(f"[FileProcessor] File ID: {file_id} - Using placeholder processing for DS type: {ds_type}")
@@ -194,9 +163,120 @@ async def process_uploaded_file(
             conn.close()
         logger.info(f"[FileProcessor] Finished processing attempt for file ID: {file_id}, Name: {original_filename}")
 
-# More file processing helper functions can be added here, for example:
-# async def parse_pdf(file_path: Path) -> str: ...
-# async def parse_docx(file_path: Path) -> str: ...
-# async def chunk_text(text: str) -> List[str]: ...
+async def _process_for_rag(file_id: int, file_path: Path, original_filename: str, file_type: str):
+    """
+    Process files for RAG (Retrieval-Augmented Generation) pipeline.
+    This function handles text extraction, chunking, and embedding creation for knowledge base.
+    """
+    try:
+        logger.info(f"[RAG Processor] Starting RAG processing for file ID: {file_id}, type: {file_type}")
+        
+        if not file_path.exists():
+            logger.error(f"[RAG Processor] File not found at path: {file_path}")
+            raise FileNotFoundError(f"Source file {original_filename} not found at {file_path}")
+        
+        # Get file size for processing estimation
+        file_size = file_path.stat().st_size
+        
+        # Extract text based on file type
+        extracted_text = ""
+        
+        if file_type.lower() in [FileType.TXT.value, FileType.TEXT.value]:
+            # Process text files
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                extracted_text = f.read()
+            logger.info(f"[RAG Processor] Extracted {len(extracted_text)} characters from TXT file")
+            
+        elif file_type.lower() == FileType.PDF.value:
+            # For PDF files - in a real implementation, you would use libraries like PyPDF2, pdfplumber, or pymupdf
+            # For now, we'll simulate text extraction
+            extracted_text = f"[Simulated PDF content extraction from {original_filename}]\n" * (file_size // 1000)
+            logger.info(f"[RAG Processor] Simulated PDF text extraction: {len(extracted_text)} characters")
+            
+        elif file_type.lower() == FileType.DOCX.value:
+            # For DOCX files - in a real implementation, you would use python-docx library
+            # For now, we'll simulate text extraction
+            extracted_text = f"[Simulated DOCX content extraction from {original_filename}]\n" * (file_size // 500)
+            logger.info(f"[RAG Processor] Simulated DOCX text extraction: {len(extracted_text)} characters")
+            
+        else:
+            raise ValueError(f"Unsupported file type for RAG processing: {file_type}")
+        
+        # Chunk the text for RAG processing
+        chunks = _chunk_text_for_rag(extracted_text, chunk_size=1000, overlap=200)
+        logger.info(f"[RAG Processor] Created {len(chunks)} text chunks")
+        
+        # Simulate embedding creation and storage
+        # In a real implementation, this would:
+        # 1. Generate embeddings using a model like sentence-transformers
+        # 2. Store chunks and embeddings in a vector database (e.g., Chroma, Pinecone, FAISS)
+        # 3. Create metadata for retrieval
+        
+        processing_time = min(15, max(3, len(chunks) * 0.1))  # Simulate processing time
+        await asyncio.sleep(processing_time)
+        
+        # Update processing status
+        await update_file_processing_status(file_id, status=ProcessingStatus.COMPLETED.value, chunks=len(chunks))
+        logger.info(f"[RAG Processor] RAG processing COMPLETED for file ID: {file_id}. Chunks: {len(chunks)}")
+        
+    except Exception as e:
+        logger.error(f"[RAG Processor] Error in RAG processing for file ID: {file_id}. Error: {str(e)}")
+        await update_file_processing_status(file_id, status=ProcessingStatus.FAILED.value, error_message=str(e))
+        raise
+
+def _chunk_text_for_rag(text: str, chunk_size: int = 1000, overlap: int = 200) -> list:
+    """
+    Split text into overlapping chunks for RAG processing.
+    
+    Args:
+        text: Input text to chunk
+        chunk_size: Target size of each chunk in characters
+        overlap: Number of characters to overlap between chunks
+    
+    Returns:
+        List of text chunks
+    """
+    if not text or len(text) <= chunk_size:
+        return [text] if text else []
+    
+    chunks = []
+    start = 0
+    
+    while start < len(text):
+        end = start + chunk_size
+        
+        # Try to break at sentence boundaries
+        if end < len(text):
+            # Look for sentence endings near the chunk boundary
+            for i in range(end, max(start + chunk_size // 2, end - 100), -1):
+                if text[i] in '.!?':
+                    end = i + 1
+                    break
+        
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        
+        # Move start position with overlap
+        start = end - overlap if end < len(text) else len(text)
+    
+    return chunks
+
+# Additional helper functions for real implementations:
+# async def extract_pdf_text(file_path: Path) -> str:
+#     """Extract text from PDF using PyPDF2 or similar library"""
+#     pass
+# 
+# async def extract_docx_text(file_path: Path) -> str:
+#     """Extract text from DOCX using python-docx library"""
+#     pass
+# 
+# async def create_embeddings(chunks: List[str]) -> List[List[float]]:
+#     """Create embeddings for text chunks using sentence-transformers or similar"""
+#     pass
+# 
+# async def store_in_vector_db(chunks: List[str], embeddings: List[List[float]], metadata: dict):
+#     """Store chunks and embeddings in vector database"""
+#     pass
 # async def generate_embeddings(chunks: List[str]) -> List[List[float]]: ...
 # async def store_vector_chunks(file_id: int, chunks: List[str], embeddings: List[List[float]]): ... 

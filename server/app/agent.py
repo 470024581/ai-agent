@@ -295,6 +295,90 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
             "error": str(e)
         }
 
+async def get_answer_from_hybrid_datasource(query: str, active_datasource: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handles queries for hybrid data sources.
+    Analyzes the query and available files to determine whether to use SQL or RAG processing.
+    
+    Decision logic:
+    1. If the datasource has SQL tables (db_table_name) and query seems structured -> SQL
+    2. If query seems document-related or no SQL tables available -> RAG
+    3. Can potentially combine both approaches for complex queries
+    """
+    logger.info(f"Processing hybrid query for datasource: {active_datasource['name']} (ID: {active_datasource['id']})")
+    
+    datasource_id = active_datasource['id']
+    ds_name = active_datasource['name']
+    
+    try:
+        # Get available files and their types
+        db_files = await get_files_by_datasource(datasource_id)
+        completed_files = [f for f in db_files if f['processing_status'] == 'completed']
+        
+        # Categorize files by processing type
+        sql_files = [f for f in completed_files if f['file_type'].lower() in ['csv', 'xlsx']]
+        rag_files = [f for f in completed_files if f['file_type'].lower() in ['txt', 'pdf', 'docx']]
+        
+        logger.info(f"Hybrid datasource analysis - SQL files: {len(sql_files)}, RAG files: {len(rag_files)}")
+        
+        # Determine query routing strategy
+        query_lower = query.lower()
+        
+        # Keywords that suggest SQL operations
+        sql_keywords = ['sum', 'count', 'average', 'total', 'sales', 'revenue', 'amount', 'quantity', 
+                       'statistics', 'report', 'calculate', 'how many', 'how much', 'trend', 'analysis']
+        
+        # Keywords that suggest document/RAG operations  
+        rag_keywords = ['what is', 'explain', 'describe', 'definition', 'meaning', 'content', 
+                       'document', 'text', 'information about', 'tell me about', 'summary of']
+        
+        has_sql_indicators = any(keyword in query_lower for keyword in sql_keywords)
+        has_rag_indicators = any(keyword in query_lower for keyword in rag_keywords)
+        
+        # Decision logic
+        if sql_files and active_datasource.get("db_table_name") and (has_sql_indicators or not has_rag_indicators):
+            # Route to SQL if we have SQL data and query seems numerical/analytical
+            logger.info(f"Routing hybrid query to SQL processing for datasource: {ds_name}")
+            return await get_answer_from_sqltable_datasource(query, active_datasource)
+            
+        elif rag_files and (has_rag_indicators or not has_sql_indicators):
+            # Route to RAG if we have documents and query seems informational
+            logger.info(f"Routing hybrid query to RAG processing for datasource: {ds_name}")
+            return await perform_rag_query(query, active_datasource)
+            
+        elif sql_files and active_datasource.get("db_table_name"):
+            # Default to SQL if available
+            logger.info(f"Defaulting hybrid query to SQL processing for datasource: {ds_name}")
+            return await get_answer_from_sqltable_datasource(query, active_datasource)
+            
+        elif rag_files:
+            # Default to RAG if SQL not available
+            logger.info(f"Defaulting hybrid query to RAG processing for datasource: {ds_name}")
+            return await perform_rag_query(query, active_datasource)
+            
+        else:
+            # No processed files available
+            return {
+                "query": query, "query_type": "hybrid", "success": True,
+                "answer": f"Hybrid data source '{ds_name}' doesn't have any processed files available. Please upload CSV/Excel files for SQL queries or TXT/PDF/Word files for document queries.",
+                "data": {
+                    "source_datasource_id": datasource_id,
+                    "source_datasource_name": ds_name,
+                    "available_sql_files": len(sql_files),
+                    "available_rag_files": len(rag_files),
+                    "routing_decision": "no_files_available"
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in hybrid datasource processing: {e}", exc_info=True)
+        return {
+            "query": query, "query_type": "hybrid", "success": False,
+            "answer": f"Error processing hybrid query for data source '{ds_name}': {str(e)}",
+            "data": {"source_datasource_name": ds_name},
+            "error": str(e)
+        }
+
 async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dict[str, Any]) -> Dict[str, Any]:
     """
     Queries the dynamically created SQL table associated with the specified data source using LangChain SQL Agent.
@@ -409,7 +493,11 @@ async def get_answer_from(query: str, query_type: str = "sales", active_datasour
             }
         return await get_answer_from_sqltable_datasource(query, active_datasource)
     
-    elif ds_type != DataSourceType.DEFAULT.value: # Any other custom datasource type (knowledge_base, document_collection) uses RAG
+    elif ds_type == DataSourceType.HYBRID.value:
+        logger.info(f"Routing to Hybrid Agent for datasource: {ds_name}")
+        return await get_answer_from_hybrid_datasource(query, active_datasource)
+    
+    elif ds_type == DataSourceType.KNOWLEDGE_BASE.value: # Knowledge base uses RAG
         logger.info(f"Routing to RAG for datasource: {ds_name}")
         if not active_datasource: # Should not happen if ds_type is not DEFAULT, but good check
              return {"answer": "Error: Attempting to use RAG without specifying a custom data source."}

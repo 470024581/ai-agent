@@ -140,6 +140,7 @@
   "file": {
     "modal": {
       "title": "Manage Files for \"{{name}}\"",
+      "description": "Manage and view files in the data source",
       "uploadFile": "Upload File",
       "table": {
         "fileName": "File Name",
@@ -225,8 +226,20 @@
   "selectType": "Select Type",
   "dataSourceType": {
     "default": "Default",
-    "knowledge_base": "Knowledge Base",
+    "knowledge_base": "Knowledge Base", 
     "sql_table_from_file": "Formatted Data Table",
-    "hybrid": "Hybrid"
+    "hybrid": "Hybrid Data Source"
+  },
+  "hybridDataSourceDescription": "Hybrid data source supports multiple file types: CSV/Excel files will be processed via SQL, TXT/PDF/Word files will be processed via RAG",
+  "hybridDataSourceHelp": "Suitable for scenarios requiring both structured data (tables) and unstructured data (documents) processing",
+  "deleteConfirmation": {
+    "title": "Confirm Deletion",
+    "datasourceTitle": "Delete Data Source",
+    "fileTitle": "Delete File",
+    "datasourceMessage": "Are you sure you want to delete data source \"{{name}}\"? This operation will delete the data source and all its associated files and processed data, and cannot be undone.",
+    "fileMessage": "Are you sure you want to delete file \"{{name}}\"? This operation will delete the file and all its processed data, and cannot be undone.",
+    "warning": "This operation cannot be undone, please proceed with caution!",
+    "cancel": "Cancel",
+    "confirm": "Confirm Delete"
   }
 } 

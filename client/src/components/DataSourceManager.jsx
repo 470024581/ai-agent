@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FaDatabase, FaPlus, FaEdit, FaTrash, FaCheck, FaUpload, FaFile, FaExclamationTriangle, FaTimes } from 'react-icons/fa';
+import { FaDatabase, FaPlus, FaEdit, FaTrash, FaCheck, FaUpload, FaFile, FaExclamationTriangle, FaTimes, FaLightbulb } from 'react-icons/fa';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +28,8 @@ function DataSourceManager() {
   const [alert, setAlertMessage] = useState(null);
   const [pollingFileId, setPollingFileId] = useState(null);
   const [sampleFiles, setSampleFiles] = useState([]);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [newDatasource, setNewDatasource] = useState({
     name: '',
@@ -127,14 +129,17 @@ function DataSourceManager() {
     }
   };
 
-  const handleDeleteDatasource = async (id, name) => {
+  const handleDeleteDatasource = (id, name) => {
     dismissAlert();
-    if (!window.confirm(t('confirmDeleteDataSource', { name }))) {
-      return;
-    }
+    setDeleteTarget({ id, name, type: 'datasource' });
+    setShowDeleteModal(true);
+  };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    
     try {
-      const res = await fetch(`${API_BASE_URL}/datasources/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/datasources/${deleteTarget.id}`, {
         method: 'DELETE'
       });
       const response = await res.json();
@@ -147,6 +152,9 @@ function DataSourceManager() {
       }
     } catch (error) {
       setAlertMessage({ type: 'danger', message: t('networkErrorRetry') });
+    } finally {
+      setShowDeleteModal(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -314,37 +322,42 @@ function DataSourceManager() {
     };
   }, [pollingFileId, showFilesModal, selectedDatasource, files]);
 
-  const handleDeleteFile = async (datasourceId, fileId, fileName) => {
+  const handleDeleteFile = (datasourceId, fileId, fileName) => {
     dismissAlert();
-    if (!window.confirm(t('confirmDeleteFile', { fileName }))) {
-      return;
-    }
+    setDeleteTarget({ id: fileId, name: fileName, type: 'file', datasourceId });
+    setShowDeleteModal(true);
+  };
 
+  const confirmDeleteFile = async () => {
+    if (!deleteTarget || deleteTarget.type !== 'file') return;
+    
     try {
       setFilesLoading(true);
-      const res = await fetch(`${API_BASE_URL}/datasources/${datasourceId}/files/${fileId}`, {
+      const res = await fetch(`${API_BASE_URL}/datasources/${deleteTarget.datasourceId}/files/${deleteTarget.id}`, {
         method: 'DELETE'
       });
       const response = await res.json();
 
       if (response.success) {
         setAlertMessage({ type: 'success', message: response.message || t('file.deleteSuccess') });
-        if (selectedDatasource && selectedDatasource.id === datasourceId) {
+        if (selectedDatasource && selectedDatasource.id === deleteTarget.datasourceId) {
           await handleShowFiles(selectedDatasource);
         }
         await loadDatasources();
       } else {
         setAlertMessage({ type: 'danger', message: response.error || t('deletingFileFailed') });
-        if (selectedDatasource && selectedDatasource.id === datasourceId) {
+        if (selectedDatasource && selectedDatasource.id === deleteTarget.datasourceId) {
             await handleShowFiles(selectedDatasource);
         }
       }
     } catch (error) {
       setAlertMessage({ type: 'danger', message: t('networkErrorRetry') });
     } finally {
-      if (!(selectedDatasource && selectedDatasource.id === datasourceId)) {
+      if (!(selectedDatasource && selectedDatasource.id === deleteTarget.datasourceId)) {
           setFilesLoading(false);
       }
+      setShowDeleteModal(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -376,6 +389,8 @@ function DataSourceManager() {
         return t('knowledgeBaseDocsRAG');
       case 'sql_table_from_file':
         return t('formattedDataTableSQL');
+      case 'hybrid':
+        return t('dataSourceType.hybrid');
       default:
         return t('unknownType');
     }
@@ -541,12 +556,15 @@ function DataSourceManager() {
       )}
 
       <Dialog open={showCreateModal} onOpenChange={(open) => { if (!open) { setShowCreateModal(false); dismissAlert(); } }}>
-        <DialogContent className="sm:max-w-[500px] bg-gradient-to-br from-purple-50 to-pink-50">
-          <DialogHeader className="border-b border-purple-100 pb-4">
-            <DialogTitle className="text-xl font-bold flex items-center text-purple-600">
-              <FaPlus className="mr-2 h-5 w-5" />
+        <DialogContent className="sm:max-w-[600px] bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50">
+          <DialogHeader className="border-b border-purple-200 pb-6">
+            <DialogTitle className="text-2xl font-bold flex items-center text-transparent bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text">
+              <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center mr-3">
+                <FaPlus className="h-4 w-4 text-white" />
+              </div>
               {t('createNewDataSource')}
             </DialogTitle>
+            <p className="text-gray-600 mt-2">创建一个新的数据源来管理您的数据文件</p>
           </DialogHeader>
           <div className="space-y-6 pt-4">
             {alert && showCreateModal && (
@@ -562,9 +580,13 @@ function DataSourceManager() {
                 </button>
               </Alert>
             )}
-            <form onSubmit={handleCreateDatasource} className="space-y-6">
-              <div className="space-y-3">
-                <Label htmlFor="datasourceName" className="text-base font-semibold text-purple-600">{t('dataSourceName')}</Label>
+            <form onSubmit={handleCreateDatasource} className="space-y-8">
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <FaDatabase className="h-4 w-4 text-purple-500" />
+                  <Label htmlFor="datasourceName" className="text-base font-semibold text-gray-700">{t('dataSourceName')}</Label>
+                  <span className="text-red-500">*</span>
+                </div>
                 <Input
                   id="datasourceName"
                   type="text"
@@ -572,44 +594,84 @@ function DataSourceManager() {
                   value={newDatasource.name}
                   onChange={(e) => setNewDatasource({ ...newDatasource, name: e.target.value })}
                   required
-                  className="border-purple-200 focus:border-purple-300 focus:ring-purple-300 rounded-lg"
+                  className="border-2 border-purple-200 focus:border-purple-400 focus:ring-purple-300 rounded-xl h-12 text-base transition-all duration-200"
                 />
               </div>
-              <div className="space-y-3">
-                <Label htmlFor="datasourceDescription" className="text-base font-semibold text-purple-600">{t('dataSourceDescriptionOptional')}</Label>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <FaEdit className="h-4 w-4 text-purple-500" />
+                  <Label htmlFor="datasourceDescription" className="text-base font-semibold text-gray-700">{t('dataSourceDescriptionOptional')}</Label>
+                </div>
                 <Textarea
                   id="datasourceDescription"
                   rows={3}
                   placeholder={t('enterDataSourceDescription')}
                   value={newDatasource.description}
                   onChange={(e) => setNewDatasource({ ...newDatasource, description: e.target.value })}
-                  className="border-purple-200 focus:border-purple-300 focus:ring-purple-300 rounded-lg"
+                  className="border-2 border-purple-200 focus:border-purple-400 focus:ring-purple-300 rounded-xl text-base transition-all duration-200"
                 />
               </div>
-              <div className="space-y-3">
-                <Label htmlFor="datasourceType" className="text-base font-semibold text-purple-800">{t('type')}</Label>
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2">
+                  <FaCheck className="h-4 w-4 text-purple-500" />
+                  <Label htmlFor="datasourceType" className="text-base font-semibold text-gray-700">{t('type')}</Label>
+                  <span className="text-red-500">*</span>
+                </div>
                 <Select value={newDatasource.type} onValueChange={(value) => setNewDatasource({ ...newDatasource, type: value })}>
-                  <SelectTrigger className="border-purple-300 focus:border-purple-500 focus:ring-purple-500 rounded-lg">
+                  <SelectTrigger className="border-2 border-purple-200 focus:border-purple-400 focus:ring-purple-300 rounded-xl h-12 text-base transition-all duration-200">
                     <SelectValue placeholder={t('selectType')} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="sql_table_from_file">{t('formattedDataTableSQL')}</SelectItem>
                     <SelectItem value="knowledge_base">{t('knowledgeBaseDocsRAG')}</SelectItem>
+                    <SelectItem value="hybrid">{t('dataSourceType.hybrid')}</SelectItem>
                   </SelectContent>
                 </Select>
+                
+                {/* Show description for hybrid data source */}
+                {newDatasource.type === 'hybrid' && (
+                  <div className="mt-4 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl shadow-sm">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <FaLightbulb className="h-4 w-4 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceHelp')}</h4>
+                        <p className="text-gray-600 mb-3 leading-relaxed">{t('hybridDataSourceDescription')}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-white p-3 rounded-lg border border-blue-100">
+                            <div className="flex items-center space-x-2 mb-1">
+                              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                              <span className="font-medium text-gray-700">SQL</span>
+                            </div>
+                            <p className="text-sm text-gray-600">CSV, XLSX</p>
+                          </div>
+                          <div className="bg-white p-3 rounded-lg border border-blue-100">
+                            <div className="flex items-center space-x-2 mb-1">
+                              <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                              <span className="font-medium text-gray-700">RAG</span>
+                            </div>
+                            <p className="text-sm text-gray-600">TXT, PDF, DOCX</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              <DialogFooter className="pt-4 border-t border-purple-200">
+              <DialogFooter className="pt-6 border-t border-purple-200 space-x-3">
                 <Button 
                   variant="outline" 
                   onClick={() => { setShowCreateModal(false); dismissAlert(); }}
-                  className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                  className="border-2 border-gray-300 text-gray-700 hover:bg-gray-50 px-6 py-2 rounded-xl transition-all duration-200"
                 >
                   {t('close')}
                 </Button>
                 <Button 
                   type="submit"
-                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-2 rounded-xl shadow-lg transition-all duration-200 transform hover:scale-105"
                 >
+                  <FaPlus className="mr-2 h-4 w-4" />
                   {t('createDataSource')}
                 </Button>
               </DialogFooter>
@@ -619,106 +681,188 @@ function DataSourceManager() {
       </Dialog>
 
       <Dialog open={showFilesModal} onOpenChange={(open) => { if (!open) { setShowFilesModal(false); setSelectedDatasource(null); dismissAlert(); } }}>
-        <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto bg-gradient-to-br from-orange-50 to-yellow-50">
-          <DialogHeader className="border-b border-orange-200 pb-4">
-            <DialogTitle className="text-xl font-bold flex items-center text-orange-800">
-              <FaFile className="mr-2 h-5 w-5" />
+        <DialogContent 
+          className="!max-w-none w-[50vw] h-[55vh] flex flex-col bg-gradient-to-br from-orange-50 to-yellow-50 p-0" 
+          style={{ width: '50vw', maxWidth: 'none' }}
+        >
+          <DialogHeader className="flex-shrink-0 border-b border-orange-200 pb-4 px-6 pt-6">
+            <DialogTitle className="text-xl font-bold flex items-center text-transparent bg-gradient-to-r from-orange-600 to-yellow-600 bg-clip-text">
+              <div className="w-6 h-6 bg-gradient-to-r from-orange-500 to-yellow-500 rounded-lg flex items-center justify-center mr-3">
+                <FaFile className="h-4 w-4 text-white" />
+              </div>
               {t('manageFilesFor')} {selectedDatasource ? `"${selectedDatasource.name}"` : ''}
+            </DialogTitle>
+            <p className="text-gray-600 mt-2 text-sm">{t('file.modal.description') || 'Manage and view files in the data source'}</p>
+          </DialogHeader>
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden px-6">
+            <div className="flex-shrink-0 pt-4">
+              {alert && showFilesModal && (
+                <Alert className={`${alert.type === 'danger' ? 'border-red-300 bg-red-50 text-red-800' : alert.type === 'success' ? 'border-green-300 bg-green-50 text-green-800' : alert.type === 'warning' ? 'border-yellow-300 bg-yellow-50 text-yellow-800' : 'border-blue-300 bg-blue-50 text-blue-800'} relative rounded-lg`}>
+                  <AlertDescription>
+                    {alert.message}
+                  </AlertDescription>
+                  <button
+                    onClick={dismissAlert}
+                    className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    <FaTimes className="h-4 w-4" />
+                  </button>
+                </Alert>
+              )}
+              {selectedDatasource && selectedDatasource.type !== 'default' && (
+                <div className="flex items-center justify-between py-3 border-b border-gray-200 mb-3">
+                  <p className="text-gray-600 text-sm">{t('file.modal.currentDS', { name: selectedDatasource?.name || t('unknown') })}</p>
+                  <div className="flex items-center space-x-2">
+                    <Button variant="outline" size="sm" className="relative h-8 text-sm px-4" disabled={uploadLoading || filesLoading}>
+                      <FaUpload className="mr-2 h-4 w-4" />
+                      {t('file.modal.chooseFileButton')}
+                      <input 
+                        id="fileUploadInput" 
+                        type="file" 
+                        onChange={(e) => {
+                          handleFileUpload(e);
+                        }}
+                        disabled={uploadLoading || filesLoading}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                    </Button>
+                    {uploadLoading && <Spinner className="h-4 w-4" />}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="flex-1 min-h-0 mt-2 overflow-hidden">
+              {filesLoading ? (
+                <div className="flex justify-center items-center py-8">
+                  <Spinner className="mr-2" />
+                  <p>{t('fetchingFiles')}</p>
+                </div>
+              ) : (
+                selectedDatasource && selectedDatasource.type !== 'default' ? (
+                  files.length > 0 ? (
+                    <div className="h-full overflow-y-auto border border-gray-200 rounded-lg bg-white">
+                      <Table>
+                        <TableHeader className="sticky top-0 bg-gray-50 z-10">
+                          <TableRow className="border-b border-gray-200">
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-1/3">{t('fileName')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-20 text-center">{t('fileType')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-24 text-center">{t('fileSize')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-32 text-center">{t('processingStatus')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-40 text-center">{t('uploadedAt')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-20 text-center">{t('actions')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {files.map(file => (
+                            <TableRow key={file.id} className="hover:bg-orange-50 border-b border-gray-100">
+                              <TableCell className="py-3 px-3 font-medium text-gray-900 text-sm truncate" title={file.original_filename}>
+                                {file.original_filename}
+                              </TableCell>
+                              <TableCell className="py-3 px-3 text-center">
+                                <Badge className="bg-blue-500 text-xs px-2 py-1">{file.file_type.toUpperCase()}</Badge>
+                              </TableCell>
+                              <TableCell className="py-3 px-3 text-gray-600 text-sm text-center">{formatFileSize(file.file_size)}</TableCell>
+                              <TableCell className="py-3 px-3 text-center">{getStatusBadge(file.processing_status)}</TableCell>
+                              <TableCell className="py-3 px-3 text-gray-600 text-xs text-center">{new Date(file.uploaded_at).toLocaleString()}</TableCell>
+                              <TableCell className="py-3 px-3 text-center">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={() => handleDeleteFile(selectedDatasource.id, file.id, file.original_filename)}
+                                  title={`${t('deleteFile')}: ${file.original_filename}`}
+                                  className="border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 h-8 w-8 p-0"
+                                >
+                                  <FaTrash className="h-3 w-3" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-32">
+                      <Alert className="max-w-md">
+                        <AlertDescription className="text-center">{t('noFilesToDisplay')}</AlertDescription>
+                      </Alert>
+                    </div>
+                  )
+                ) : (
+                  <div className="flex items-center justify-center h-32">
+                    <Alert className="max-w-md">
+                      <AlertDescription className="text-center">{t('defaultDSNoFileManagement')}</AlertDescription>
+                    </Alert>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+          <DialogFooter className="flex-shrink-0 pt-4 border-t border-orange-200 px-6 pb-6">
+            <Button 
+              variant="outline" 
+              onClick={() => { setShowFilesModal(false); setSelectedDatasource(null); dismissAlert(); }}
+              className="border-2 border-gray-300 text-gray-700 hover:bg-gray-50 px-6 py-2 text-sm rounded-lg transition-all duration-200"
+            >
+              {t('close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="sm:max-w-[500px] bg-gradient-to-br from-red-50 to-pink-50">
+          <DialogHeader className="border-b border-red-200 pb-6">
+            <DialogTitle className="text-xl font-bold flex items-center text-red-600">
+              <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-red-600 rounded-lg flex items-center justify-center mr-3">
+                <FaExclamationTriangle className="h-4 w-4 text-white" />
+              </div>
+              {deleteTarget?.type === 'datasource' ? t('deleteConfirmation.datasourceTitle') : t('deleteConfirmation.fileTitle')}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-6 pt-4">
-            {alert && showFilesModal && (
-              <Alert className={`${alert.type === 'danger' ? 'border-red-300 bg-red-50 text-red-800' : alert.type === 'success' ? 'border-green-300 bg-green-50 text-green-800' : alert.type === 'warning' ? 'border-yellow-300 bg-yellow-50 text-yellow-800' : 'border-blue-300 bg-blue-50 text-blue-800'} relative rounded-lg`}>
-                <AlertDescription>
-                  {alert.message}
-                </AlertDescription>
-                <button
-                  onClick={dismissAlert}
-                  className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 transition-colors"
-                >
-                  <FaTimes className="h-4 w-4" />
-                </button>
-              </Alert>
-            )}
-            <p>{t('file.modal.currentDS', { name: selectedDatasource?.name || t('unknown') })}</p>
-            {selectedDatasource && selectedDatasource.type !== 'default' && (
-              <div className="space-y-2">
-                <Label htmlFor="fileUploadInput">{t('file.modal.chooseFileButton')}</Label>
-                <div className="flex items-center space-x-2">
-                  <Button variant="outline" className="relative" disabled={uploadLoading || filesLoading}>
-                    <FaUpload className="mr-2 h-4 w-4" />
-                    {t('file.modal.chooseFileButton')}
-                    <input 
-                      id="fileUploadInput" 
-                      type="file" 
-                      onChange={(e) => {
-                        handleFileUpload(e);
-                      }}
-                      disabled={uploadLoading || filesLoading}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                  </Button>
-                  {uploadLoading && <Spinner className="h-4 w-4" />}
+            <div className="flex items-start space-x-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                  <FaExclamationTriangle className="h-6 w-6 text-red-500" />
                 </div>
               </div>
-            )}
-            
-            {filesLoading ? (
-              <div className="flex justify-center items-center py-8">
-                <Spinner className="mr-2" />
-                <p>{t('fetchingFiles')}</p>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                  {t('deleteConfirmation.title')}
+                </h3>
+                <p className="text-gray-600 leading-relaxed mb-4">
+                  {deleteTarget?.type === 'datasource' 
+                    ? t('deleteConfirmation.datasourceMessage', { name: deleteTarget?.name })
+                    : t('deleteConfirmation.fileMessage', { name: deleteTarget?.name })
+                  }
+                </p>
+                <div className="p-4 bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-200 rounded-xl">
+                  <div className="flex items-center">
+                    <FaExclamationTriangle className="h-5 w-5 text-yellow-600 mr-3" />
+                    <span className="text-sm text-yellow-800 font-medium">
+                      {t('deleteConfirmation.warning')}
+                    </span>
+                  </div>
+                </div>
               </div>
-            ) : (
-              selectedDatasource && selectedDatasource.type !== 'default' ? (
-                files.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('fileName')}</TableHead>
-                        <TableHead>{t('fileType')}</TableHead>
-                        <TableHead>{t('fileSize')}</TableHead>
-                        <TableHead>{t('processingStatus')}</TableHead>
-                        <TableHead>{t('uploadedAt')}</TableHead>
-                        <TableHead>{t('actions')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {files.map(file => (
-                        <TableRow key={file.id}>
-                          <TableCell>{file.original_filename}</TableCell>
-                          <TableCell><Badge className="bg-blue-500">{file.file_type.toUpperCase()}</Badge></TableCell>
-                          <TableCell>{formatFileSize(file.file_size)}</TableCell>
-                          <TableCell>{getStatusBadge(file.processing_status)}</TableCell>
-                          <TableCell>{new Date(file.uploaded_at).toLocaleString()}</TableCell>
-                          <TableCell>
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              onClick={() => handleDeleteFile(selectedDatasource.id, file.id, file.original_filename)}
-                              title={t('deleteFile')}
-                            >
-                              <FaTrash className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <Alert>
-                    <AlertDescription>{t('noFilesToDisplay')}</AlertDescription>
-                  </Alert>
-                )
-              ) : (
-                <Alert>
-                  <AlertDescription>{t('defaultDSNoFileManagement')}</AlertDescription>
-                </Alert>
-              )
-            )}
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowFilesModal(false); setSelectedDatasource(null); dismissAlert(); }}>
-              {t('close')}
+          <DialogFooter className="pt-6 border-t border-red-200 space-x-3">
+            <Button 
+              variant="outline" 
+              onClick={() => { setShowDeleteModal(false); setDeleteTarget(null); }}
+              className="border-2 border-gray-300 text-gray-700 hover:bg-gray-50 px-6 py-2 rounded-xl transition-all duration-200"
+            >
+              {t('deleteConfirmation.cancel')}
+            </Button>
+            <Button 
+              onClick={deleteTarget?.type === 'datasource' ? confirmDelete : confirmDeleteFile}
+              className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white px-8 py-2 rounded-xl shadow-lg transition-all duration-200 transform hover:scale-105"
+            >
+              <FaTrash className="mr-2 h-4 w-4" />
+              {t('deleteConfirmation.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

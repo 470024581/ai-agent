@@ -17,7 +17,7 @@ class DataSourceType(str, Enum):
     DEFAULT = "default"  # Default  data source (formatted, predefined tables)
     KNOWLEDGE_BASE = "knowledge_base"  # Knowledge base/document collection (unstructured RAG, local embeddings)
     SQL_TABLE_FROM_FILE = "sql_table_from_file"  # Data source for SQL tables created from files (formatted, dynamic tables)
-    HYBRID = "hybrid" # Added for backward compatibility
+    HYBRID = "hybrid"  # Hybrid data source: CSV/Excel -> SQL, TXT/PDF/Word -> RAG
 
 class FileType(str, Enum):
     PDF = "pdf"
