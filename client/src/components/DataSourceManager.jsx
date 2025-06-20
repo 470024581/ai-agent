@@ -411,7 +411,7 @@ function DataSourceManager() {
       </div>
 
       {alert && (
-        <Alert className={`${alert.type === 'danger' ? 'border-red-200 bg-red-25 text-red-600' : alert.type === 'success' ? 'border-green-200 bg-green-25 text-green-600' : alert.type === 'warning' ? 'border-yellow-200 bg-yellow-25 text-yellow-600' : 'border-blue-200 bg-blue-25 text-blue-600'} relative rounded-lg shadow-sm`}>
+        <Alert className={`${alert.type === 'danger' ? 'border-red-200 bg-red-50 text-red-600' : alert.type === 'success' ? 'border-green-200 bg-green-50 text-green-600' : alert.type === 'warning' ? 'border-yellow-200 bg-yellow-50 text-yellow-600' : 'border-blue-200 bg-blue-50 text-blue-600'} relative rounded-lg shadow-sm`}>
           <AlertDescription>
             {alert.message}
           </AlertDescription>
@@ -424,7 +424,7 @@ function DataSourceManager() {
         </Alert>
       )}
 
-      <Card className="shadow-xl border-0 bg-gradient-to-br from-purple-25 to-pink-25">
+      <Card className="shadow-xl border-0 bg-gradient-to-br from-purple-50 to-pink-50">
         <CardHeader className="bg-gradient-to-r from-purple-200 to-pink-200 text-gray-700 rounded-t-lg">
           <CardTitle className="flex items-center text-xl">
             <FaDatabase className="mr-3 h-7 w-7" />
@@ -446,7 +446,7 @@ function DataSourceManager() {
             </TableHeader>
             <TableBody>
               {datasources.length > 0 ? datasources.map(ds => (
-                <TableRow key={ds.id} className="hover:bg-purple-25 transition-colors">
+                <TableRow key={ds.id} className="hover:bg-purple-50 transition-colors">
                   <TableCell>
                     <div className="flex items-center space-x-2">
                       <span className="font-medium">{ds.name}</span>
@@ -474,7 +474,7 @@ function DataSourceManager() {
                           size="sm" 
                           onClick={() => handleActivateDatasource(ds.id)} 
                           title={t('activate')}
-                          className="border-green-200 text-green-500 hover:bg-green-25"
+                          className="border-green-200 text-green-500 hover:bg-green-50"
                         >
                           <FaCheck className="h-4 w-4" />
                         </Button>
@@ -484,7 +484,7 @@ function DataSourceManager() {
                         size="sm" 
                         onClick={() => handleShowFiles(ds)} 
                         title={t('manageFiles')}
-                        className="border-orange-200 text-orange-500 hover:bg-orange-25"
+                        className="border-orange-200 text-orange-500 hover:bg-orange-50"
                       >
                         <FaFile className="h-4 w-4" />
                       </Button>
@@ -494,7 +494,7 @@ function DataSourceManager() {
                           size="sm" 
                           onClick={() => handleDeleteDatasource(ds.id, ds.name)} 
                           title={t('delete')}
-                          className="border-red-200 text-red-500 hover:bg-red-25"
+                          className="border-red-200 text-red-500 hover:bg-red-50"
                         >
                           <FaTrash className="h-4 w-4" />
                         </Button>
@@ -514,7 +514,7 @@ function DataSourceManager() {
 
       {/* Sample Data Files Section */}
       {sampleFiles.length > 0 && (
-        <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-25 to-yellow-25">
+        <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-50 to-yellow-50">
           <CardHeader className="bg-gradient-to-r from-orange-200 to-yellow-200 text-gray-700 rounded-t-lg">
             <CardTitle className="flex items-center text-xl">
               <FaFile className="mr-3 h-7 w-7" />
@@ -528,7 +528,7 @@ function DataSourceManager() {
                 <Button 
                   key={file.filename}
                   variant="outline" 
-                  className="w-full border-orange-200 text-orange-500 hover:bg-orange-25 hover:border-orange-300 transition-all" 
+                  className="w-full border-orange-200 text-orange-500 hover:bg-orange-50 hover:border-orange-300 transition-all" 
                   onClick={() => handleDownloadSampleFile(file.filename)}
                 >
                   <FaFile className="mr-2 h-4 w-4" />
@@ -541,7 +541,7 @@ function DataSourceManager() {
       )}
 
       <Dialog open={showCreateModal} onOpenChange={(open) => { if (!open) { setShowCreateModal(false); dismissAlert(); } }}>
-        <DialogContent className="sm:max-w-[500px] bg-gradient-to-br from-purple-25 to-pink-25">
+        <DialogContent className="sm:max-w-[500px] bg-gradient-to-br from-purple-50 to-pink-50">
           <DialogHeader className="border-b border-purple-100 pb-4">
             <DialogTitle className="text-xl font-bold flex items-center text-purple-600">
               <FaPlus className="mr-2 h-5 w-5" />
@@ -550,7 +550,7 @@ function DataSourceManager() {
           </DialogHeader>
           <div className="space-y-6 pt-4">
             {alert && showCreateModal && (
-              <Alert className={`${alert.type === 'danger' ? 'border-red-200 bg-red-25 text-red-600' : alert.type === 'success' ? 'border-green-200 bg-green-25 text-green-600' : alert.type === 'warning' ? 'border-yellow-200 bg-yellow-25 text-yellow-600' : 'border-blue-200 bg-blue-25 text-blue-600'} relative rounded-lg`}>
+              <Alert className={`${alert.type === 'danger' ? 'border-red-200 bg-red-50 text-red-600' : alert.type === 'success' ? 'border-green-200 bg-green-50 text-green-600' : alert.type === 'warning' ? 'border-yellow-200 bg-yellow-50 text-yellow-600' : 'border-blue-200 bg-blue-50 text-blue-600'} relative rounded-lg`}>
                 <AlertDescription>
                   {alert.message}
                 </AlertDescription>

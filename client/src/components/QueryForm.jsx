@@ -272,7 +272,7 @@ function QueryForm() {
         </h2>
       </div>
 
-      <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-25 to-pink-25 dark:from-orange-950 dark:to-pink-950">
+      <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-50 to-pink-50 dark:from-orange-950 dark:to-pink-950">
         <CardHeader className="bg-gradient-to-r from-orange-200 to-pink-200 text-gray-700 rounded-t-lg">
           <CardTitle className="flex items-center text-xl">
             <FaBrain className="mr-3 h-7 w-7" />
@@ -283,7 +283,7 @@ function QueryForm() {
             </p>
         </CardHeader>
         <CardContent className="p-6 space-y-6">
-          <Alert className="border-yellow-200 bg-yellow-25 text-yellow-600 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+          <Alert className="border-yellow-200 bg-yellow-50 text-yellow-600 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
             <FaLightbulb className="h-5 w-5 text-yellow-400" />
             <AlertDescription className="ml-2">
               <strong>{t('queryPage.devModeInfo.title')}</strong>{' '}
@@ -366,7 +366,7 @@ function QueryForm() {
                   size="sm"
                   onClick={() => handleExampleClick(example)}
                   disabled={loading}
-                  className="text-left justify-start border-purple-200 hover:border-pink-300 hover:text-pink-500 hover:bg-pink-25 transition-all duration-200 rounded-lg h-auto py-3 text-sm"
+                  className="text-left justify-start border-purple-200 hover:border-pink-300 hover:text-pink-500 hover:bg-pink-50 transition-all duration-200 rounded-lg h-auto py-3 text-sm"
                 >
                   {example}
                 </Button>
@@ -375,7 +375,7 @@ function QueryForm() {
           </div>
 
           {error && (
-            <Alert className="border-red-200 bg-red-25 text-red-600 dark:border-red-800 dark:bg-red-950 dark:text-red-200 rounded-lg">
+            <Alert className="border-red-200 bg-red-50 text-red-600 dark:border-red-800 dark:bg-red-950 dark:text-red-200 rounded-lg">
               <AlertDescription className="font-medium">{error}</AlertDescription>
             </Alert>
           )}
@@ -383,7 +383,7 @@ function QueryForm() {
       </Card>
 
       {response && (
-        <Card className="shadow-xl border-0 bg-gradient-to-br from-emerald-25 to-teal-25 dark:from-emerald-950 dark:to-teal-950">
+        <Card className="shadow-xl border-0 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950">
           <CardHeader className="bg-gradient-to-r from-emerald-200 to-teal-200 text-gray-700 rounded-t-lg">
             <CardTitle className="flex items-center text-xl">
               <FaLightbulb className="mr-3 h-7 w-7" />
@@ -417,7 +417,7 @@ function QueryForm() {
                 </h6>
                 <ul className="space-y-3">
                   {response.suggestions.map((s, i) => (
-                    <li key={i} className="flex items-start bg-yellow-25 dark:bg-yellow-950 p-3 rounded-lg">
+                    <li key={i} className="flex items-start bg-yellow-50 dark:bg-yellow-950 p-3 rounded-lg">
                       <span className="inline-block w-2 h-2 bg-yellow-300 rounded-full mt-2 mr-3 flex-shrink-0"></span>
                       <span className="text-gray-700 dark:text-gray-300">{s}</span>
                     </li>
@@ -439,7 +439,7 @@ function QueryForm() {
           </CardHeader>
           <CardContent className="p-6 space-y-4">
             {queryHistory.slice().reverse().map((item, index) => (
-              <Card key={index} className={`transition-all duration-200 hover:shadow-lg transform hover:scale-[1.02] ${item.type === 'mock' ? 'border-l-4 border-l-yellow-300 bg-gradient-to-r from-yellow-25 to-orange-25 dark:from-yellow-950 dark:to-orange-950' : 'border-l-4 border-l-purple-300 bg-gradient-to-r from-purple-25 to-pink-25 dark:from-purple-950 dark:to-pink-950'}`}>
+              <Card key={index} className={`transition-all duration-200 hover:shadow-lg transform hover:scale-[1.02] ${item.type === 'mock' ? 'border-l-4 border-l-yellow-300 bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-950 dark:to-orange-950' : 'border-l-4 border-l-purple-300 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950 dark:to-pink-950'}`}>
                 <CardHeader className={`py-3 ${item.type === 'mock' ? 'bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900 dark:to-orange-900' : 'bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900 dark:to-pink-900'}`}>
                   <div className="text-sm font-medium flex items-center justify-between">
                     <span className={item.type === 'mock' ? 'text-yellow-600 dark:text-yellow-200' : 'text-purple-600 dark:text-purple-200'}>
