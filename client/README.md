@@ -69,6 +69,31 @@ src/
 └── main.jsx           # 应用入口点
 ```
 
+## 🔧 配置说明
+
+### 环境变量
+
+创建 `.env.local` 文件配置API地址：
+
+```env
+# 后端API地址 (Vite环境变量，必须以VITE_开头)
+VITE_API_URL=http://localhost:8000/api/v1
+
+# 开发模式设置
+VITE_DEV_MODE=true
+```
+
+**重要说明**: 
+- Vite项目中环境变量必须以 `VITE_` 前缀开头才能在浏览器中访问
+- 不再使用 `REACT_APP_` 前缀（那是Create React App的语法）
+- 文件名建议使用 `.env.local`（会被git忽略）
+
+### API配置
+
+- 项目会自动使用环境变量 `VITE_API_URL` 中的API地址
+- 如果未设置环境变量，默认使用 `http://localhost:8000/api/v1`
+- 项目目前使用模拟数据进行演示，当后端API不可用时会自动降级到模拟模式
+
 ## 🎨 功能演示
 
 ### 1. 智能问答
@@ -98,20 +123,6 @@ src/
 | 销售查询 | "过去7天每天的销售额是多少？" | 显示图表 + 总结 |
 | 库存检查 | "当前库存低于50的产品有哪些？" | 列出低库存产品 |
 | 报表生成 | "请生成今天的销售日报。" | 生成格式化报告 |
-
-## 🔧 配置说明
-
-### 环境变量
-
-创建 `.env` 文件：
-
-```env
-REACT_APP_API_URL=http://localhost:8000/api
-```
-
-### API配置
-
-项目目前使用模拟数据，要连接真实后端，请修改 `src/services/api.js` 中的API端点。
 
 ## 📊 数据说明
 
@@ -162,13 +173,6 @@ REACT_APP_API_URL=http://localhost:8000/api
 ## 📄 许可证
 
 本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 📞 联系方式
-
-如有问题或建议，欢迎通过以下方式联系：
-
-- 项目问题: [GitHub Issues](https://github.com/yourusername/smart-ai-assistant/issues)
-- 邮箱: your.email@example.com
 
 ---
 

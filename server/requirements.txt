@@ -1,0 +1,26 @@
+fastapi
+uvicorn[standard]
+langchain
+langchain-core
+langchain-community
+langchain-openai
+# For Langchain SQL Agent and DB interaction
+sqlalchemy
+# For Pydantic models
+pydantic
+# For loading .env files
+python-dotenv
+# For file upload and handling
+aiofiles
+python-multipart
+# For RAG with FAISS
+faiss-cpu
+# For parsing different file types
+pypdf2
+python-docx
+openpyxl
+pandas
+# For local embeddings
+sentence-transformers
+torch
+transformers 
