@@ -73,6 +73,7 @@
   "alert.info": "Info",
 
   "queryPage.title": "Intelligent  Q&A Assistant",
+  "queryPage.intelligentQASystem": "Intelligent Q&A System",
   "queryPage.subtitle": "Query your data using natural language",
   "queryPage.devModeInfo.title": "Intelligent Q&A System:",
   "queryPage.devModeInfo.message": " Analyze custom data sources using natural language.",
@@ -219,5 +220,13 @@
       "suggestion3": "Check data source status."
     }
   },
-  "queryPage.dataSourceDropdownLabel": "Active Data Source"
+  "queryPage.dataSourceDropdownLabel": "Active Data Source",
+  "selectDataSource": "Select Data Source",
+  "selectType": "Select Type",
+  "dataSourceType": {
+    "default": "Default",
+    "knowledge_base": "Knowledge Base",
+    "sql_table_from_file": "Formatted Data Table",
+    "hybrid": "Hybrid"
+  }
 } 

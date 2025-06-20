@@ -72,6 +72,7 @@
   "alert.info": "信息",
 
   "queryPage.title": "智能问答助手",
+  "queryPage.intelligentQASystem": "智能问答系统",
   "queryPage.subtitle": "使用自然语言查询您的数据",
   "queryPage.devModeInfo.title": "智能问答系统:",
   "queryPage.devModeInfo.message": "正在连接后端API ({{url}})。如果后端服务未启动，系统将自动使用模拟AI响应进行演示。",
@@ -182,5 +183,13 @@
       "suggestion3": "系统支持自然语言查询，随意提问"
     }
   },
-  "queryPage.dataSourceDropdownLabel": "当前数据源"
+  "queryPage.dataSourceDropdownLabel": "当前数据源",
+  "selectDataSource": "选择数据源",
+  "selectType": "选择类型",
+  "dataSourceType": {
+    "default": "默认",
+    "knowledge_base": "知识库",
+    "sql_table_from_file": "格式化数据表",
+    "hybrid": "混合"
+  }
 } 

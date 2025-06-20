@@ -1,8 +1,15 @@
 import { useState, useEffect } from 'react'
-import { Card, Form, Button, Alert, Spinner, Row, Col } from 'react-bootstrap'
 import { FaPaperPlane, FaBrain, FaComments, FaLightbulb, FaDatabase } from 'react-icons/fa'
 import { queryAPI } from '../services/api'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Spinner } from '@/components/ui/spinner'
 
 const API_BASE_URL = '/api/v1'; // Define API_BASE_URL if not already defined elsewhere
 
@@ -75,8 +82,8 @@ function QueryForm() {
     initializeDataSources()
   }, [])
 
-  const handleDataSourceChange = async (event) => {
-    const newDataSourceId = parseInt(event.target.value)
+  const handleDataSourceChange = async (value) => {
+    const newDataSourceId = parseInt(value)
     if (!newDataSourceId || newDataSourceId === activeDataSourceInfo.id) return
 
     setLoading(true) // Use main loading spinner for this action
@@ -257,159 +264,210 @@ function QueryForm() {
   }
 
   return (
-    <Row>
-      <Col lg={8} md={10} className="mx-auto">
-        <Card className="shadow-sm mb-4">
-          <Card.Header className="bg-primary text-white">
-            <h4 className="mb-0">
-              <FaBrain className="me-2" />
-              {t('queryPage.title')}
-            </h4>
-            <small>{t('queryPage.subtitle')} {activeDataSourceInfo.name && `(${t('queryPage.dataSourceDropdownLabel')}: ${activeDataSourceInfo.name})`}</small>
-          </Card.Header>
-          <Card.Body>
-            <Alert variant="info" className="mb-3 d-flex align-items-center">
-              <FaLightbulb className="me-3 fs-4 text-info" />
-              <div>
-                <strong>{t('queryPage.devModeInfo.title')}</strong> 
-                {t('queryPage.devModeInfo.message')}
-              </div>
-            </Alert>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-3xl font-bold flex items-center bg-gradient-to-r from-orange-400 to-pink-400 bg-clip-text text-transparent">
+          <FaBrain className="mr-3 text-orange-300" />
+          {t('queryPage.title')}
+        </h2>
+      </div>
 
-            <Form onSubmit={handleSubmit}>
-              <Form.Group className="mb-3">
-                <Form.Label htmlFor="queryTextarea">{t('queryPage.inputLabel')}</Form.Label>
-                <Form.Control
-                  as="textarea"
-                  id="queryTextarea"
-                  rows={3}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t('queryPage.inputPlaceholder')}
-                  disabled={loading}
-                />
-              </Form.Group>
-              <Row className="align-items-center mb-3">
-                <Col md={4} className="mb-3 mb-md-0">
-                    <Form.Group controlId="dataSourceSelect">
-                        <div className="input-group">
-                            <span className="input-group-text">
-                                <FaDatabase style={{ marginRight: '0.3rem' }} /> 
-                                {t('queryPage.dataSourceDropdownLabel')}:
-                            </span>
-                            <Form.Select 
-                                aria-label={t('queryPage.dataSourceDropdownLabel')}
-                                value={activeDataSourceInfo.id || ''} 
-                                onChange={handleDataSourceChange}
-                                disabled={loadingDataSources || loading} 
-                            >
-                                {loadingDataSources ? (
-                                    <option>{t('loading')}</option>
-                                ) : (
-                                    availableDataSources.map(ds => (
-                                        <option key={ds.id} value={ds.id}>
-                                            {ds.name} ({t(`dataSourceType.${ds.type}`, ds.type)})
-                                        </option>
-                                    ))
-                                )}
-                            </Form.Select>
-                        </div>
-                    </Form.Group>
-                </Col>
-                <Col md={2}>
-                  <Button 
-                    variant="primary" 
-                    type="submit" 
-                    disabled={loading || !query.trim() || loadingDataSources}
-                    className="px-4 py-2 w-100"
-                  >
-                    {loading && !loadingDataSources ? (
-                      <><Spinner size="sm" className="me-2" />{t('queryPage.buttonProcessing')}</>
-                    ) : (
-                      <><FaPaperPlane className="me-2" />{t('queryPage.buttonSendQuery')}</>
-                    )}
-                  </Button>
-                </Col>
-              </Row>
-            </Form>
+      <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-25 to-pink-25 dark:from-orange-950 dark:to-pink-950">
+        <CardHeader className="bg-gradient-to-r from-orange-200 to-pink-200 text-gray-700 rounded-t-lg">
+          <CardTitle className="flex items-center text-xl">
+            <FaBrain className="mr-3 h-7 w-7" />
+            {t('queryPage.intelligentQASystem')}
+          </CardTitle>
+                      <p className="text-gray-600 mt-2 font-medium">
+              {t('queryPage.subtitle')} {activeDataSourceInfo.name && `(${t('queryPage.dataSourceDropdownLabel')}: ${activeDataSourceInfo.name})`}
+            </p>
+        </CardHeader>
+        <CardContent className="p-6 space-y-6">
+          <Alert className="border-yellow-200 bg-yellow-25 text-yellow-600 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+            <FaLightbulb className="h-5 w-5 text-yellow-400" />
+            <AlertDescription className="ml-2">
+              <strong>{t('queryPage.devModeInfo.title')}</strong>{' '}
+              {t('queryPage.devModeInfo.message')}
+            </AlertDescription>
+          </Alert>
 
-            <div className="mt-4">
-              <h6 className="text-muted mb-2">
-                <FaComments className="me-1" />
-                {t('queryPage.exampleQueries.title')}
-              </h6>
-              <div className="d-flex flex-wrap gap-2">
-                {exampleQueries.map((example, index) => (
-                  <Button
-                    key={index}
-                    variant="outline-secondary"
-                    size="sm"
-                    onClick={() => handleExampleClick(example)}
-                    disabled={loading}
-                  >
-                    {example}
-                  </Button>
-                ))}
-              </div>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-3">
+              <Label htmlFor="queryTextarea" className="text-base font-semibold flex items-center">
+                <FaComments className="mr-2 h-5 w-5 text-pink-300" />
+                {t('queryPage.inputLabel')}
+              </Label>
+              <Textarea
+                id="queryTextarea"
+                rows={4}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('queryPage.inputPlaceholder')}
+                disabled={loading}
+                className="border-orange-200 focus:border-pink-300 focus:ring-pink-300 text-base rounded-lg shadow-sm"
+              />
             </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-end">
+              <div className="lg:col-span-2 space-y-3">
+                <Label className="text-base font-semibold flex items-center">
+                  <FaDatabase className="mr-2 h-5 w-5 text-purple-300" />
+                  {t('queryPage.dataSourceDropdownLabel')}
+                </Label>
+                <Select 
+                  value={activeDataSourceInfo.id?.toString() || ''} 
+                  onValueChange={handleDataSourceChange}
+                  disabled={loadingDataSources || loading}
+                >
+                  <SelectTrigger className="border-purple-200 focus:border-purple-300 focus:ring-purple-300 rounded-lg">
+                    <SelectValue placeholder={loadingDataSources ? t('loading') : t('selectDataSource')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {!loadingDataSources && availableDataSources.map(ds => (
+                      <SelectItem key={ds.id} value={ds.id.toString()}>
+                        {ds.name} ({t(`dataSourceType.${ds.type}`, ds.type)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <Button 
+                type="submit" 
+                disabled={loading || !query.trim() || loadingDataSources}
+                className="h-12 bg-gradient-to-r from-orange-300 to-pink-300 hover:from-orange-400 hover:to-pink-400 text-white shadow-lg rounded-lg font-semibold text-base transition-all duration-300 transform hover:scale-105"
+                size="lg"
+              >
+                {loading && !loadingDataSources ? (
+                  <>
+                    <Spinner className="mr-2 h-5 w-5" />
+                    {t('queryPage.buttonProcessing')}
+                  </>
+                ) : (
+                  <>
+                    <FaPaperPlane className="mr-2 h-5 w-5" />
+                    {t('queryPage.buttonSendQuery')}
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
 
-            {error && (
-              <Alert variant="danger" className="mt-3">
-                {error}
-              </Alert>
-            )}
-          </Card.Body>
-        </Card>
-
-        {response && (
-          <Card className="mt-4 border-primary shadow-sm">
-            <Card.Header className="bg-primary text-white">
-              <h5 className="mb-0">{t('queryPage.results.title')}</h5>
-            </Card.Header>
-            <Card.Body>
-              <p className="lead">{response.answer}</p>
-              {response.data && (
-                <div className="mt-3 p-3 bg-light rounded">
-                  <h6>{t('queryPage.results.dataTitle')}</h6>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {JSON.stringify(response.data, null, 2)}
-                  </pre>
-                </div>
-              )}
-              {response.suggestions && response.suggestions.length > 0 && (
-                <div className="mt-3">
-                  <h6>{t('queryPage.results.suggestionsTitle')}</h6>
-                  <ul>
-                    {response.suggestions.map((s, i) => <li key={i}>{s}</li>)}
-                  </ul>
-                </div>
-              )}
-            </Card.Body>
-          </Card>
-        )}
-
-        {queryHistory.length > 0 && (
-          <Card className="mt-4 shadow-sm">
-            <Card.Header>
-              <h5 className="mb-0">{t('queryPage.history.title')}</h5>
-            </Card.Header>
-            <Card.Body>
-              {queryHistory.slice().reverse().map((item, index) => (
-                <Card key={index} className={`mb-3 ${item.type === 'mock' ? 'border-warning' : 'border-info'}`}>
-                  <Card.Header className={`small ${item.type === 'mock' ? 'bg-warning text-dark' : 'bg-info text-white'}`}>
-                    {new Date(item.timestamp).toLocaleString()} - {item.type === 'mock' ? t('queryPage.history.mockLabel') : t('queryPage.history.apiLabel')}
-                  </Card.Header>
-                  <Card.Body>
-                    <p><strong>{t('queryPage.history.query')}:</strong> {item.query}</p>
-                    <p><strong>{t('queryPage.history.answer')}:</strong> {item.response.answer}</p>
-                  </Card.Body>
-                </Card>
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-orange-100 dark:border-gray-700 shadow-md">
+            <h6 className="text-gray-800 dark:text-gray-200 text-base font-bold flex items-center mb-4">
+              <FaComments className="mr-2 h-5 w-5 text-purple-300" />
+              {t('queryPage.exampleQueries.title')}
+            </h6>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {exampleQueries.map((example, index) => (
+                <Button
+                  key={index}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleExampleClick(example)}
+                  disabled={loading}
+                  className="text-left justify-start border-purple-200 hover:border-pink-300 hover:text-pink-500 hover:bg-pink-25 transition-all duration-200 rounded-lg h-auto py-3 text-sm"
+                >
+                  {example}
+                </Button>
               ))}
-            </Card.Body>
-          </Card>
-        )}
-      </Col>
-    </Row>
+            </div>
+          </div>
+
+          {error && (
+            <Alert className="border-red-200 bg-red-25 text-red-600 dark:border-red-800 dark:bg-red-950 dark:text-red-200 rounded-lg">
+              <AlertDescription className="font-medium">{error}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
+
+      {response && (
+        <Card className="shadow-xl border-0 bg-gradient-to-br from-emerald-25 to-teal-25 dark:from-emerald-950 dark:to-teal-950">
+          <CardHeader className="bg-gradient-to-r from-emerald-200 to-teal-200 text-gray-700 rounded-t-lg">
+            <CardTitle className="flex items-center text-xl">
+              <FaLightbulb className="mr-3 h-7 w-7" />
+              {t('queryPage.results.title')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            <div className="prose prose-lg max-w-none">
+              <p className="text-gray-800 dark:text-gray-200 leading-relaxed text-lg font-medium bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-emerald-100">
+                {response.answer}
+              </p>
+            </div>
+            
+            {response.data && (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-teal-100 dark:border-gray-700 shadow-md">
+                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                  <FaDatabase className="mr-2 h-5 w-5 text-teal-300" />
+                  {t('queryPage.results.dataTitle')}
+                </h6>
+                <pre className="text-sm bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border overflow-auto font-mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  {JSON.stringify(response.data, null, 2)}
+                </pre>
+              </div>
+            )}
+            
+            {response.suggestions && response.suggestions.length > 0 && (
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-yellow-100 dark:border-gray-700 shadow-md">
+                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                  <FaLightbulb className="mr-2 h-5 w-5 text-yellow-400" />
+                  {t('queryPage.results.suggestionsTitle')}
+                </h6>
+                <ul className="space-y-3">
+                  {response.suggestions.map((s, i) => (
+                    <li key={i} className="flex items-start bg-yellow-25 dark:bg-yellow-950 p-3 rounded-lg">
+                      <span className="inline-block w-2 h-2 bg-yellow-300 rounded-full mt-2 mr-3 flex-shrink-0"></span>
+                      <span className="text-gray-700 dark:text-gray-300">{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {queryHistory.length > 0 && (
+        <Card className="shadow-xl border-0">
+          <CardHeader className="bg-gradient-to-r from-purple-200 to-indigo-200 text-gray-700 rounded-t-lg">
+            <CardTitle className="flex items-center text-xl">
+              <FaComments className="mr-3 h-7 w-7" />
+              {t('queryPage.history.title')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6 space-y-4">
+            {queryHistory.slice().reverse().map((item, index) => (
+              <Card key={index} className={`transition-all duration-200 hover:shadow-lg transform hover:scale-[1.02] ${item.type === 'mock' ? 'border-l-4 border-l-yellow-300 bg-gradient-to-r from-yellow-25 to-orange-25 dark:from-yellow-950 dark:to-orange-950' : 'border-l-4 border-l-purple-300 bg-gradient-to-r from-purple-25 to-pink-25 dark:from-purple-950 dark:to-pink-950'}`}>
+                <CardHeader className={`py-3 ${item.type === 'mock' ? 'bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900 dark:to-orange-900' : 'bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900 dark:to-pink-900'}`}>
+                  <div className="text-sm font-medium flex items-center justify-between">
+                    <span className={item.type === 'mock' ? 'text-yellow-600 dark:text-yellow-200' : 'text-purple-600 dark:text-purple-200'}>
+                      {new Date(item.timestamp).toLocaleString()}
+                    </span>
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${item.type === 'mock' ? 'bg-yellow-200 text-yellow-600' : 'bg-purple-200 text-purple-600'}`}>
+                      {item.type === 'mock' ? t('queryPage.history.mockLabel') : t('queryPage.history.apiLabel')}
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent className="py-4">
+                  <div className="space-y-3">
+                    <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm">
+                      <strong className="text-gray-700 dark:text-gray-300">{t('queryPage.history.query')}:</strong>
+                      <p className="mt-1 text-gray-800 dark:text-gray-200 font-medium">{item.query}</p>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-sm">
+                      <strong className="text-gray-700 dark:text-gray-300">{t('queryPage.history.answer')}:</strong>
+                      <p className="mt-1 text-gray-800 dark:text-gray-200">{item.response.answer}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </div>
   )
 }
 

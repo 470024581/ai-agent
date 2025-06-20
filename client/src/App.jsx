@@ -1,21 +1,20 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { Container } from 'react-bootstrap'
 import Header from './components/Header'
 import QueryForm from './components/QueryForm'
 import DataSourceManager from './components/DataSourceManager'
 
 function App() {
   return (
-    <>
+    <div className="min-h-screen bg-gradient-to-br from-orange-50/50 via-pink-50/50 to-purple-50/50 font-sans antialiased">
       <Header />
-      <Container fluid className="py-4">
+      <main className="container mx-auto p-6">
         <Routes>
           <Route path="/" element={<Navigate replace to="/query" />} />
           <Route path="/query" element={<QueryForm />} />
           <Route path="/datasources" element={<DataSourceManager />} />
         </Routes>
-      </Container>
-    </>
+      </main>
+    </div>
   )
 }
 
