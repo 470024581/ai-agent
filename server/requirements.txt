@@ -23,4 +23,8 @@ pandas
 # For local embeddings
 sentence-transformers
 torch
-transformers 
+transformers
+# For LangGraph
+langgraph
+# For HTTP requests (chart generation)
+requests 

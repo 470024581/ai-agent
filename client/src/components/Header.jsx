@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { FaBrain, FaDatabase, FaGlobe } from 'react-icons/fa'
+import { FaBrain, FaDatabase, FaGlobe, FaProjectDiagram } from 'react-icons/fa'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,6 +29,13 @@ function Header() {
           >
             <FaBrain className="h-4 w-4 text-orange-300 group-hover:text-orange-400" />
             <span className="text-gray-600 group-hover:text-orange-400">{t('intelligentQA')}</span>
+          </Link>
+          <Link 
+            to="/intelligent-analysis" 
+            className="flex items-center space-x-2 text-sm font-medium transition-all hover:scale-105 group"
+          >
+            <FaProjectDiagram className="h-4 w-4 text-blue-300 group-hover:text-blue-400" />
+            <span className="text-gray-600 group-hover:text-blue-400">{t('intelligentAnalysis.title')}</span>
           </Link>
           <Link 
             to="/datasources" 
@@ -86,6 +93,12 @@ function Header() {
                   <Link to="/query" className="flex items-center space-x-2">
                     <FaBrain className="h-4 w-4 text-orange-300" />
                     <span>{t('intelligentQA')}</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild className="hover:bg-blue-50/50">
+                  <Link to="/intelligent-analysis" className="flex items-center space-x-2">
+                    <FaProjectDiagram className="h-4 w-4 text-blue-300" />
+                    <span>{t('intelligentAnalysis.title')}</span>
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild className="hover:bg-purple-50/50">

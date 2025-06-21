@@ -15,6 +15,7 @@ from .agent import (
     get_answer_from, 
     initialize_app_state
 )
+from .langgraph_flow import process_intelligent_query
 from .db import (
     # Data source management functions
     get_datasources, get_datasource, create_datasource, update_datasource,
@@ -471,4 +472,51 @@ async def query_endpoint(request: QueryRequest):
             error=f"Query processing failed: {str(e)}",
             query=request.query,
             datasource_id=request.datasource_id if hasattr(request, 'datasource_id') else None
-        ) 
+        )
+
+# ==================== LangGraph Intelligent Analysis API ====================
+
+@router.post("/api/v1/intelligent-analysis", response_model=Dict[str, Any], summary="LangGraph Intelligent Analysis")
+async def intelligent_analysis_endpoint(request: QueryRequest):
+    """
+    Based on LangGraph's intelligent data analysis interface
+    
+    Automatically determine the query type and select the appropriate processing flow:
+    - SQL query: Get structured data
+    - Chart generation: Generate visual charts
+    - RAG query: Get knowledge from documents
+    - Quality verification: Ensure output quality
+    """
+    try:
+        # Get the currently active data source
+        active_datasource_dict = await get_active_datasource()
+        if not active_datasource_dict:
+            return {
+                "success": False,
+                "error": "No active data source found, please activate one first",
+                "query": request.query
+            }
+        
+        # Call LangGraph intelligent analysis process
+        result = await process_intelligent_query(request.query, active_datasource_dict)
+        
+        return {
+            "success": result["success"],
+            "query": request.query,
+            "query_type": result.get("query_type", "unknown"),
+            "answer": result.get("answer", ""),
+            "data": result.get("data", {}),
+            "chart_config": result.get("chart_config"),
+            "chart_image": result.get("chart_image"),
+            "quality_score": result.get("quality_score", 0),
+            "datasource_id": active_datasource_dict["id"],
+            "datasource_name": active_datasource_dict["name"],
+            "error": result.get("error")
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Intelligent analysis processing failed: {str(e)}",
+            "query": request.query
+        } 
