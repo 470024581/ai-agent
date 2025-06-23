@@ -3,9 +3,9 @@ load_dotenv() # Load .env file at the very beginning
 
 #!/usr/bin/env python3
 """
-Smart 后端服务启动脚本
-支持开发和生产环境的启动配置
-现已集成 LangServe 功能
+Smart Backend Service Startup Script
+Supports startup configuration for development and production environments
+Now integrated with LangServe functionality
 """
 
 import sys
@@ -15,7 +15,7 @@ from pathlib import Path
 import uvicorn
 import argparse
 
-# 添加当前目录到 Python 路径
+# Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import config, check_environment
@@ -78,52 +78,52 @@ def check_dependencies():
         return True
 
 def main():
-    """主启动函数"""
-    parser = argparse.ArgumentParser(description="Smart 后端服务 (LangServe集成)")
-    parser.add_argument("--host", default=config.HOST, help="服务器地址")
-    parser.add_argument("--port", type=int, default=config.PORT, help="服务器端口")
-    parser.add_argument("--reload", action="store_true", default=config.RELOAD, help="启用热重载")
-    parser.add_argument("--no-reload", action="store_true", help="禁用热重载")
-    parser.add_argument("--prod", action="store_true", help="生产模式")
-    parser.add_argument("--workers", type=int, default=1, help="工作进程数量")
+    """Main startup function"""
+    parser = argparse.ArgumentParser(description="Smart Backend Service (LangServe Integrated)")
+    parser.add_argument("--host", default=config.HOST, help="Server address")
+    parser.add_argument("--port", type=int, default=config.PORT, help="Server port")
+    parser.add_argument("--reload", action="store_true", default=config.RELOAD, help="Enable hot reload")
+    parser.add_argument("--no-reload", action="store_true", help="Disable hot reload")
+    parser.add_argument("--prod", action="store_true", help="Production mode")
+    parser.add_argument("--workers", type=int, default=1, help="Number of worker processes")
     
     args = parser.parse_args()
     
-    # 如果指定生产模式，覆盖配置
+    # If production mode is specified, override configuration
     if args.prod:
         config.DEBUG = False
         config.RELOAD = False
         args.reload = False
     
-    # 如果指定不重载，覆盖重载设置
+    # If no-reload is specified, override reload setting
     if args.no_reload:
         args.reload = False
     
-    print("🚀 启动 Smart 后端服务 (LangServe 集成)...")
-    print(f"📍 服务地址: http://{args.host}:{args.port}")
-    print(f"📖 API文档: http://{args.host}:{args.port}/docs")
-    print(f"🔗 LangServe路由: http://{args.host}:{args.port}/langserve/*/docs")
+    print("🚀 Starting Smart Backend Service (LangServe Integrated)...")
+    print(f"📍 Service address: http://{args.host}:{args.port}")
+    print(f"📖 API documentation: http://{args.host}:{args.port}/docs")
+    print(f"🔗 LangServe routes: http://{args.host}:{args.port}/langserve/*/docs")
     
-    # 检查环境配置
+    # Check environment configuration
     check_environment()
     
-    # 确保必要目录存在
+    # Ensure necessary directories exist
     config.ensure_directories()
     
-    # 初始化应用状态
-    print("\n🔧 初始化应用状态...")
+    # Initialize application state
+    print("\n🔧 Initializing application state...")
     try:
         initialize_app_state()
-        print("✅ 应用状态初始化完成")
+        print("✅ Application state initialization completed")
     except Exception as e:
-        print(f"❌ 应用状态初始化失败: {e}")
-        print("⚠️  服务可能无法正常工作")
+        print(f"❌ Application state initialization failed: {e}")
+        print("⚠️  Service may not work properly")
     
-    print(f"\n🌟 启动模式: {'开发' if args.reload else '生产'}")
-    print("🔧 集成功能: LangServe + FastAPI")
-    print("按 Ctrl+C 停止服务\n")
+    print(f"\n🌟 Startup mode: {'Development' if args.reload else 'Production'}")
+    print("🔧 Integrated features: LangServe + FastAPI")
+    print("Press Ctrl+C to stop the service\n")
     
-    # 启动服务器
+    # Start server
     try:
         uvicorn.run(
             "app.main:app",
@@ -135,9 +135,9 @@ def main():
             access_log=True
         )
     except KeyboardInterrupt:
-        print("\n👋 服务器已停止")
+        print("\n👋 Server stopped")
     except Exception as e:
-        print(f"\n❌ 服务器启动失败: {e}")
+        print(f"\n❌ Server startup failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

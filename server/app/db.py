@@ -123,10 +123,23 @@ def initialize_database_schema():
             )
         ''')
         
+        # Create datasource_tables table to support multiple tables per datasource
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS datasource_tables (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                datasource_id INTEGER NOT NULL,
+                table_name TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (datasource_id) REFERENCES datasources (id) ON DELETE CASCADE,
+                UNIQUE(datasource_id, table_name)
+            )
+        ''')
+        
         # Create indexes for better performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_files_datasource_id ON files(datasource_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_vector_chunks_file_id ON vector_chunks(file_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasources_is_active ON datasources(is_active)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasource_tables_datasource_id ON datasource_tables(datasource_id)')
         
         # Insert default  datasource if not exists
         cursor.execute('''
@@ -343,8 +356,8 @@ async def create_datasource(name: str, description: str = None, ds_type: str = "
     cursor = conn.cursor()
     
     try:
-        # 对于 SQL_TABLE_FROM_FILE 类型，db_table_name 初始可以为 None，后续文件处理时填充
-        # 但如果调用时提供了，就使用它
+        # For SQL_TABLE_FROM_FILE type, db_table_name can initially be None, filled later during file processing
+        # But if provided at call time, use it
         cursor.execute('''
             INSERT INTO datasources (name, description, type, db_table_name, is_active, file_count)
             VALUES (?, ?, ?, ?, 0, 0)
@@ -412,7 +425,7 @@ async def delete_datasource(datasource_id: int) -> bool:
     cursor = conn.cursor()
     
     try:
-        # 首先获取数据源的详细信息，特别是 type 和 db_table_name
+        # First get the data source details, especially type and db_table_name
         cursor.execute("SELECT type, db_table_name, is_active FROM datasources WHERE id = ?", (datasource_id,))
         ds_to_delete = cursor.fetchone()
         
@@ -424,25 +437,25 @@ async def delete_datasource(datasource_id: int) -> bool:
         db_table_name_to_drop = ds_to_delete['db_table_name']
         was_active = ds_to_delete['is_active']
         
-        # 如果是 SQL_TABLE_FROM_FILE 类型且有关联的表，则先删除该表
+        # If it's SQL_TABLE_FROM_FILE type and has associated table, drop the table first
         if ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value and db_table_name_to_drop:
             try:
-                # 确保表名是安全的，尽管它来自数据库，但以防万一
-                # 通常SQLite表名如果包含特殊字符会被双引号包围，但这里我们直接使用
-                # DROP TABLE IF EXISTS "{table_name}" 语法是安全的
+                # Ensure table name is safe, although it comes from database, just in case
+                # Usually SQLite table names with special characters are wrapped in double quotes, but we use them directly here
+                # DROP TABLE IF EXISTS "{table_name}" syntax is safe
                 drop_table_sql = f'DROP TABLE IF EXISTS "{db_table_name_to_drop}"'
                 print(f"[DB-SQLite] Attempting to drop table: {drop_table_sql}")
                 cursor.execute(drop_table_sql)
                 print(f"[DB-SQLite] Successfully dropped table '{db_table_name_to_drop}' for datasource ID {datasource_id}.")
             except Exception as table_drop_error:
-                # 如果删表失败，记录错误但继续删除数据源记录（可能表已不存在或权限问题）
+                # If table drop fails, log error but continue with datasource record deletion (table might not exist or permission issue)
                 print(f"[DB-SQLite] Error dropping table '{db_table_name_to_drop}': {table_drop_error}. Proceeding with datasource record deletion.")
 
-        # 删除数据源记录（会级联删除相关文件和chunks）
+        # Delete datasource record (will cascade delete related files and chunks)
         cursor.execute("DELETE FROM datasources WHERE id = ?", (datasource_id,))
         print(f"[DB-SQLite] Deleted datasource record with ID {datasource_id}.")
         
-        # 如果删除的是激活数据源，激活默认数据源
+        # If deleted datasource was active, activate default datasource
         if was_active:
             cursor.execute("UPDATE datasources SET is_active = 1 WHERE id = 1")
             print("[DB-SQLite] Reactivated default datasource (ID: 1) as the deleted one was active.")
@@ -463,15 +476,15 @@ async def set_active_datasource(datasource_id: int) -> bool:
     cursor = conn.cursor()
     
     try:
-        # 检查数据源是否存在
+        # Check if datasource exists
         cursor.execute("SELECT id FROM datasources WHERE id = ?", (datasource_id,))
         if not cursor.fetchone():
             return False
         
-        # 取消所有数据源的激活状态
+        # Deactivate all datasources
         cursor.execute("UPDATE datasources SET is_active = 0")
         
-        # 激活指定数据源
+        # Activate specified datasource
         cursor.execute("UPDATE datasources SET is_active = 1 WHERE id = ?", (datasource_id,))
         
         conn.commit()
@@ -538,6 +551,99 @@ async def set_datasource_table_name(datasource_id: int, db_table_name: str) -> b
     finally:
         conn.close()
 
+async def add_table_to_datasource(datasource_id: int, table_name: str) -> bool:
+    """Add a table to a datasource (supports multiple tables per datasource)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Insert into datasource_tables
+        cursor.execute('''
+            INSERT OR IGNORE INTO datasource_tables (datasource_id, table_name)
+            VALUES (?, ?)
+        ''', (datasource_id, table_name))
+        
+        # Also update the main table name field for backward compatibility
+        # (Use the first/latest table as the primary table)
+        cursor.execute('''
+            UPDATE datasources 
+            SET db_table_name = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        ''', (table_name, datasource_id))
+        
+        conn.commit()
+        
+        print(f"[DB-SQLite] Successfully added table '{table_name}' to datasource {datasource_id}")
+        return True
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error adding table to datasource: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+async def get_datasource_tables(datasource_id: int) -> List[str]:
+    """Get all tables associated with a datasource"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('''
+            SELECT table_name FROM datasource_tables 
+            WHERE datasource_id = ?
+            ORDER BY created_at ASC
+        ''', (datasource_id,))
+        
+        rows = cursor.fetchall()
+        tables = [row[0] for row in rows]
+        
+        # If no tables in the new system, check the old db_table_name field
+        if not tables:
+            cursor.execute('SELECT db_table_name FROM datasources WHERE id = ?', (datasource_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                tables = [row[0]]
+        
+        return tables
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error getting datasource tables: {e}")
+        return []
+    finally:
+        conn.close()
+
+async def get_datasource_schema_info(datasource_id: int) -> Dict[str, List[Dict]]:
+    """Get schema information for all tables in a datasource"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        tables = await get_datasource_tables(datasource_id)
+        schema_info = {}
+        
+        for table_name in tables:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = cursor.fetchall()
+            
+            schema_info[table_name] = []
+            for col in columns:
+                schema_info[table_name].append({
+                    'name': col[1],
+                    'type': col[2],
+                    'not_null': bool(col[3]),
+                    'default_value': col[4],
+                    'primary_key': bool(col[5])
+                })
+        
+        return schema_info
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error getting datasource schema info: {e}")
+        return {}
+    finally:
+        conn.close()
+
 # ================== File Management Functions ==================
 
 async def save_file_info(filename: str, original_filename: str, file_type: str, 
@@ -555,7 +661,7 @@ async def save_file_info(filename: str, original_filename: str, file_type: str,
         
         file_id = cursor.lastrowid
         
-        # 更新数据源的文件计数
+        # Update datasource file count
         cursor.execute('''
             UPDATE datasources 
             SET file_count = file_count + 1, updated_at = CURRENT_TIMESTAMP 
@@ -654,7 +760,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
     cursor = conn.cursor()
     
     try:
-        # 1. 获取文件信息 (filename, datasource_id)
+        # 1. Get file information (filename, datasource_id)
         cursor.execute("SELECT filename, datasource_id FROM files WHERE id = ?", (file_id,))
         file_info = cursor.fetchone()
         if not file_info:
@@ -664,7 +770,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
         stored_filename = file_info['filename']
         datasource_id = file_info['datasource_id']
 
-        # 2. 获取数据源信息 (type, db_table_name, file_count)
+        # 2. Get datasource information (type, db_table_name, file_count)
         cursor.execute("SELECT type, db_table_name, file_count FROM datasources WHERE id = ?", (datasource_id,))
         ds_info = cursor.fetchone()
         if not ds_info:
@@ -679,7 +785,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
             db_table_name_to_check = ds_info['db_table_name']
             current_file_count = ds_info['file_count']
 
-        # 3. 删除物理文件
+        # 3. Delete physical file
         physical_file_path = UPLOAD_DIR / stored_filename
         if physical_file_path.exists():
             try:
@@ -690,7 +796,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
         else:
             print(f"[DB-SQLite] Physical file not found, skipping deletion: {physical_file_path}")
 
-        # 4. 删除文件数据库记录 (files table) - vector_chunks will be cascade deleted
+        # 4. Delete file database record (files table) - vector_chunks will be cascade deleted
         cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
         if cursor.rowcount == 0:
             # Should not happen if file_info was fetched successfully, means record was deleted by another process
@@ -702,7 +808,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
 
         print(f"[DB-SQLite] Successfully deleted file record ID {file_id} from 'files' table.")
 
-        # 5. 更新数据源的 file_count 及处理特定逻辑 (如 SQL_TABLE_FROM_FILE)
+        # 5. Update datasource file_count and handle specific logic (e.g., SQL_TABLE_FROM_FILE)
         if ds_info: # Only proceed if datasource info was successfully fetched
             new_file_count = max(0, current_file_count - 1)
             
@@ -804,60 +910,94 @@ async def get_product_details(product_id: str) -> Optional[Dict[str, Any]]:
         conn.close()
 
 async def fetch_sales_data_for_query(natural_language_query: str) -> List[Dict[str, Any]]:
-    """Fetch sales data based on natural language query interpretation."""
-    print(f"[DB-SQLite] Processing sales query: {natural_language_query}")
+    """Use LLM semantic analysis to retrieve sales data"""
+    print(f"[DB-SQLite] Processing sales query with LLM: {natural_language_query}")
+    
+    # Import LLM (avoid circular import)
+    try:
+        from .llm_factory import llm
+    except ImportError:
+        from .agent import llm
     
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Parse the query to determine time range and other filters
-        query_lower = natural_language_query.lower()
+        # Get database table structure
+        cursor.execute("PRAGMA table_info(sales)")
+        sales_schema = cursor.fetchall()
+        cursor.execute("PRAGMA table_info(products)")
+        products_schema = cursor.fetchall()
         
-        # Determine date range
-        if 'today' in query_lower:
-            date_filter = "DATE(sale_date) = DATE('now')"
-        elif 'yesterday' in query_lower:
-            date_filter = "DATE(sale_date) = DATE('now', '-1 day')"
-        elif 'this week' in query_lower:
-            date_filter = "DATE(sale_date) >= DATE('now', 'weekday 0', '-7 days')"
-        elif 'last week' in query_lower:
-            date_filter = "DATE(sale_date) >= DATE('now', 'weekday 0', '-14 days') AND DATE(sale_date) < DATE('now', 'weekday 0', '-7 days')"
-        elif 'this month' in query_lower:
-            date_filter = "DATE(sale_date) >= DATE('now', 'start of month')"
-        elif 'last month' in query_lower:
-            date_filter = "DATE(sale_date) >= DATE('now', 'start of month', '-1 month') AND DATE(sale_date) < DATE('now', 'start of month')"
-        elif any(term in query_lower for term in ['past 7 days', 'last 7 days']):
-            date_filter = "DATE(sale_date) >= DATE('now', '-7 days')"
-        elif any(term in query_lower for term in ['past 30 days', 'last 30 days']):
-            date_filter = "DATE(sale_date) >= DATE('now', '-30 days')"
+        schema_info = f"Sales table fields: {[col[1] for col in sales_schema]}, Products table fields: {[col[1] for col in products_schema]}"
+        
+        if llm:
+            # Use LLM to generate SQL query
+            sql_generation_prompt = f"""
+            User query: "{natural_language_query}"
+            
+            Database table structure:
+            - sales table: sale_id, product_id, product_name, quantity_sold, price_per_unit, total_amount, sale_date
+            - products table: product_id, product_name, category, unit_price
+            
+            Please generate appropriate SQLite query statement to retrieve sales data. Requirements:
+            1. Return only SQL statement, no other explanation
+            2. Use sales table as main table, LEFT JOIN products table to get category information
+            3. Add appropriate time and product filter conditions based on user query
+            4. Database is SQLite, use SQLite syntax (e.g., date('now') instead of CURDATE())
+            5. Fields may be TEXT type, need CAST conversion to numeric types for calculations
+            6. Order by date in descending order
+            7. Limit to within 50 records
+            8. SQL statement must be complete and executable
+            9. For trend queries, use strftime('%Y-%m', sale_date) to group by month
+            
+            SQL query statement:
+            """
+            
+            try:
+                response = llm.invoke(sql_generation_prompt)
+                
+                # Handle LLM response
+                if hasattr(response, 'content'):
+                    llm_sql = response.content
+                elif isinstance(response, str):
+                    llm_sql = response
+                else:
+                    llm_sql = str(response)
+                
+                # Clean SQL statement
+                import re
+                sql_match = re.search(r'SELECT.*?(?:;|$)', llm_sql, re.IGNORECASE | re.DOTALL)
+                if sql_match:
+                    sql_query = sql_match.group().rstrip(';').strip()
+                else:
+                    sql_query = llm_sql.strip().rstrip(';')
+                
+                print(f"[DB-SQLite] LLM generated SQL: {sql_query}")
+                
+            except Exception as llm_error:
+                print(f"[DB-SQLite] LLM SQL generation failed: {llm_error}, using fallback")
+                # Use simple fallback query
+                sql_query = """
+                    SELECT s.*, p.category 
+                    FROM sales s
+                    LEFT JOIN products p ON s.product_id = p.product_id
+                    ORDER BY s.sale_date DESC
+                    LIMIT 30
+                """
         else:
-            # Default to last 30 days if no specific time range is mentioned
-            date_filter = "DATE(sale_date) >= DATE('now', '-30 days')"
+            print("[DB-SQLite] LLM not available, using fallback query")
+            sql_query = """
+                SELECT s.*, p.category 
+                FROM sales s
+                LEFT JOIN products p ON s.product_id = p.product_id
+                ORDER BY s.sale_date DESC
+                LIMIT 30
+            """
         
-        # Base query
-        base_query = f"""
-            SELECT s.*, p.category 
-            FROM sales s
-            LEFT JOIN products p ON s.product_id = p.product_id
-            WHERE {date_filter}
-        """
-        
-        # Check for specific product or category filters
-        if any(term in query_lower for term in ['laptop', 'laptop pro']):
-            base_query += " AND (LOWER(s.product_name) LIKE '%laptop%' OR LOWER(p.category) LIKE '%laptop%')"
-        elif 'mouse' in query_lower:
-            base_query += " AND (LOWER(s.product_name) LIKE '%mouse%' OR LOWER(p.category) LIKE '%mouse%')"
-        elif 'keyboard' in query_lower:
-            base_query += " AND (LOWER(s.product_name) LIKE '%keyboard%' OR LOWER(p.category) LIKE '%keyboard%')"
-        elif 'monitor' in query_lower:
-            base_query += " AND (LOWER(s.product_name) LIKE '%monitor%' OR LOWER(p.category) LIKE '%monitor%')"
-        
-        # Add ordering
-        base_query += " ORDER BY s.sale_date DESC"
-        
-        print(f"[DB-SQLite] Executing query: {base_query}")
-        cursor.execute(base_query)
+        # Execute SQL query
+        print(f"[DB-SQLite] Executing query: {sql_query}")
+        cursor.execute(sql_query)
         rows = cursor.fetchall()
         
         sales_data = []

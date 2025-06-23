@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-OpenRouter 模型配置工具
+OpenRouter Model Configuration Tool
 """
 
-# 可用的OpenRouter模型
+# Available OpenRouter models
 AVAILABLE_MODELS = {
-    "免费模型": {
-        "meta-llama/llama-3-8b-instruct:free": "Llama 3 8B - 免费",
-        "microsoft/phi-3-mini-128k-instruct:free": "Phi-3 Mini - 免费",
-        "google/gemma-7b-it:free": "Gemma 7B - 免费",
+    "Free Models": {
+        "meta-llama/llama-3-8b-instruct:free": "Llama 3 8B - Free",
+        "microsoft/phi-3-mini-128k-instruct:free": "Phi-3 Mini - Free",
+        "google/gemma-7b-it:free": "Gemma 7B - Free",
     },
-    "经济型模型": {
-        "anthropic/claude-3-haiku:beta": "Claude 3 Haiku - 快速经济",
-        "openai/gpt-3.5-turbo": "GPT-3.5 Turbo - 经典选择",
-        "google/gemini-flash-1.5": "Gemini Flash - 快速响应",
+    "Economic Models": {
+        "anthropic/claude-3-haiku:beta": "Claude 3 Haiku - Fast & Economical",
+        "openai/gpt-3.5-turbo": "GPT-3.5 Turbo - Classic Choice",
+        "google/gemini-flash-1.5": "Gemini Flash - Fast Response",
     },
-    "高性能模型": {
-        "anthropic/claude-3-sonnet:beta": "Claude 3 Sonnet - 平衡性能",
-        "openai/gpt-4-turbo": "GPT-4 Turbo - 强大智能",
-        "google/gemini-pro-1.5": "Gemini Pro - 谷歌旗舰",
+    "High-Performance Models": {
+        "anthropic/claude-3-sonnet:beta": "Claude 3 Sonnet - Balanced Performance",
+        "openai/gpt-4-turbo": "GPT-4 Turbo - Powerful Intelligence",
+        "google/gemini-pro-1.5": "Gemini Pro - Google Flagship",
     }
 }
 
 def list_models():
-    """列出所有可用模型"""
-    print("🤖 OpenRouter 可用模型:")
+    """List all available models"""
+    print("🤖 Available OpenRouter Models:")
     print("=" * 50)
     
     for category, models in AVAILABLE_MODELS.items():
@@ -34,57 +34,57 @@ def list_models():
             print(f"     {description}")
 
 def switch_model(model_id: str, config_path: str = '../config/config.py'): # Adjusted path
-    """切换到指定模型"""
+    """Switch to specified model"""
     try:
-        # 检查模型是否在可用列表中
+        # Check if model is in available list
         all_models = {}
         for category in AVAILABLE_MODELS.values():
             all_models.update(category)
         
         if model_id not in all_models:
-            print(f"❌ 模型 '{model_id}' 不在可用列表中")
-            print("💡 使用 python app/openrouter_models.py list 查看可用模型") # Adjusted help path
+            print(f"❌ Model '{model_id}' not found in available list")
+            print("💡 Use python app/openrouter_models.py list to view available models") # Adjusted help path
             return False
         
-        # 读取当前配置
+        # Read current configuration
         with open(config_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # 更新模型配置
+        # Update model configuration
         import re
-        # 找到OPENAI_MODEL行并替换
+        # Find OPENAI_MODEL line and replace
         pattern = r'OPENAI_MODEL = "[^"]*"'
         new_line = f'OPENAI_MODEL = "{model_id}"'
         
         if re.search(pattern, content):
             new_content = re.sub(pattern, new_line, content)
         else:
-            # 如果没找到，添加到文件末尾
+            # If not found, add to end of file
             new_content = content.rstrip() + f'\nOPENAI_MODEL = "{model_id}"\n' # Ensure newline
         
-        # 写回文件
+        # Write back to file
         with open(config_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
         
-        print(f"✅ 已切换到模型: {model_id}")
-        print(f"📝 描述: {all_models[model_id]}")
-        print("\n🔄 请重启服务器使配置生效:")
+        print(f"✅ Switched to model: {model_id}")
+        print(f"📝 Description: {all_models[model_id]}")
+        print("\n🔄 Please restart server for configuration to take effect:")
         print("   (cd .. && uvicorn app.main:app --reload --port 8001)  # If running from app dir")
         print("   (uvicorn app.main:app --reload --port 8001)           # If running from root dir")
         
         return True
         
     except FileNotFoundError:
-        print(f"❌ 配置文件未找到: {config_path}")
-        print("确保 config/config.py 文件存在")
+        print(f"❌ Configuration file not found: {config_path}")
+        print("Ensure config/config.py file exists")
         return False
     except Exception as e:
-        print(f"❌ 切换失败: {e}")
+        print(f"❌ Switch failed: {e}")
         return False
 
 def test_model(config_path: str = '../config/config.py'): # Adjusted path
-    """测试当前模型"""
-    print("🧪 测试 OpenRouter 连接...")
+    """Test current model"""
+    print("🧪 Testing OpenRouter connection...")
     
     try:
         # Dynamically import config based on path
@@ -106,20 +106,20 @@ def test_model(config_path: str = '../config/config.py'): # Adjusted path
         
         llm = ChatOpenAI(**llm_kwargs)
         
-        # 测试简单查询
+        # Test simple query
         response = llm.invoke("Hello! Please respond with 'OpenRouter connection successful.'")
         
-        print("✅ 连接成功!")
-        print(f"📝 模型: {config_module.OPENAI_MODEL}")
-        print(f"💬 响应: {response.content}")
+        print("✅ Connection successful!")
+        print(f"📝 Model: {config_module.OPENAI_MODEL}")
+        print(f"💬 Response: {response.content}")
         
     except FileNotFoundError:
-        print(f"❌ 配置文件未找到: {config_path}")
+        print(f"❌ Configuration file not found: {config_path}")
     except AttributeError as e:
-        print(f"❌ 配置错误: {e} - 请确保 OPENAI_MODEL 和 OPENAI_API_KEY 在 config.py 中定义")
+        print(f"❌ Configuration error: {e} - Ensure OPENAI_MODEL and OPENAI_API_KEY are defined in config.py")
     except Exception as e:
-        print(f"❌ 连接失败: {e}")
-        print("💡 请检查API Key和网络连接")
+        print(f"❌ Connection failed: {e}")
+        print("💡 Please check API Key and network connection")
 
 if __name__ == "__main__":
     import sys
@@ -131,12 +131,12 @@ if __name__ == "__main__":
     config_file_path = os.path.join(current_dir, '..', 'config', 'config.py')
     
     if len(sys.argv) < 2:
-        print("OpenRouter 模型配置工具 (位于 app/ 目录)")
-        print("\n使用方法 (从项目根目录运行):")
-        print("  python app/openrouter_models.py list                    # 列出所有模型")
-        print("  python app/openrouter_models.py switch <model_id>       # 切换模型")
-        print("  python app/openrouter_models.py test                    # 测试连接")
-        print("\n示例:")
+        print("OpenRouter Model Configuration Tool (in app/ directory)")
+        print("\nUsage (run from project root directory):")
+        print("  python app/openrouter_models.py list                    # List all models")
+        print("  python app/openrouter_models.py switch <model_id>       # Switch model")
+        print("  python app/openrouter_models.py test                    # Test connection")
+        print("\nExample:")
         print("  python app/openrouter_models.py switch anthropic/claude-3-haiku:beta")
     
     elif sys.argv[1] == "list":
@@ -146,5 +146,5 @@ if __name__ == "__main__":
     elif sys.argv[1] == "test":
         test_model(config_path=config_file_path)
     else:
-        print("❌ 无效命令")
-        print("使用 python app/openrouter_models.py 查看帮助") 
+        print("❌ Invalid command")
+        print("Use python app/openrouter_models.py for help") 

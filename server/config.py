@@ -1,114 +1,142 @@
 """
-配置管理模块 - 管理应用程序的各种配置参数
+Configuration management module - Manages various configuration parameters for the application
 """
 import os
 from typing import Optional
 from pathlib import Path
 
-# 获取项目根目录
+# Get project root directory
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVER_ROOT = Path(__file__).resolve().parent
 DATA_DIR = SERVER_ROOT / "data"
 
 class Config:
-    """应用程序配置类"""
+    """Application configuration class"""
     
-    # 服务器配置
+    # Server configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
     RELOAD: bool = os.getenv("RELOAD", "True").lower() == "true"
     
-    # 数据库配置
+    # Database configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/smart.db")
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
-    # AI/LLM 配置
+    # LLM configuration - Multi-provider support
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai, openrouter, ollama
+    
+    # OpenAI configuration
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
     
-    # OpenRouter 配置（备选）
+    # OpenRouter configuration
     OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
     
-    # CORS 配置
+    # Ollama configuration
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
+    OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+    
+    # Common LLM parameters
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+    
+    # CORS configuration
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://localhost:5173", 
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
-        # 可以根据需要添加更多源
+        # More origins can be added as needed
     ]
     
-    # API 配置
+    # API configuration
     API_V1_PREFIX: str = "/api/v1"
     API_TITLE: str = "Smart AI Assistant API"
     API_DESCRIPTION: str = "API for interacting with the Smart AI Assistant, powered by LangChain and FastAPI."
     API_VERSION: str = "0.3.0"
     
-    # 安全配置
+    # Security configuration
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
-    # 分页配置
+    # Pagination configuration
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
     
-    # 缓存配置
-    CACHE_TTL: int = 300  # 5分钟
+    # Cache configuration
+    CACHE_TTL: int = 300  # 5 minutes
     
-    # 日志配置
+    # Logging configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     
-    # 业务配置
+    # Business configuration
     DEFAULT_LOW_STOCK_THRESHOLD: int = 50
     DEFAULT_CRITICAL_STOCK_THRESHOLD: int = 10
     
-    # 报表配置
+    # Report configuration
     REPORT_STORAGE_PATH: Path = DATA_DIR / "reports"
     MAX_REPORT_AGE_DAYS: int = 30
     
     @classmethod
     def get_ai_config(cls) -> dict:
-        """获取AI配置"""
-        if cls.OPENAI_API_KEY:
+        """Get AI configuration - Strictly follow LLM_PROVIDER config, no auto-detection"""
+        provider = cls.LLM_PROVIDER.lower()
+        
+        # Strictly follow the specified provider configuration
+        if provider == "openai":
+            if not cls.OPENAI_API_KEY:
+                raise ValueError("LLM_PROVIDER is set to openai, but OPENAI_API_KEY is not configured")
             return {
+                "provider": "openai",
                 "api_key": cls.OPENAI_API_KEY,
                 "base_url": cls.OPENAI_BASE_URL,
                 "model": cls.OPENAI_MODEL,
-                "provider": "openai"
+                "temperature": cls.LLM_TEMPERATURE,
+                "max_tokens": cls.LLM_MAX_TOKENS
             }
-        elif cls.OPENROUTER_API_KEY:
+        elif provider == "openrouter":
+            if not cls.OPENROUTER_API_KEY:
+                raise ValueError("LLM_PROVIDER is set to openrouter, but OPENROUTER_API_KEY is not configured")
             return {
+                "provider": "openrouter",
                 "api_key": cls.OPENROUTER_API_KEY,
                 "base_url": cls.OPENROUTER_BASE_URL,
-                "model": cls.OPENAI_MODEL,
-                "provider": "openrouter"
+                "model": cls.OPENROUTER_MODEL,
+                "temperature": cls.LLM_TEMPERATURE,
+                "max_tokens": cls.LLM_MAX_TOKENS
+            }
+        elif provider == "ollama":
+            return {
+                "provider": "ollama",
+                "base_url": cls.OLLAMA_BASE_URL,
+                "model": cls.OLLAMA_MODEL,
+                "timeout": cls.OLLAMA_TIMEOUT,
+                "temperature": cls.LLM_TEMPERATURE,
+                "max_tokens": cls.LLM_MAX_TOKENS
             }
         else:
-            return {
-                "api_key": None,
-                "base_url": None,
-                "model": "mock",
-                "provider": "mock"
-            }
+            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama")
     
     @classmethod
     def is_development(cls) -> bool:
-        """检查是否为开发环境"""
+        """Check if in development environment"""
         return cls.DEBUG
     
     @classmethod
     def is_production(cls) -> bool:
-        """检查是否为生产环境"""
+        """Check if in production environment"""
         return not cls.DEBUG
     
     @classmethod
     def get_database_config(cls) -> dict:
-        """获取数据库配置"""
+        """Get database configuration"""
         return {
             "url": cls.DATABASE_URL,
             "path": cls.DATABASE_PATH,
@@ -117,47 +145,56 @@ class Config:
     
     @classmethod
     def ensure_directories(cls):
-        """确保必要的目录存在"""
+        """Ensure necessary directories exist"""
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         cls.REPORT_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
     
     @classmethod
     def validate_config(cls) -> list[str]:
-        """验证配置并返回警告信息"""
+        """Validate configuration and return warning messages"""
         warnings = []
         
-        if not cls.OPENAI_API_KEY and not cls.OPENROUTER_API_KEY:
-            warnings.append("未配置AI API密钥，将使用模拟模式")
-        
-        if cls.is_production() and cls.SECRET_KEY == "your-secret-key-here":
-            warnings.append("生产环境应使用安全的SECRET_KEY")
-        
-        if not DATA_DIR.exists():
-            warnings.append(f"数据目录不存在: {DATA_DIR}")
+        try:
+            ai_config = cls.get_ai_config()
+            provider = ai_config.get("provider")
+            
+            # Only check security config in production environment
+            if cls.is_production() and cls.SECRET_KEY == "your-secret-key-here":
+                warnings.append("Production environment should use a secure SECRET_KEY")
+            
+            if not DATA_DIR.exists():
+                warnings.append(f"Data directory does not exist: {DATA_DIR}")
+                
+        except Exception as e:
+            warnings.append(f"LLM configuration validation failed: {str(e)}")
         
         return warnings
 
-# 创建全局配置实例
+# Create global configuration instance
 config = Config()
 
-# 环境变量加载状态检查
+# Environment variable loading status check
 def check_environment():
-    """检查环境配置状态"""
-    print("=== Smart 环境配置检查 ===")
-    print(f"运行模式: {'开发' if config.is_development() else '生产'}")
-    print(f"服务器地址: {config.HOST}:{config.PORT}")
-    print(f"数据库路径: {config.DATABASE_PATH}")
+    """Check environment configuration status"""
+    print("=== Smart AI Agent Environment Configuration Check ===")
+    print(f"Running mode: {'Development' if config.is_development() else 'Production'}")
+    print(f"Server address: {config.HOST}:{config.PORT}")
+    print(f"Database path: {config.DATABASE_PATH}")
     
     ai_config = config.get_ai_config()
-    print(f"AI提供商: {ai_config['provider']}")
-    print(f"AI模型: {ai_config['model']}")
+    print(f"LLM provider: {ai_config['provider']}")
+    print(f"LLM model: {ai_config['model']}")
+    if ai_config['provider'] == 'ollama':
+        print(f"Ollama address: {ai_config['base_url']}")
+    elif ai_config['provider'] in ['openai', 'openrouter']:
+        print(f"API Base URL: {ai_config.get('base_url', 'default')}")
     
     warnings = config.validate_config()
     if warnings:
-        print("\n⚠️  配置警告:")
+        print("\n⚠️  Configuration warnings:")
         for warning in warnings:
             print(f"  - {warning}")
     else:
-        print("✅ 配置检查通过")
+        print("✅ Configuration check passed")
     
-    print("=" * 30) 
+    print("=" * 40) 

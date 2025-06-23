@@ -3,7 +3,8 @@ from pathlib import Path
 import pandas as pd
 import re # For sanitizing column names
 import uuid # For unique table name suffix
-from .db import update_file_processing_status, get_datasource, set_datasource_table_name, get_db_connection # Assuming get_db_connection might be needed for other ops
+from typing import Optional
+from .db import update_file_processing_status, get_datasource, set_datasource_table_name, get_db_connection, add_table_to_datasource, get_datasource_tables
 from .models import ProcessingStatus, DataSourceType, FileType # Ensure enums are available
 import logging
 
@@ -116,18 +117,31 @@ async def process_uploaded_file(
                 await update_file_processing_status(file_id, status=ProcessingStatus.COMPLETED.value, chunks=0, error_message="File was empty or unreadable as table.")
                 return
 
-            base_name = Path(original_filename).stem
-            unique_suffix = uuid.uuid4().hex[:8]
-            sane_base_name = re.sub(r'\W|\s', '_', base_name)
-            table_name = f"dstable_{datasource_id}_{sane_base_name}_{unique_suffix}" 
-            table_name = table_name[:60]
-            logger.info(f"[FileProcessor] Generated table name: {table_name}")
-
             conn = get_db_connection()
-            df_renamed = await _create_table_from_df(conn, table_name, df)
-            await _insert_df_to_table(conn, table_name, df_renamed)
             
-            await set_datasource_table_name(datasource_id, table_name)
+            # Check if there's an existing table with the same structure
+            existing_table = await _find_compatible_table(conn, datasource_id, df)
+            
+            if existing_table:
+                # Append to existing table
+                logger.info(f"[FileProcessor] Found compatible table '{existing_table}', appending data")
+                df_renamed = await _prepare_df_for_existing_table(conn, existing_table, df)
+                await _insert_df_to_table(conn, existing_table, df_renamed)
+                table_name = existing_table
+            else:
+                # Create new table
+                base_name = Path(original_filename).stem
+                unique_suffix = uuid.uuid4().hex[:8]
+                sane_base_name = re.sub(r'\W|\s', '_', base_name)
+                table_name = f"dstable_{datasource_id}_{sane_base_name}_{unique_suffix}" 
+                table_name = table_name[:60]
+                logger.info(f"[FileProcessor] Creating new table: {table_name}")
+                
+                df_renamed = await _create_table_from_df(conn, table_name, df)
+                await _insert_df_to_table(conn, table_name, df_renamed)
+            
+            # Add table to datasource (support multiple tables per datasource)
+            await add_table_to_datasource(datasource_id, table_name)
             logger.info(f"[FileProcessor] Successfully linked table '{table_name}' to datasource {datasource_id}")
             
             await update_file_processing_status(file_id, status=ProcessingStatus.COMPLETED.value, chunks=len(df))
@@ -188,16 +202,14 @@ async def _process_for_rag(file_id: int, file_path: Path, original_filename: str
             logger.info(f"[RAG Processor] Extracted {len(extracted_text)} characters from TXT file")
             
         elif file_type.lower() == FileType.PDF.value:
-            # For PDF files - in a real implementation, you would use libraries like PyPDF2, pdfplumber, or pymupdf
-            # For now, we'll simulate text extraction
-            extracted_text = f"[Simulated PDF content extraction from {original_filename}]\n" * (file_size // 1000)
-            logger.info(f"[RAG Processor] Simulated PDF text extraction: {len(extracted_text)} characters")
+            # PDF processing requires additional dependencies
+            logger.error(f"[RAG Processor] PDF processing not implemented. Please install required libraries (PyPDF2, pdfplumber, or pymupdf)")
+            raise NotImplementedError("PDF processing requires additional dependencies. Please install PyPDF2, pdfplumber, or pymupdf")
             
         elif file_type.lower() == FileType.DOCX.value:
-            # For DOCX files - in a real implementation, you would use python-docx library
-            # For now, we'll simulate text extraction
-            extracted_text = f"[Simulated DOCX content extraction from {original_filename}]\n" * (file_size // 500)
-            logger.info(f"[RAG Processor] Simulated DOCX text extraction: {len(extracted_text)} characters")
+            # DOCX processing requires additional dependencies
+            logger.error(f"[RAG Processor] DOCX processing not implemented. Please install python-docx library")
+            raise NotImplementedError("DOCX processing requires python-docx library")
             
         else:
             raise ValueError(f"Unsupported file type for RAG processing: {file_type}")
@@ -279,4 +291,98 @@ def _chunk_text_for_rag(text: str, chunk_size: int = 1000, overlap: int = 200) -
 #     """Store chunks and embeddings in vector database"""
 #     pass
 # async def generate_embeddings(chunks: List[str]) -> List[List[float]]: ...
-# async def store_vector_chunks(file_id: int, chunks: List[str], embeddings: List[List[float]]): ... 
+# async def store_vector_chunks(file_id: int, chunks: List[str], embeddings: List[List[float]]): ...
+
+async def _find_compatible_table(conn, datasource_id: int, df: pd.DataFrame) -> Optional[str]:
+    """Find an existing table with compatible structure for the given DataFrame."""
+    try:
+        # Get all tables for this datasource
+        from .db import get_datasource_tables
+        tables = await get_datasource_tables(datasource_id)
+        
+        if not tables:
+            return None
+            
+        # Check each table for compatibility
+        for table_name in tables:
+            if await _is_table_compatible(conn, table_name, df):
+                return table_name
+                
+        return None
+        
+    except Exception as e:
+        logger.error(f"[FileProcessor] Error finding compatible table: {str(e)}")
+        return None
+
+async def _is_table_compatible(conn, table_name: str, df: pd.DataFrame) -> bool:
+    """Check if a table has compatible structure with the DataFrame."""
+    try:
+        cursor = conn.cursor()
+        
+        # Get table schema
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        table_columns = cursor.fetchall()
+        
+        if not table_columns:
+            return False
+            
+        # Extract column names from table (excluding potential id column)
+        table_col_names = set()
+        for col in table_columns:
+            col_name = col[1]  # column name is at index 1
+            if col_name.lower() != 'id':  # Skip auto-generated ID columns
+                table_col_names.add(col_name.lower())
+        
+        # Get DataFrame column names (sanitized)
+        df_col_names = set()
+        for col in df.columns:
+            sanitized_col = sanitize_column_name(col).lower()
+            df_col_names.add(sanitized_col)
+        
+        # Check if column sets match
+        return table_col_names == df_col_names
+        
+    except Exception as e:
+        logger.error(f"[FileProcessor] Error checking table compatibility: {str(e)}")
+        return False
+
+async def _prepare_df_for_existing_table(conn, table_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare DataFrame to match existing table structure."""
+    try:
+        cursor = conn.cursor()
+        
+        # Get table schema to determine column order
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        table_columns = cursor.fetchall()
+        
+        # Extract column names in table order (excluding id column)
+        table_col_order = []
+        for col in table_columns:
+            col_name = col[1]  # column name is at index 1
+            if col_name.lower() != 'id':  # Skip auto-generated ID columns
+                table_col_order.append(col_name)
+        
+        # Rename DataFrame columns to match table
+        df_renamed = df.copy()
+        
+        # Create mapping from sanitized names to table column names
+        col_mapping = {}
+        for original_col in df.columns:
+            sanitized_col = sanitize_column_name(original_col)
+            # Find matching table column
+            for table_col in table_col_order:
+                if table_col.lower() == sanitized_col.lower():
+                    col_mapping[original_col] = table_col
+                    break
+        
+        # Rename columns
+        df_renamed = df_renamed.rename(columns=col_mapping)
+        
+        # Reorder columns to match table
+        df_renamed = df_renamed[table_col_order]
+        
+        return df_renamed
+        
+    except Exception as e:
+        logger.error(f"[FileProcessor] Error preparing DataFrame for existing table: {str(e)}")
+        raise 

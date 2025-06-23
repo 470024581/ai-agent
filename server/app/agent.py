@@ -33,11 +33,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Get API Key from environment variables or configuration file
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
-LLM_MODEL_NAME = os.getenv("OPENAI_MODEL")
-# EMBEDDING_MODEL_NAME is no longer needed for OpenAI, we'll use a fixed local model name
+# LLM Factory import
+from .llm_factory import get_llm, get_llm_status, reset_llm
+
+# Local embedding model name
 LOCAL_EMBEDDING_MODEL_NAME = 'intfloat/multilingual-e5-small' 
 
 # Determine the correct upload directory relative to this file (agent.py)
@@ -117,25 +116,17 @@ def _extract_text_from_xlsx_pandas(file_path: Path) -> str:
         logger.error(f"Error extracting text from XLSX {file_path} with pandas: {e}", exc_info=True)
     return text
 
-# Initialize LLM (OpenAI or other compatible)
-if OPENAI_API_KEY and not OPENAI_API_KEY.startswith(("123456", "local_mode")):
-    try:
-        llm_kwargs = {
-            "model_name": LLM_MODEL_NAME,
-            "temperature": 0,
-            "openai_api_key": OPENAI_API_KEY
-        }
-        if OPENAI_BASE_URL:
-            llm_kwargs["openai_api_base"] = OPENAI_BASE_URL
-        llm = ChatOpenAI(**llm_kwargs)
-        logger.info(f"LLM initialized successfully - Model: {LLM_MODEL_NAME}")
-        if OPENAI_BASE_URL:
-            logger.info(f"Using custom LLM API endpoint: {OPENAI_BASE_URL}")
-    except Exception as e:
-        logger.error(f"LLM initialization failed: {e}", exc_info=True)
-        llm = None
-else:
-    logger.warning("OpenAI API Key not configured or is a dummy value. LLM functionality will be limited or simulated.")
+# Initialize LLM using factory (strict mode - no simulation)
+try:
+    llm = get_llm()
+    llm_status = get_llm_status()
+    logger.info(f"LLM initialized successfully - Provider: {llm_status.get('provider')}, Model: {llm_status.get('model')}")
+    if llm_status.get('base_url'):
+        logger.info(f"Using API endpoint: {llm_status.get('base_url')}")
+except Exception as e:
+    logger.error(f"LLM initialization failed: {e}")
+    logger.error("Please check your LLM configuration in .env file")
+    llm = None
 
 # Initialize Local Embeddings (SentenceTransformer)
 try:
@@ -157,8 +148,7 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
     logger.info(f"Attempting RAG query on datasource: {datasource['name']} (ID: {datasource['id']}) for query: '{query}'")
 
     if not llm:
-        logger.warning("LLM not initialized. RAG query cannot generate final answer effectively.")
-        # Allow to proceed if embeddings are available, for retrieval-only tests, but flag it.
+        raise RuntimeError("LLM not initialized. RAG query cannot be processed without LLM.")
     
     if not embeddings:
         logger.error("Local embedding model not initialized. RAG query cannot perform vectorization and retrieval.")
@@ -411,79 +401,37 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name])
         
         logger.info(f"Creating SQL Agent for table: {db_table_name}")
-        # If using a non-OpenAI LLM that doesn't support function calling well,
-        # you might need to use AgentType.ZERO_SHOT_REACT_DESCRIPTION
-        # sql_agent_executor = create_sql_agent(llm=llm, db=db, agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION, verbose=True)
-        # For OpenAI models that support function calling, the default agent type is usually better.
-        # Completely avoid SQL Agent, use direct database queries instead
-        # SQL Agent parsing issues cannot be fundamentally resolved, we switch to direct query approach
-        sql_agent_executor = None  # No longer use SQL Agent
         
-        logger.info(f"Using direct database query instead of SQL Agent for: {query}")
-        
-        # Execute database query directly, avoiding Agent parsing issues
+        # Try to use SQL Agent first, fallback to direct query if it fails
+        sql_agent_executor = None
         try:
-            # Generate appropriate SQL based on query type, using correct table name
-            if "销售" in query or "sales" in query.lower():
-                if "趋势" in query or "trend" in query.lower():
-                    # Sales trend query - use actual table name and fields
-                    # First check table structure
-                    try:
-                        schema_result = db.run(f"PRAGMA table_info({db_table_name})")
-                        logger.info(f"Table schema for {db_table_name}: {schema_result}")
-                        
-                        # Generate query based on actual fields
-                        if "date" in schema_result.lower() and "sales" in schema_result.lower():
-                            sql_query = f"""
-                            SELECT 
-                                date,
-                                sales
-                            FROM {db_table_name}
-                            ORDER BY date
-                            LIMIT 12
-                            """
-                        else:
-                            # Use generic query
-                            sql_query = f"SELECT * FROM {db_table_name} ORDER BY ROWID LIMIT 12"
-                    except Exception as schema_error:
-                        logger.warning(f"Failed to get schema: {schema_error}")
-                        sql_query = f"SELECT * FROM {db_table_name} LIMIT 12"
-                else:
-                    # General sales query
-                    sql_query = f"SELECT * FROM {db_table_name} LIMIT 10"
-            else:
-                # Default query
-                sql_query = f"SELECT * FROM {db_table_name} LIMIT 10"
-            
-            logger.info(f"Executing direct SQL: {sql_query}")
-            result = db.run(sql_query)
-            logger.info(f"Direct SQL result: {result}")
-            
-            # Parse results and generate answer
-            if result and result.strip():
-                # Parse SQL results
-                rows = []
-                if '|' in result:  # Table format result
-                    lines = result.strip().split('\n')
-                    if len(lines) > 1:  # Has data rows
-                        for line in lines[1:]:  # Skip header row
-                            if '|' in line:
-                                row_data = [cell.strip() for cell in line.split('|')]
-                                if len(row_data) >= 2:
-                                    rows.append(row_data)
+            from langchain.agents import AgentType
+            # Use ZERO_SHOT_REACT_DESCRIPTION for better compatibility with non-OpenAI models
+            sql_agent_executor = create_sql_agent(
+                llm=llm, 
+                db=db, 
+                agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION, 
+                verbose=True,
+                max_iterations=3,
+                early_stopping_method="generate",
+                handle_parsing_errors=True  # Handle parsing errors gracefully
+            )
+            logger.info(f"SQL Agent created successfully for table: {db_table_name}")
+        except Exception as e:
+            logger.warning(f"Failed to create SQL Agent: {e}, will use direct query fallback")
+            sql_agent_executor = None
+        
+        # Try SQL Agent first if available
+        if sql_agent_executor:
+            try:
+                logger.info(f"Using SQL Agent for query: {query}")
+                response = sql_agent_executor.invoke({"input": query})
                 
-                # Generate natural language answer
-                if "趋势" in query or "trend" in query.lower():
-                    if rows:
-                        answer = "最近一年的销售数据趋势图为："
-                        for row in rows:
-                            if len(row) >= 2:
-                                answer += f"{row[0]}：{row[1]}，"
-                        answer = answer.rstrip('，')
-                    else:
-                        answer = "Retrieved sales trend data from the database."
+                # Extract answer from agent response
+                if isinstance(response, dict):
+                    answer = response.get("output", str(response))
                 else:
-                    answer = f"Found {len(rows)} records from the database query."
+                    answer = str(response)
                 
                 return {
                     "query": query, "query_type": "sql_agent", "success": True,
@@ -492,22 +440,197 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                         "source_datasource_id": active_datasource['id'],
                         "source_datasource_name": active_datasource['name'],
                         "queried_table": db_table_name,
-                        "rows": rows,
                         "answer": answer,
-                        "method": "direct_sql"
+                        "method": "sql_agent"
+                    }
+                }
+            except Exception as agent_error:
+                logger.warning(f"SQL Agent execution failed: {agent_error}, falling back to direct query")
+        
+        # Execute database query directly as fallback using LLM-generated SQL
+        try:
+            # Get all tables and their schemas for this datasource
+            from .db import get_datasource_tables, get_datasource_schema_info
+            
+            datasource_tables = await get_datasource_tables(active_datasource['id'])
+            schema_info = await get_datasource_schema_info(active_datasource['id'])
+            
+            logger.info(f"Datasource {active_datasource['id']} has tables: {datasource_tables}")
+            logger.info(f"Schema info: {schema_info}")
+            
+            # Prepare schema information for LLM
+            schema_description = ""
+            for table_name, columns in schema_info.items():
+                schema_description += f"\nTable name: {table_name}\n"
+                schema_description += "Columns: " + ", ".join([f"{col['name']}({col['type']})" for col in columns]) + "\n"
+            
+            # Use the primary table name if available, otherwise use the first table
+            primary_table = db_table_name if db_table_name in datasource_tables else datasource_tables[0] if datasource_tables else db_table_name
+            
+            # Use LLM to generate appropriate SQL query
+            sql_generation_prompt = f"""
+            User query: "{query}"
+            
+            Data source table structure information: {schema_description}
+            
+            Please understand the user's real intent and generate the most suitable SQLite query statement.
+            
+            Analysis points:
+            1. What data does the user want? (sales volume, amount, quantity, etc.)
+            2. How does the user want to group? (by time, by product, by category, etc.)
+            3. What time granularity does the user expect? (year, month, day, etc.)
+            4. Does the user need sorting? Sort by what?
+            5. Does the user need aggregation calculations? (sum, average, count, etc.)
+            6. Which table to query? If multi-table association is needed, use JOIN statements
+            
+            Technical requirements:
+            - Only return complete SQL query statements, no explanations
+            - Available table names: {', '.join(datasource_tables)}
+            - Database: SQLite (not MySQL, don't use MySQL functions)
+            - All fields are TEXT type, numeric operations need CAST conversion
+            - Date format is usually: YYYY-MM-DD
+            - Reasonably limit result count (LIMIT 10-50)
+            - Use appropriate ORDER BY clause
+            
+            SQLite date function examples:
+            - Extract year: strftime('%Y', date_field_name)
+            - Extract month: strftime('%Y-%m', date_field_name)
+            - Extract date: date(date_field_name)
+            - Don't use YEAR(), MONTH() and other MySQL functions
+            
+            Sorting Requirements:
+            - For time-based grouping (year, month, day), always sort in ascending time order: ORDER BY time_field ASC
+            - For year grouping, use: ORDER BY CAST(strftime('%Y', date_field_name) AS INTEGER) ASC
+            - For month grouping, use: ORDER BY strftime('%Y-%m', date_field_name) ASC
+            
+            Please generate SQL based on user requirements and available table structure, ensuring correct SQLite syntax and sorting.
+            
+            SQL query statement:
+            """
+            
+            try:
+                response = llm.invoke(sql_generation_prompt)
+                
+                # Handle LLM response
+                if hasattr(response, 'content'):
+                    llm_sql = response.content
+                elif isinstance(response, str):
+                    llm_sql = response
+                else:
+                    llm_sql = str(response)
+                
+                # Clean SQL statement, extract pure SQL part
+                import re
+                sql_match = re.search(r'SELECT.*?(?:;|$)', llm_sql, re.IGNORECASE | re.DOTALL)
+                if sql_match:
+                    sql_query = sql_match.group().rstrip(';').strip()
+                else:
+                    # If no SELECT statement found, use entire response as SQL
+                    sql_query = llm_sql.strip().rstrip(';')
+                
+                logger.info(f"LLM generated SQL: {sql_query}")
+                
+            except Exception as llm_error:
+                logger.warning(f"LLM SQL generation failed: {llm_error}, using fallback query")
+                sql_query = f"SELECT * FROM {db_table_name} LIMIT 10"
+            
+            # Execute SQL query
+            logger.info(f"Executing SQL: {sql_query}")
+            result = db.run(sql_query)
+            logger.info(f"SQL result: {result}")
+            
+            # Parse results and use LLM to generate natural language answer
+            if result:
+                # Parse SQL result - handle different result formats
+                rows = []
+                
+                # Check result type
+                if isinstance(result, list):
+                    # If result is in list format (e.g., [(2025, 5.6)])
+                    rows = [list(row) if isinstance(row, tuple) else row for row in result]
+                    logger.info(f"Parsed {len(rows)} rows from list result")
+                elif isinstance(result, str) and result.strip():
+                    # If result is in string format
+                    if '|' in result:  # Table format result
+                        lines = result.strip().split('\n')
+                        if len(lines) > 1:  # Has data rows
+                            for line in lines[1:]:  # Skip header row
+                                if '|' in line:
+                                    row_data = [cell.strip() for cell in line.split('|')]
+                                    if len(row_data) >= 2:
+                                        rows.append(row_data)
+                    else:
+                        # Try parsing other string result formats
+                        try:
+                            # Try eval parsing (security consideration: only use in development environment)
+                            import ast
+                            parsed_result = ast.literal_eval(result)
+                            if isinstance(parsed_result, list):
+                                rows = [list(row) if isinstance(row, tuple) else row for row in parsed_result]
+                        except:
+                            # If parsing fails, treat the entire result as single row data
+                            rows = [[result]]
+                
+                logger.info(f"Final parsed rows: {rows}")
+                
+                # Use LLM to generate natural language answer
+                try:
+                    answer_generation_prompt = f"""
+                    User query: "{query}"
+                    
+                    SQL query result: {result}
+                    
+                    Please answer the user's question in natural language based on the query results. Requirements:
+                    1. Answer should be concise and clear
+                    2. Highlight key data points
+                    3. Answer in English
+                    4. For numerical data, provide appropriate analysis and summary
+                    5. Don't repeat the raw format of SQL results
+                    """
+                    
+                    answer_response = llm.invoke(answer_generation_prompt)
+                    
+                    # Handle LLM response
+                    if hasattr(answer_response, 'content'):
+                        llm_answer = answer_response.content
+                    elif isinstance(answer_response, str):
+                        llm_answer = answer_response
+                    else:
+                        llm_answer = str(answer_response)
+                    
+                    logger.info(f"LLM generated answer: {llm_answer[:100]}...")
+                    
+                except Exception as answer_error:
+                    logger.warning(f"LLM answer generation failed: {answer_error}, using fallback")
+                    llm_answer = f"Query returned {len(rows)} records"
+                
+                return {
+                    "query": query, "query_type": "sql_agent", "success": True,
+                    "answer": llm_answer,
+                    "data": {
+                        "source_datasource_id": active_datasource['id'],
+                        "source_datasource_name": active_datasource['name'],
+                        "queried_table": primary_table,
+                        "available_tables": datasource_tables,
+                        "executed_sql": sql_query,
+                        "rows": rows,
+                        "answer": llm_answer,
+                        "method": "llm_generated_sql"
                     }
                 }
             else:
                 return {
                     "query": query, "query_type": "sql_agent", "success": True,
-                    "answer": "No data found for the query.",
+                    "answer": "Query returned no data",
                     "data": {
                         "source_datasource_id": active_datasource['id'],
                         "source_datasource_name": active_datasource['name'],
-                        "queried_table": db_table_name,
+                        "queried_table": primary_table,
+                        "available_tables": datasource_tables,
+                        "executed_sql": sql_query,
                         "rows": [],
-                        "answer": "No data found for the query.",
-                        "method": "direct_sql"
+                        "answer": "Query returned no data",
+                        "method": "llm_generated_sql"
                     }
                 }
                 
@@ -519,7 +642,8 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 "data": {
                     "source_datasource_id": active_datasource['id'],
                     "source_datasource_name": active_datasource['name'],
-                    "queried_table": db_table_name
+                    "queried_table": primary_table if 'primary_table' in locals() else db_table_name,
+                    "available_tables": datasource_tables if 'datasource_tables' in locals() else [db_table_name]
                 },
                 "error": str(sql_error)
             }
@@ -543,7 +667,7 @@ async def get_answer_from(query: str, query_type: str = "sales", active_datasour
 
     if not llm and (not active_datasource or active_datasource.get('type') != DataSourceType.DEFAULT.value):
          # If LLM is not available AND we are not using the default  (which might have non-LLM paths)
-        logger.warning("LLM not initialized. Query processing will be significantly limited or simulated.")
+        raise RuntimeError("LLM not initialized. Cannot process query without LLM.")
         # Allow default  queries to proceed if they don't rely on LLM for their basic logic.
         # For RAG or SQL Agent, LLM is crucial.
         if active_datasource and active_datasource.get('type') != DataSourceType.DEFAULT.value:
@@ -662,7 +786,7 @@ async def get_inventory_check_response_by_query(query: str) -> tuple[List[Dict[s
     (This is part of the original  logic)
     """
     logger.info(f"Processing inventory query for default : {query}")
-    # Simple check for a product ID (e.g., "库存 P001") - this could be more robust
+            # Simple check for a product ID (e.g., "inventory P001") - this could be more robust
     # For a more general query, it might default to showing low stock items.
     
     # Attempt to find a product ID in the query (very basic)
@@ -684,7 +808,7 @@ async def get_inventory_check_response_by_query(query: str) -> tuple[List[Dict[s
             # This assumes get_product_details would be extended to include stock info
             # or we make another call here. For now, let's assume it's part of product_detail.
             # items_to_report.append(product_detail) # Adjust based on actual structure
-            # response_summary = f"Product {product_detail.get('product_name', potential_product_id)} 的库存信息..."
+            # response_summary = f"Product {product_detail.get('product_name', potential_product_id)} inventory information..."
             
             # Let's refine this - get_product_details gets product info, then we need inventory for it.
             # This part needs to be aligned with how inventory is fetched per product.
@@ -699,7 +823,7 @@ async def get_inventory_check_response_by_query(query: str) -> tuple[List[Dict[s
             # or have a dedicated `get_inventory_for_product(product_id)` function.
             # Given the current `get_low_stock_products`, we might not have a direct single product inventory view easily.
             
-            # Let's assume the query "库存 P001" means "is P001 low stock?" for simplicity with current tools.
+            # Let's assume the query "inventory P001" means "is P001 low stock?" for simplicity with current tools.
             low_stock_items = await fetch_low_stock_products(threshold=1000) # High threshold to get most items
             found_product_in_low_stock = False
             for item in low_stock_items:
@@ -761,7 +885,7 @@ async def get_inventory_check_response() -> tuple[List[Dict[str, Any]], str]:
     if low_stock_items:
         answer = f"Found {len(low_stock_items)} low stock products (below 50 units):"
         # for item in low_stock_items:
-        #     answer += f"\n- {item['product_name']} (ID: {item['product_id']}), 当前库存: {item['stock_level']}"
+        #     answer += f"\n- {item['product_name']} (ID: {item['product_id']}), current stock: {item['stock_level']}"
     else:
         answer = "All products have stock above the warning threshold (50 units)."
     return low_stock_items, answer
@@ -784,28 +908,28 @@ async def get_daily_sales_report_response_from_agent() -> tuple[str, Dict[str, A
 
 async def attempt_direct_query_fallback(query: str, db, table_name: str, active_datasource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    备用方案：直接执行简单的数据库查询，避免Agent解析问题
+    Fallback solution: execute simple database queries directly to avoid Agent parsing issues
     """
     try:
-        # 基于查询内容生成简单的SQL
+        # Generate simple SQL based on query content
         if "sales" in query.lower() or "trend" in query.lower():
-            # 销售趋势查询
+            # Sales trend query
             direct_sql = f"SELECT date, sales FROM {table_name} ORDER BY date LIMIT 10"
         elif "product" in query.lower():
-            # 产品查询
+            # Product query
             direct_sql = f"SELECT product, SUM(sales) as total_sales FROM {table_name} GROUP BY product LIMIT 10"
         elif "total" in query.lower():
-            # 总计查询
+            # Total query
             direct_sql = f"SELECT SUM(sales) as total_sales FROM {table_name}"
         else:
-            # 默认查询
+            # Default query
             direct_sql = f"SELECT * FROM {table_name} LIMIT 10"
         
         logger.info(f"Executing direct fallback query: {direct_sql}")
         result = db.run(direct_sql)
         
         if result:
-            # 解析结果并生成回答
+            # Parse results and generate answer
             if "trend" in query.lower():
                 answer = "The sales trend shows data from the database query results."
             elif "total" in query.lower():
@@ -832,11 +956,11 @@ async def attempt_direct_query_fallback(query: str, db, table_name: str, active_
 
 def extract_answer_from_timeout(timeout_response: str, original_query: str, db, table_name: str) -> str:
     """
-    尝试从超时的Agent响应中提取有用信息，或执行简单的直接查询
+    Try to extract useful information from timeout Agent response, or execute simple direct query
     """
     try:
         from sqlalchemy import text
-        # 尝试执行一个简单的表数据查询作为备选方案
+        # Try executing a simple table data query as fallback solution
         simple_query = f"SELECT * FROM {table_name} LIMIT 5"
         
         with db._engine.connect() as connection:
@@ -849,7 +973,7 @@ def extract_answer_from_timeout(timeout_response: str, original_query: str, db, 
                 for row in rows:
                     data_preview.append(dict(zip(columns, row)))
                 
-                # 基于查询内容生成简单回答
+                # Generate simple answer based on query content
                 if "sales" in original_query.lower() or "trend" in original_query.lower():
                     total_amount = sum(float(row.get('total_amount', 0)) for row in data_preview if row.get('total_amount'))
                     return f"Based on recent data from {table_name}, I found {len(data_preview)} records with a total amount of approximately {total_amount:.2f}. Due to processing limitations, this is a simplified analysis."
@@ -896,26 +1020,3 @@ def initialize_app_state():
         
     logger.info("Application state initialization completed.")
 
-# Example of how to call (for testing or direct use if needed)
-# async def main():
-#     initialize_app_state()
-#     # Test default  query
-#     response = await get_answer_from("What are today's sales figures?", query_type="sales")
-#     print("Default  Sales Query Response:", response)
-
-#     # Simulate a RAG datasource
-#     mock_rag_datasource = {"id": 2, "name": "My Test RAG Source", "type": "knowledge_base"}
-#     # Ensure you have some files uploaded and processed for this datasource_id in your DB
-#     # and the UPLOAD_DIR contains them.
-#     # response_rag = await get_answer_from("What is the main topic of the documents?", active_datasource=mock_rag_datasource)
-#     # print("RAG Query Response:", response_rag)
-
-#     # Simulate a SQL Table datasource
-#     # mock_sql_datasource = {"id": 3, "name": "My CSV Data", "type": "sql_table_from_file", "db_table_name": "dstable_3_my_data_xyz123"}
-#     # response_sql = await get_answer_from("How many rows in the table?", active_datasource=mock_sql_datasource)
-#     # print("SQL Table Query Response:", response_sql)
-
-
-# if __name__ == "__main__":
-#     import asyncio
-#     asyncio.run(main())
