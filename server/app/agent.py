@@ -478,10 +478,35 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             Analysis points:
             1. What data does the user want? (sales volume, amount, quantity, etc.)
             2. How does the user want to group? (by time, by product, by category, etc.)
-            3. What time granularity does the user expect? (year, month, day, etc.)
+            3. What time granularity does the user expect? (year, month, week, day, etc.)
             4. Does the user need sorting? Sort by what?
             5. Does the user need aggregation calculations? (sum, average, count, etc.)
             6. Which table to query? If multi-table association is needed, use JOIN statements
+            
+            Important Grouping Rules:
+            - For trend analysis ("趋势图", "trend"): Group ONLY by time period, aggregate all products together
+            - For product comparison: Group by product AND time if needed
+            - For overall statistics: Use SUM() to aggregate across all records
+            - Don't group by product name unless user specifically asks for product breakdown
+            
+            Time Period Analysis (IMPORTANT):
+            - If user mentions "周" (week) or "weeks": Group by week using strftime('%Y-%W', date_field)
+            - If user mentions "月" (month) or "months": Group by month using strftime('%Y-%m', date_field)
+            - If user mentions "年" (year) or "years": Group by year using strftime('%Y', date_field)
+            - If user mentions "天" (day) or "days": Group by day using strftime('%Y-%m-%d', date_field)
+            - If user asks for "最近X周" (recent X weeks): Use WHERE clause with date filtering
+            - If user asks for "最近X月" (recent X months): Use WHERE clause with date filtering
+            - For recent time periods, always filter data BEFORE grouping
+            
+            Recent Time Period Examples:
+            - "最近100周" (recent 100 weeks): Use WHERE saledate >= date('now', '-700 days') -- 100 weeks * 7 days
+            - "最近12个月" (recent 12 months): Use WHERE saledate >= date('now', '-12 months')
+            - "最近3年" (recent 3 years): Use WHERE saledate >= date('now', '-3 years')
+            
+            CRITICAL: SQLite does NOT support "-N weeks" syntax. Always convert weeks to days:
+            - 1 week = 7 days
+            - 100 weeks = 700 days
+            - Use: date('now', '-700 days') NOT date('now', '-100 weeks')
             
             Technical requirements:
             - Only return complete SQL query statements, no explanations
@@ -495,15 +520,25 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             SQLite date function examples:
             - Extract year: strftime('%Y', date_field_name)
             - Extract month: strftime('%Y-%m', date_field_name)
+            - Extract week: strftime('%Y-%W', date_field_name) (keep as string, don't CAST to INTEGER)
             - Extract date: date(date_field_name)
+            - Recent weeks: date('now', '-N days') where N = weeks * 7
+            - Recent months: date('now', '-N months')
             - Don't use YEAR(), MONTH() and other MySQL functions
             
             Sorting Requirements:
-            - For time-based grouping (year, month, day), always sort in ascending time order: ORDER BY time_field ASC
+            - For time-based grouping (year, month, week, day), always sort in ascending time order: ORDER BY time_field ASC
             - For year grouping, use: ORDER BY CAST(strftime('%Y', date_field_name) AS INTEGER) ASC
             - For month grouping, use: ORDER BY strftime('%Y-%m', date_field_name) ASC
+            - For week grouping, use: ORDER BY strftime('%Y-%W', date_field_name) ASC (don't CAST to INTEGER)
+            - For day grouping, use: ORDER BY date(date_field_name) ASC
             
             Please generate SQL based on user requirements and available table structure, ensuring correct SQLite syntax and sorting.
+            
+            Example SQL for different scenarios:
+            - Weekly trend query: "SELECT strftime('%Y-%W', saledate) as week, SUM(CAST(quantitysold AS INTEGER)) as total FROM table WHERE saledate >= date('now', '-700 days') GROUP BY strftime('%Y-%W', saledate) ORDER BY strftime('%Y-%W', saledate) ASC"
+            - Monthly trend query: "SELECT strftime('%Y-%m', saledate) as month, SUM(CAST(quantitysold AS INTEGER)) as total FROM table GROUP BY month ORDER BY month ASC"
+            - Product breakdown: "SELECT productname, SUM(CAST(quantitysold AS INTEGER)) as total FROM table GROUP BY productname ORDER BY total DESC"
             
             SQL query statement:
             """

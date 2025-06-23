@@ -376,7 +376,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             "data_field_for_labels": "Data field name or index for labels",
             "data_field_for_values": "Data field name or index for values",
             "aggregation_method": "none|sum|average|count",
-            "time_grouping": "none|month|quarter|year"
+            "time_grouping": "none|week|month|quarter|year"
         }}
         
         Analysis requirements:
@@ -384,7 +384,17 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         2. Generate meaningful titles and axis labels
         3. Identify which fields in the data should be used for labels and values
         4. If it's time series data, determine appropriate time grouping method
-        5. Only return JSON, no other explanation
+        5. Pay attention to time units mentioned in user query:
+           - If user mentions "周" (week) or "weeks": set time_grouping to "week"
+           - If user mentions "月" (month) or "months": set time_grouping to "month"  
+           - If user mentions "年" (year) or "years": set time_grouping to "year"
+           - If user mentions "季度" (quarter): set time_grouping to "quarter"
+        6. Generate appropriate x_axis_label based on time grouping:
+           - For week grouping: use "Week" or "周"
+           - For month grouping: use "Month" or "月"
+           - For year grouping: use "Year" or "年"
+           - For quarter grouping: use "Quarter" or "季度"
+        7. Only return JSON, no other explanation
         """
         
         response = llm.invoke(chart_analysis_prompt)
@@ -582,6 +592,21 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                                 else:
                                     # Handle other formats
                                     time_key = date_str[:7] if len(date_str) >= 7 else date_str
+                            elif time_grouping == "week":
+                                # Extract year-week, format as YYYY-WW
+                                if '-' in date_str and len(date_str) >= 10:
+                                    # Convert date to week format using strftime logic
+                                    try:
+                                        from datetime import datetime
+                                        date_obj = datetime.strptime(date_str[:10], '%Y-%m-%d')
+                                        year = date_obj.isocalendar()[0]
+                                        week = date_obj.isocalendar()[1]
+                                        time_key = f"{year}-W{week:02d}"
+                                    except ValueError:
+                                        # Fallback: use first 7 characters
+                                        time_key = date_str[:7]
+                                else:
+                                    time_key = date_str[:7] if len(date_str) >= 7 else date_str
                             elif time_grouping == "quarter":
                                 year = date_str[:4]
                                 month_str = date_str[5:7] if len(date_str) > 6 else "01"
@@ -621,6 +646,9 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                     elif time_grouping == "month":
                         year, month = key.split('-')
                         return int(year) * 100 + int(month)
+                    elif time_grouping == "week":
+                        year, week_str = key.split('-W')
+                        return int(year) * 100 + int(week_str)
                     elif time_grouping == "quarter":
                         year, quarter = key.split('-Q')
                         return int(year) * 10 + int(quarter)
@@ -785,6 +813,12 @@ def format_time_label(time_key: str, time_grouping: str) -> str:
             month_idx = int(month) - 1
             if 0 <= month_idx < 12:
                 return f"{month_names[month_idx]} {year[-2:]}"
+        elif time_grouping == "week":
+            if '-W' in time_key:
+                year, week_str = time_key.split('-W')
+                return f"{year}-W{week_str}"
+            else:
+                return time_key
         elif time_grouping == "quarter":
             return time_key  # Already formatted as YYYY-Q1
         elif time_grouping == "year":
