@@ -496,6 +496,30 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         if labels and values:
             chart_config["data"]["labels"] = labels
             chart_config["data"]["datasets"][0]["data"] = values
+
+            # Ensure backgroundColor and borderColor arrays与数据点数量一致
+            base_colors_bg = [
+                "rgba(54, 162, 235, 0.6)",
+                "rgba(255, 99, 132, 0.6)",
+                "rgba(255, 206, 86, 0.6)",
+                "rgba(75, 192, 192, 0.6)",
+                "rgba(153, 102, 255, 0.6)",
+                "rgba(255, 159, 64, 0.6)",
+                "rgba(199, 199, 199, 0.6)",
+                "rgba(83, 102, 255, 0.6)"
+            ]
+            def to_border(c):
+                # 将透明度由 0.6 调整为 1 形成描边色
+                if c.endswith("0.6)"):
+                    return c.replace("0.6)", "1)")
+                return c
+
+            num_points = len(values)
+            colors_bg = [base_colors_bg[i % len(base_colors_bg)] for i in range(num_points)]
+            colors_border = [to_border(c) for c in colors_bg]
+
+            chart_config["data"]["datasets"][0]["backgroundColor"] = colors_bg
+            chart_config["data"]["datasets"][0]["borderColor"] = colors_border
             logger.info(f"LLM-guided chart data configured with {len(labels)} data points")
         else:
             logger.warning("No data extracted with LLM guidance, using fallback")

@@ -554,16 +554,27 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 else:
                     llm_sql = str(response)
                 
-                # Clean SQL statement, extract pure SQL part
+                # Post-process SQL: convert unsupported "weeks" modifier to "days"
                 import re
-                sql_match = re.search(r'SELECT.*?(?:;|$)', llm_sql, re.IGNORECASE | re.DOTALL)
-                if sql_match:
-                    sql_query = sql_match.group().rstrip(';').strip()
-                else:
-                    # If no SELECT statement found, use entire response as SQL
-                    sql_query = llm_sql.strip().rstrip(';')
-                
-                logger.info(f"LLM generated SQL: {sql_query}")
+
+                def _convert_weeks_to_days(match):
+                    num_weeks = int(match.group(1))
+                    return f"date('now', '-{num_weeks * 7} days')"
+
+                # Pattern matches date('now', '-100 weeks')  或其他数字
+                weeks_pattern_now = re.compile(r"date\('now',\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
+                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days, llm_sql)
+
+                # Pattern matches date\(<field>, '-N weeks') 例如 date(saledate, '-4 weeks')
+                def _convert_weeks_generic(match):
+                    field = match.group(1)
+                    num_weeks = int(match.group(2))
+                    return f"date({field}, '-{num_weeks * 7} days')"
+
+                weeks_pattern_generic = re.compile(r"date\(([^,\s]+),\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
+                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic, sql_query)
+
+                logger.info(f"LLM generated SQL (post-processed): {sql_query}")
                 
             except Exception as llm_error:
                 logger.warning(f"LLM SQL generation failed: {llm_error}, using fallback query")
