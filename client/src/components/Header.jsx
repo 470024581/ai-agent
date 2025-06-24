@@ -16,20 +16,21 @@ function Header() {
     <header className="border-b border-orange-100 bg-gradient-to-r from-orange-50/50 to-pink-50/50 shadow-sm">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
         <div className="flex items-center space-x-4">
-          <Link to="/query" className="flex items-center space-x-2 text-lg font-bold group">
+          <Link to="/intelligent-analysis" className="flex items-center space-x-2 text-lg font-bold group">
             <FaBrain className="h-7 w-7 text-orange-300 group-hover:text-orange-400 transition-colors" />
             <span className="bg-gradient-to-r from-orange-400 to-pink-400 bg-clip-text text-transparent">{t('smartAIAssistant')}</span>
           </Link>
         </div>
 
         <nav className="hidden md:flex items-center space-x-8">
-          <Link 
+          {/* <Link 
             to="/query" 
             className="flex items-center space-x-2 text-sm font-medium transition-all hover:scale-105 group"
           >
             <FaBrain className="h-4 w-4 text-orange-300 group-hover:text-orange-400" />
             <span className="text-gray-600 group-hover:text-orange-400">{t('intelligentQA')}</span>
           </Link>
+          */}
           <Link 
             to="/intelligent-analysis" 
             className="flex items-center space-x-2 text-sm font-medium transition-all hover:scale-105 group"
@@ -89,19 +90,19 @@ function Header() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="border-orange-100">
-                             <DropdownMenuItem asChild className="hover:bg-orange-50/50">
-                  <Link to="/query" className="flex items-center space-x-2">
-                    <FaBrain className="h-4 w-4 text-orange-300" />
-                    <span>{t('intelligentQA')}</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="hover:bg-blue-50/50">
-                  <Link to="/intelligent-analysis" className="flex items-center space-x-2">
-                    <FaProjectDiagram className="h-4 w-4 text-blue-300" />
-                    <span>{t('intelligentAnalysis.title')}</span>
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild className="hover:bg-purple-50/50">
+              <DropdownMenuItem asChild className="hover:bg-blue-50/50">
+                <Link to="/intelligent-analysis" className="flex items-center space-x-2">
+                  <FaBrain className="h-4 w-4 text-orange-300" />
+                  <span>{t('intelligentQA')}</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild className="hover:bg-blue-50/50">
+                <Link to="/intelligent-analysis" className="flex items-center space-x-2">
+                  <FaProjectDiagram className="h-4 w-4 text-blue-300" />
+                  <span>{t('intelligentAnalysis.title')}</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild className="hover:bg-purple-50/50">
                 <Link to="/datasources" className="flex items-center space-x-2">
                   <FaDatabase className="h-4 w-4 text-purple-300" />
                   <span>{t('dataSourceManagement')}</span>

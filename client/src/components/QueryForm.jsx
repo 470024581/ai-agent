@@ -265,13 +265,6 @@ function QueryForm() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold flex items-center bg-gradient-to-r from-orange-400 to-pink-400 bg-clip-text text-transparent">
-          <FaBrain className="mr-3 text-orange-300" />
-          {t('queryPage.title')}
-        </h2>
-      </div>
-
       <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-50 to-pink-50 dark:from-orange-950 dark:to-pink-950">
         <CardHeader className="bg-gradient-to-r from-orange-200 to-pink-200 text-gray-700 rounded-t-lg">
           <CardTitle className="flex items-center text-xl">
@@ -283,14 +276,6 @@ function QueryForm() {
             </p>
         </CardHeader>
         <CardContent className="p-6 space-y-6">
-          <Alert className="border-yellow-200 bg-yellow-50 text-yellow-600 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
-            <FaLightbulb className="h-5 w-5 text-yellow-400" />
-            <AlertDescription className="ml-2">
-              <strong>{t('queryPage.devModeInfo.title')}</strong>{' '}
-              {t('queryPage.devModeInfo.message')}
-            </AlertDescription>
-          </Alert>
-
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-3">
               <Label htmlFor="queryTextarea" className="text-base font-semibold flex items-center">

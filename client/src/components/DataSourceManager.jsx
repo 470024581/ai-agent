@@ -682,8 +682,8 @@ function DataSourceManager() {
 
       <Dialog open={showFilesModal} onOpenChange={(open) => { if (!open) { setShowFilesModal(false); setSelectedDatasource(null); dismissAlert(); } }}>
         <DialogContent 
-          className="!max-w-none w-[50vw] h-[55vh] flex flex-col bg-gradient-to-br from-orange-50 to-yellow-50 p-0" 
-          style={{ width: '50vw', maxWidth: 'none' }}
+          className="!max-w-none w-[60vw] h-[80vh] flex flex-col bg-gradient-to-br from-orange-50 to-yellow-50 p-0" 
+          style={{ width: '60vw', maxWidth: 'none', height: '80vh' }}
         >
           <DialogHeader className="flex-shrink-0 border-b border-orange-200 pb-4 px-6 pt-6">
             <DialogTitle className="text-xl font-bold flex items-center text-transparent bg-gradient-to-r from-orange-600 to-yellow-600 bg-clip-text">
@@ -745,7 +745,7 @@ function DataSourceManager() {
                       <Table>
                         <TableHeader className="sticky top-0 bg-gray-50 z-10">
                           <TableRow className="border-b border-gray-200">
-                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-1/3">{t('fileName')}</TableHead>
+                            <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm">{t('fileName')}</TableHead>
                             <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-20 text-center">{t('fileType')}</TableHead>
                             <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-24 text-center">{t('fileSize')}</TableHead>
                             <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-32 text-center">{t('processingStatus')}</TableHead>
@@ -756,16 +756,16 @@ function DataSourceManager() {
                         <TableBody>
                           {files.map(file => (
                             <TableRow key={file.id} className="hover:bg-orange-50 border-b border-gray-100">
-                              <TableCell className="py-3 px-3 font-medium text-gray-900 text-sm truncate" title={file.original_filename}>
+                              <TableCell className="py-2 px-3 font-medium text-gray-900 text-sm break-all" title={file.original_filename}>
                                 {file.original_filename}
                               </TableCell>
-                              <TableCell className="py-3 px-3 text-center">
+                              <TableCell className="py-2 px-3 text-center">
                                 <Badge className="bg-blue-500 text-xs px-2 py-1">{file.file_type.toUpperCase()}</Badge>
                               </TableCell>
-                              <TableCell className="py-3 px-3 text-gray-600 text-sm text-center">{formatFileSize(file.file_size)}</TableCell>
-                              <TableCell className="py-3 px-3 text-center">{getStatusBadge(file.processing_status)}</TableCell>
-                              <TableCell className="py-3 px-3 text-gray-600 text-xs text-center">{new Date(file.uploaded_at).toLocaleString()}</TableCell>
-                              <TableCell className="py-3 px-3 text-center">
+                              <TableCell className="py-2 px-3 text-gray-600 text-sm text-center">{formatFileSize(file.file_size)}</TableCell>
+                              <TableCell className="py-2 px-3 text-center">{getStatusBadge(file.processing_status)}</TableCell>
+                              <TableCell className="py-2 px-3 text-gray-600 text-xs text-center">{new Date(file.uploaded_at).toLocaleString()}</TableCell>
+                              <TableCell className="py-2 px-3 text-center">
                                 <Button 
                                   variant="outline" 
                                   size="sm" 

@@ -611,24 +611,6 @@ function IntelligentAnalysis() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
       <div className="w-full px-6 py-6 space-y-8">
-        {/* Page title */}
-        <div className="text-center space-y-4">
-          <Alert className="bg-gradient-to-r from-blue-100 to-indigo-100 border-blue-200 w-full mx-auto">
-          <FaBrain className="h-6 w-6 text-blue-500" />
-          <AlertDescription className="ml-2">
-            <strong>{t('intelligentAnalysis.pageTitle')}</strong> - {t('intelligentAnalysis.subtitle')}
-          </AlertDescription>
-        </Alert>
-        
-        <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600 mb-4 flex items-center justify-center">
-          <FaBrain className="mr-3 text-blue-300" />
-          {t('intelligentAnalysis.pageTitle')}
-        </h2>
-        <p className="text-xl text-gray-600 dark:text-gray-300">
-          {t('intelligentAnalysis.subtitle')}
-        </p>
-        </div>
-
         {/* Main content area */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-16 w-full">
         {/* Left side: Query form */}
