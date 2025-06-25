@@ -84,9 +84,9 @@ function IntelligentAnalysis() {
     { id: 'sql_execution_node', name: 'SQL Execution', type: 'process', position: { x: 150, y: 280 }, description: 'Execute database query' },
     { id: 'chart_config_node', name: 'Chart Config', type: 'process', position: { x: 50, y: 380 }, description: 'Generate chart configuration' },
     { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', position: { x: 190, y: 380 }, description: 'Call QuickChart API' },
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 300, y: 400 }, description: 'Generate natural language response' },
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 300, y: 380 }, description: 'Generate natural language response' },
     { id: 'retry_node', name: 'Retry', type: 'retry', position: { x: 150, y: 500 }, description: 'Retry with improvements' },
-    { id: 'validation_node', name: 'Validation', type: 'validation', position: { x: 300, y: 600 }, description: 'Quality score validation' },
+    { id: 'validation_node', name: 'Validation', type: 'validation', position: { x: 300, y: 500 }, description: 'Quality score validation' },
     { id: 'end_node', name: 'End', type: 'end', position: { x: 200, y: 680 }, description: 'Process completed' }
   ];
 

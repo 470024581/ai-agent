@@ -9,7 +9,8 @@ from .models import (
     QueryRequest, QueryResponse, 
     BaseResponse,
     DataSourceCreate, DataSourceUpdate, DataSource, DataSourceResponse, DataSourceListResponse,
-    FileInfo, FileListResponse, ProcessingStatus, FileType, DataSourceType
+    FileInfo, FileListResponse, ProcessingStatus, FileType, DataSourceType,
+    WorkflowEvent
 )
 from .agent import (
     get_answer_from, 
