@@ -248,7 +248,7 @@ def llm_processing_node(state: GraphState) -> GraphState:
         Available context and data (some fields may be empty):
         {json.dumps(context_data, ensure_ascii=False, indent=2)}
         
-        Please synthesize all the information to generate a final, natural language answer in Chinese.
+        Please synthesize all the information to generate a final, natural language answer.
         Requirements:
         1. If a chart image URL is present, mention the chart in your answer (e.g., \"As shown in the chart above...\" or \"I have generated a chart for your reference.\").
         2. Provide key insights, trends, or summaries based on the structured data.
