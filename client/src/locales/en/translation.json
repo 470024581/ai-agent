@@ -249,6 +249,12 @@
     "exampleQueries": "Example Queries",
     "analysisResult": "Analysis Result",
     "qualityScore": "Quality Score",
+    "connectionStatus": {
+      "connected": "Live Connected",
+      "connecting": "Connecting",
+      "disconnected": "Disconnected",
+      "error": "Connection Error"
+    },
     "answer": "Answer",
     "generatedChart": "Generated Chart",
     "chartConfig": "Chart Configuration",
@@ -271,10 +277,11 @@
       "qualityValidationDesc": "Score and validate output quality"
     },
     "examples": {
-      "salesThisMonth": "What is this month's sales?",
-      "salesTrendChart": "Generate sales trend chart",
-      "lowStockProducts": "Which products have stock below 50?",
-      "customerDistribution": "Analyze customer distribution",
+      "salesThisMonth": "Sales performance for this month",
+      "lowStockProducts": "Query products with low stock",
+      "customerDistribution": "Analyze customer geographical distribution",
+      "salesTrendChart": "Generate a sales trend chart for the last six months",
+      "salesBarChartLast10Months": "Bar chart of sales quantity for the last 10 months",
       "whatIsLangGraph": "What is LangGraph?"
     }
   },

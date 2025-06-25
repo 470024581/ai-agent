@@ -2,10 +2,15 @@
 Intelligent Data Analysis Flow Based on LangGraph
 """
 import json
+import time
+import uuid
+import asyncio
 from typing import Dict, Any, List, Optional, TypedDict
 import logging
 import requests
+from langgraph.graph import StateGraph
 from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource
+from .models import WorkflowEvent, WorkflowEventType, NodeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +83,7 @@ def router_node(state: GraphState) -> GraphState:
     
     logger.info(f"Router decision result: {query_type} for input: {user_input}")
     
-    return {
-        **state,
-        "query_type": query_type
-    }
+    return {"query_type": query_type}
 
 def sql_classifier_node(state: GraphState) -> GraphState:
     """SQL classification node: use LLM to determine if it's data query or chart building"""
@@ -143,10 +145,7 @@ def sql_classifier_node(state: GraphState) -> GraphState:
     
     logger.info(f"SQL task type: {sql_task_type} for input: {user_input}")
     
-    return {
-        **state,
-        "sql_task_type": sql_task_type
-    }
+    return {"sql_task_type": sql_task_type}
 
 async def sql_execution_node(state: GraphState) -> GraphState:
     """SQL execution node: retrieve structured data"""
@@ -167,21 +166,14 @@ async def sql_execution_node(state: GraphState) -> GraphState:
             logger.info(f"SQL execution successful, structured_data keys: {list(structured_data.keys())}")
             
             return {
-                **state,
                 "structured_data": structured_data,
                 "answer": result["answer"]
             }
         else:
-            return {
-                **state,
-                "error": result.get("error", "SQL execution failed")
-            }
+            return {"error": result.get("error", "SQL execution failed")}
     except Exception as e:
         logger.error(f"SQL execution node error: {e}")
-        return {
-            **state,
-            "error": str(e)
-        }
+        return {"error": str(e)}
 
 def chart_config_node(state: GraphState) -> GraphState:
     """Chart configuration node: generate chart configuration"""
@@ -192,16 +184,10 @@ def chart_config_node(state: GraphState) -> GraphState:
         # Generate chart configuration based on data and user requirements
         chart_config = generate_chart_config(structured_data, user_input)
         
-        return {
-            **state,
-            "chart_config": chart_config
-        }
+        return {"chart_config": chart_config}
     except Exception as e:
         logger.error(f"Chart config node error: {e}")
-        return {
-            **state,
-            "error": str(e)
-        }
+        return {"error": str(e)}
 
 async def rag_query_node(state: GraphState) -> GraphState:
     """RAG query node"""
@@ -213,45 +199,29 @@ async def rag_query_node(state: GraphState) -> GraphState:
         
         if result["success"]:
             return {
-                **state,
                 "answer": result["answer"],
                 "structured_data": result.get("data", {})
             }
         else:
-            return {
-                **state,
-                "error": result.get("error", "RAG query failed")
-            }
+            return {"error": result.get("error", "RAG query failed")}
     except Exception as e:
         logger.error(f"RAG query node error: {e}")
-        return {
-            **state,
-            "error": str(e)
-        }
+        return {"error": str(e)}
 
 def chart_rendering_node(state: GraphState) -> GraphState:
     """Chart rendering node: call MCP service"""
     try:
         chart_config = state.get("chart_config")
         if not chart_config:
-            return {
-                **state,
-                "error": "Missing chart configuration"
-            }
+            return {"error": "Missing chart configuration"}
         
         # Call QuickChart API to generate chart
         chart_image = generate_chart_image(chart_config)
         
-        return {
-            **state,
-            "chart_image": chart_image
-        }
+        return {"chart_image": chart_image}
     except Exception as e:
         logger.error(f"Chart rendering node error: {e}")
-        return {
-            **state,
-            "error": str(e)
-        }
+        return {"error": str(e)}
 
 def llm_processing_node(state: GraphState) -> GraphState:
     """Large model invocation node"""
@@ -260,46 +230,46 @@ def llm_processing_node(state: GraphState) -> GraphState:
             logger.warning("LLM not available, returning original answer")
             return state
         
-        structured_data = state.get("structured_data", {})
         user_input = state["user_input"]
-        current_answer = state.get("answer", "")
+        # Consolidate all available information for the LLM
+        context_data = {
+            "user_query": user_input,
+            "structured_data": state.get("structured_data"),
+            "current_answer": state.get("answer"),
+            "chart_image_url": state.get("chart_image")
+        }
         
         # Use LLM to optimize the answer
         prompt = f"""
-        User question: {user_input}
+        You are an expert data analyst. Your task is to provide a comprehensive and insightful answer based on the user's query and the data provided.
+
+        User's question: \"{user_input}\"
         
-        Data result: {json.dumps(structured_data, ensure_ascii=False, indent=2)}
+        Available context and data (some fields may be empty):
+        {json.dumps(context_data, ensure_ascii=False, indent=2)}
         
-        Current answer: {current_answer}
-        
-        Please answer the user's question in natural language based on the above data. Requirements:
-        1. Answer accurately and concisely
-        2. Highlight key data points
-        3. Answer in Chinese
-        4. Focus on the most relevant insights in the data
-        5. If it's sales data, analyze trends and key indicators
+        Please synthesize all the information to generate a final, natural language answer in Chinese.
+        Requirements:
+        1. If a chart image URL is present, mention the chart in your answer (e.g., \"As shown in the chart above...\" or \"I have generated a chart for your reference.\").
+        2. Provide key insights, trends, or summaries based on the structured data.
+        3. If there's an existing answer, refine it; otherwise, generate a new one.
+        4. The final answer must be clear, concise, and directly address the user's question.
         """
         
         response = llm.invoke(prompt)
         
         # Handle different response types
         if hasattr(response, 'content'):
-            enhanced_answer = response.content
+            final_answer = response.content
         elif isinstance(response, str):
-            enhanced_answer = response
+            final_answer = response
         else:
-            enhanced_answer = str(response)
-        
-        logger.info(f"LLM enhanced answer generated: {enhanced_answer[:100]}...")
-        
-        return {
-            **state,
-            "answer": enhanced_answer
-        }
+            final_answer = str(response)
+            
+        return {"answer": final_answer}
     except Exception as e:
         logger.error(f"LLM processing node error: {e}")
-        # Return original state with current answer if LLM fails
-        return state
+        return {"error": f"LLM processing failed: {e}"}
 
 def validation_node(state: GraphState) -> GraphState:
     """Output validation node"""
@@ -323,15 +293,12 @@ def validation_node(state: GraphState) -> GraphState:
         # Ensure score is within reasonable range
         score = max(0, min(10, score))
         
-        return {
-            **state,
-            "quality_score": score
-        }
+        return {"quality_score": score}
     except Exception as e:
         logger.error(f"Validation node error: {e}")
         return {
-            **state,
-            "quality_score": 5
+            "quality_score": 0,
+            "error": f"Validation node error: {e}"
         }
 
 def retry_node(state: GraphState) -> GraphState:
@@ -340,13 +307,11 @@ def retry_node(state: GraphState) -> GraphState:
     
     if retry_count >= 2:  # Maximum 2 retries
         return {
-            **state,
             "answer": "Sorry, after multiple attempts, we still cannot generate satisfactory results. Please try to rephrase your question.",
             "quality_score": 10  # Set high score to end the process
         }
     
     return {
-        **state,
         "retry_count": retry_count + 1,
         "error": None  # Clear error for retry
     }
@@ -929,74 +894,187 @@ def generate_chart_image(chart_config: Dict[str, Any]) -> str:
         logger.error(f"Failed to generate chart image: {e}")
         return ""
 
-# Simplified flow processing function
-async def process_intelligent_query(user_input: str, datasource: Dict[str, Any]) -> Dict[str, Any]:
-    """Process simplified version of intelligent query"""
-    try:
-        # Initialize state
-        state = {
-            "user_input": user_input,
-            "query_type": "",
-            "sql_task_type": "",
-            "structured_data": None,
-            "chart_config": None,
-            "chart_image": None,
-            "answer": "",
-            "quality_score": 0,
-            "retry_count": 0,
-            "datasource": datasource,
-            "error": None
+# Enhanced flow processing function with WebSocket support
+async def process_intelligent_query(
+    user_input: str, 
+    datasource: Dict[str, Any], 
+    execution_id: str = None
+) -> Dict[str, Any]:
+    """
+    Process intelligent analysis query using LangGraph, with WebSocket support.
+    """
+    
+    from .websocket_manager import websocket_manager
+    
+    # Define workflow graph
+    workflow = StateGraph(GraphState)
+    
+    # Add nodes to the graph
+    workflow.add_node("start_node", lambda state: state)  # Start node just passes through
+    workflow.add_node("router_node", router_node)
+    workflow.add_node("sql_classifier_node", sql_classifier_node)
+    workflow.add_node("sql_execution_node", sql_execution_node)
+    workflow.add_node("rag_query_node", rag_query_node)
+    workflow.add_node("chart_config_node", chart_config_node)
+    workflow.add_node("chart_rendering_node", chart_rendering_node)
+    workflow.add_node("llm_processing_node", llm_processing_node)
+    workflow.add_node("validation_node", validation_node)
+    workflow.add_node("retry_node", retry_node)
+    # Define the end node explicitly
+    workflow.add_node("end_node", lambda state: {"success": True})
+
+    # Set entry point
+    workflow.set_entry_point("start_node")
+    
+    # Connect start to router
+    workflow.add_edge("start_node", "router_node")
+
+    # Add edges
+    workflow.add_conditional_edges(
+        "router_node",
+        lambda state: state["query_type"],
+        {
+            "sql": "sql_classifier_node",
+            "rag": "rag_query_node"
         }
+    )
+    workflow.add_conditional_edges(
+        "sql_classifier_node",
+        lambda state: state["sql_task_type"],
+        {
+            "query": "llm_processing_node",  # Direct data query goes to LLM for summary
+            "chart": "sql_execution_node"   # Corrected: Chart task goes to execution first
+        }
+    )
+    
+    workflow.add_edge("rag_query_node", "llm_processing_node")
+    workflow.add_edge("sql_execution_node", "chart_config_node")
+    
+    # After chart is configured, render it
+    workflow.add_edge("chart_config_node", "chart_rendering_node")
+    
+    # CRITICAL FIX: After rendering the chart, go to LLM processing to get a description
+    workflow.add_edge("chart_rendering_node", "llm_processing_node")
+
+    # After processing, validate the result
+    workflow.add_edge("llm_processing_node", "validation_node")
+
+    # Conditional logic for validation
+    workflow.add_conditional_edges(
+        "validation_node",
+        lambda state: "retry" if state.get("quality_score", 10) < 8 else "end",
+        {
+            "retry": "retry_node",
+            "end": "end_node"  # Connect validation to the end node
+        }
+    )
+    
+    # Retry logic
+    workflow.add_edge("retry_node", "llm_processing_node")
+
+    # Set finish point
+    workflow.set_finish_point("end_node")
+
+    # Compile the graph
+    app = workflow.compile()
+    
+    # Initial state
+    initial_state = {
+        "user_input": user_input,
+        "datasource": datasource,
+        "retry_count": 0,
+        "error": None,
+        "answer": ""
+    }
+    
+    config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}
+    
+    # Helper to emit events
+    async def emit_event(event_type: WorkflowEventType, node_id: str = None, **kwargs):
+        if execution_id:
+            event = WorkflowEvent(
+                type=event_type,
+                timestamp=time.time(),  # Add current timestamp
+                execution_id=execution_id, 
+                node_id=node_id, 
+                **kwargs
+            )
+            await websocket_manager.broadcast_to_execution(execution_id, event)
+    
+    await emit_event("execution_started", data={"query": user_input})
+    
+    final_state = None
+    
+    try:
+        # Use both astream_events for real-time updates and astream for final state
+        events_task = None
+        async def track_events():
+            async for event in app.astream_events(initial_state, config, version="v1"):
+                kind = event["event"]
+                
+                if kind == "on_chain_start":
+                    node_name = event.get("name", "")
+                    logger.info(f"Node started: {node_name}")
+                    await emit_event("node_started", node_id=node_name)
+                
+                elif kind == "on_chain_end":
+                    node_name = event.get("name", "")
+                    logger.info(f"Node completed: {node_name}")
+                    await emit_event("node_completed", node_id=node_name, data=event.get("data"))
+                
+                elif kind == "on_chain_error":
+                    node_name = event.get("name", "")
+                    logger.error(f"Node error: {node_name} - {event.get('data')}")
+                    await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
         
-        # Execute flow
-        # 1. Router judgment
-        state = router_node(state)
+        # Start event tracking in background and get final state
+        events_task = asyncio.create_task(track_events())
         
-        # 2. Process based on query type
-        if state["query_type"] == "sql":
-            # SQL classification
-            state = sql_classifier_node(state)
-            
-            # SQL execution
-            state = await sql_execution_node(state)
-            
-            if state["sql_task_type"] == "chart" and not state.get("error"):
-                # Chart configuration
-                state = chart_config_node(state)
-                # Chart rendering
-                state = chart_rendering_node(state)
+        # Get the complete final state using astream
+        # We need to accumulate the state throughout the execution
+        accumulated_state = initial_state.copy()
+        async for state in app.astream(initial_state, config):
+            if isinstance(state, dict):
+                accumulated_state.update(state)
             else:
-                # LLM processing
-                state = llm_processing_node(state)
-        else:
-            # RAG query
-            state = await rag_query_node(state)
+                # Handle AddableUpdatesDict or similar types
+                for key, value in state.items():
+                    accumulated_state[key] = value
         
-        # 3. Output validation
-        state = validation_node(state)
+        final_state = accumulated_state
         
-        # 4. If quality is poor and retry count not exceeded, retry
-        if state["quality_score"] < 8 and state["retry_count"] < 2:
-            state = retry_node(state)
-            # Here simplified processing, actual should re-execute flow
-            state["quality_score"] = 8  # Avoid infinite retry
+        # Wait for events to complete
+        if events_task:
+            try:
+                await events_task
+            except Exception as e:
+                logger.warning(f"Event tracking completed with exception: {e}")
+        
+        # final_state should now be the complete final state
+        if not isinstance(final_state, dict):
+            final_state = {}
+        
+        logger.info(f"Final state structure: {type(final_state)}")
+        logger.info(f"Sending execution_completed event for {execution_id} with final_state keys: {list(final_state.keys()) if isinstance(final_state, dict) else 'not_dict'}")
+        
+        # Make sure we're sending a dict for the WorkflowEvent
+        final_state_for_event = final_state if isinstance(final_state, dict) else {}
+        await emit_event("execution_completed", data=final_state_for_event)
+        logger.info(f"Execution completed event sent for {execution_id}")
         
         return {
-            "success": state["quality_score"] >= 8,
-            "answer": state["answer"],
-            "query_type": state["query_type"],
-            "sql_task_type": state.get("sql_task_type"),
-            "data": state.get("structured_data"),
-            "chart_config": state.get("chart_config"),
-            "chart_image": state.get("chart_image"),
-            "quality_score": state["quality_score"],
-            "error": state.get("error")
+            "success": not final_state.get("error"),
+            **final_state
         }
-        
+    
     except Exception as e:
-        logger.error(f"Error processing intelligent query: {e}")
+        logger.error(f"Error during graph execution for {execution_id}: {e}")
+        await emit_event("execution_error", error=str(e))
         return {
             "success": False,
-            "answer": f"Error occurred while processing query: {str(e)}",
+            "user_input": user_input,
             "error": str(e)
-        } 
+        }
+    finally:
+        # Final cleanup - let routes.py handle this after sending completion event
+        logger.info(f"Execution {execution_id} finished or was terminated.") 

@@ -97,8 +97,10 @@ class FileProcessingStatus(BaseModel):
 
 # Base Request Model
 class QueryRequest(BaseModel):
+    """Request model for intelligent analysis queries"""
     query: str
-    datasource_id: Optional[int] = None  # Added data source support
+    datasource_id: int
+    client_id: Optional[str] = None # Add client_id for WebSocket association
 
 class InventoryQueryRequest(BaseModel):
     query: str
@@ -154,6 +156,7 @@ class SalesReportResponse(BaseResponse):
 
 # Backward Compatible Legacy Models
 class QueryResponse(BaseModel):
+    """Response model for intelligent queries"""
     answer: str
     data_for_chart: Optional[Dict[str, Any]] = None
     datasource_id: Optional[int] = None
@@ -175,4 +178,88 @@ class ChartDataset(BaseModel):
 class ChartData(BaseModel):
     type: str  # "bar", "line", "doughnut", "horizontalBar", etc.
     labels: List[str]
-    datasets: List[ChartDataset] 
+    datasets: List[ChartDataset]
+
+class NodeStatus(str, Enum):
+    """Node execution status"""
+    PENDING = "pending"
+    RUNNING = "running" 
+    COMPLETED = "completed"
+    ERROR = "error"
+
+class WorkflowEventType(str, Enum):
+    """Workflow event types"""
+    EXECUTION_STARTED = "execution_started"
+    NODE_STARTED = "node_started"
+    NODE_COMPLETED = "node_completed"
+    NODE_ERROR = "node_error"
+    EDGE_ACTIVATED = "edge_activated"
+    EXECUTION_COMPLETED = "execution_completed"
+    EXECUTION_ERROR = "execution_error"
+
+class WorkflowEvent(BaseModel):
+    """Workflow event message"""
+    type: WorkflowEventType
+    execution_id: str
+    timestamp: float
+    node_id: Optional[str] = None
+    edge_from: Optional[str] = None
+    edge_to: Optional[str] = None
+    status: Optional[NodeStatus] = None
+    duration: Optional[float] = None
+    error: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    retry_count: Optional[int] = None
+    quality_score: Optional[int] = None
+
+class NodeExecutionDetails(BaseModel):
+    """Detailed node execution information"""
+    node_id: str
+    node_type: str
+    status: NodeStatus
+    start_time: float
+    end_time: Optional[float] = None
+    duration: Optional[float] = None
+    input_summary: Optional[Dict[str, Any]] = None
+    output_summary: Optional[Dict[str, Any]] = None
+    error_details: Optional[str] = None
+    memory_usage: Optional[int] = None
+    retry_count: int = 0
+
+class ExecutionSummary(BaseModel):
+    """Complete execution summary"""
+    execution_id: str
+    total_duration: float
+    nodes_executed: int
+    nodes_failed: int
+    total_memory_peak: int
+    start_timestamp: float
+    end_timestamp: Optional[float] = None
+    final_quality_score: int
+    success: bool
+    node_details: List[NodeExecutionDetails] = []
+
+class NodeState(BaseModel):
+    """Node state information"""
+    id: str
+    status: NodeStatus
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    duration: Optional[float] = None
+    error: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    node_type: Optional[str] = None
+    input_summary: Optional[Dict[str, Any]] = None
+    output_summary: Optional[Dict[str, Any]] = None
+    memory_usage: Optional[int] = None
+    retry_count: int = 0
+
+class ExecutionState(BaseModel):
+    """Execution state information"""
+    execution_id: str
+    start_time: float
+    end_time: Optional[float] = None
+    status: NodeStatus
+    current_node: Optional[str] = None
+    nodes: Dict[str, NodeState] = {}
+    error: Optional[str] = None 

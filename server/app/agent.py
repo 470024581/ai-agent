@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from pathlib import Path # Added Path
 import logging # Added logging
 import pandas as pd # Added pandas
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -398,8 +399,24 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
     try:
         logger.info(f"Initializing SQLDatabase for table: {db_table_name} using URI: {DB_URI}")
         # SQLDatabase will connect to the main smart.db, but we tell it to only include the specific table.
-        db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name])
+        db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=3)
         
+        # Pre-process the query for common time-based requests to guide the LLM
+        processed_query = query
+        try:
+            # More specific conversions for simple cases, e.g., "last 6 weeks" -> "last 42 days"
+            def _convert_weeks_to_days(match):
+                num_weeks = int(match.group(1))
+                return f"last {num_weeks * 7} days"
+
+            processed_query = re.sub(r'last\s+week', "last 7 days", processed_query, flags=re.IGNORECASE)
+            processed_query = re.sub(r'last (\d+)\s+weeks', _convert_weeks_to_days, processed_query, flags=re.IGNORECASE)
+            
+            logger.info(f"Original query: '{query}', Processed for time hints: '{processed_query}'")
+        except Exception as e:
+            logger.error(f"Error during query pre-processing: {e}")
+            processed_query = query # Fallback to original query
+
         logger.info(f"Creating SQL Agent for table: {db_table_name}")
         
         # Try to use SQL Agent first, fallback to direct query if it fails
@@ -424,8 +441,8 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         # Try SQL Agent first if available
         if sql_agent_executor:
             try:
-                logger.info(f"Using SQL Agent for query: {query}")
-                response = sql_agent_executor.invoke({"input": query})
+                logger.info(f"Using SQL Agent for query: {processed_query}")
+                response = sql_agent_executor.invoke({"input": processed_query})
                 
                 # Extract answer from agent response
                 if isinstance(response, dict):
@@ -433,17 +450,26 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 else:
                     answer = str(response)
                 
-                return {
-                    "query": query, "query_type": "sql_agent", "success": True,
-                    "answer": answer,
-                    "data": {
-                        "source_datasource_id": active_datasource['id'],
-                        "source_datasource_name": active_datasource['name'],
-                        "queried_table": db_table_name,
-                        "answer": answer,
-                        "method": "sql_agent"
-                    }
-                }
+                # Post-process SQL: convert unsupported "weeks" modifier to "days"
+                def _convert_weeks_to_days_sql(match):
+                    num_weeks = int(match.group(1))
+                    return f"date('now', '-{num_weeks * 7} days')"
+
+                # Pattern matches date('now', '-100 weeks')
+                weeks_pattern_now = re.compile(r"date\('now',\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
+                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days_sql, answer)
+
+                # Pattern matches date(<field>, '-N weeks')
+                def _convert_weeks_generic_sql(match):
+                    field = match.group(1)
+                    num_weeks = int(match.group(2))
+                    return f"date({field}, '-{num_weeks * 7} days')"
+
+                weeks_pattern_generic = re.compile(r"date\(([^,\s]+),\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
+                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic_sql, sql_query)
+
+                logger.info(f"LLM generated SQL (post-processed): {sql_query}")
+                
             except Exception as agent_error:
                 logger.warning(f"SQL Agent execution failed: {agent_error}, falling back to direct query")
         
@@ -469,7 +495,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             
             # Use LLM to generate appropriate SQL query
             sql_generation_prompt = f"""
-            User query: "{query}"
+            User query: "{processed_query}"
             
             Data source table structure information: {schema_description}
             
@@ -499,9 +525,11 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             - For recent time periods, always filter data BEFORE grouping
             
             Recent Time Period Examples:
-            - "最近100周" (recent 100 weeks): Use WHERE saledate >= date('now', '-700 days') -- 100 weeks * 7 days
-            - "最近12个月" (recent 12 months): Use WHERE saledate >= date('now', '-12 months')
-            - "最近3年" (recent 3 years): Use WHERE saledate >= date('now', '-3 years')
+            - "last 10 months": Use `WHERE saledate >= date('now', '-10 months')`
+            - "last 6 weeks": Use `WHERE saledate >= date('now', '-42 days')` (6 weeks * 7 days)
+            - "this year": Use `WHERE strftime('%Y', saledate) = strftime('%Y', 'now')`
+            - "last year": Use `WHERE strftime('%Y', saledate) = strftime('%Y', 'now', '-1 year')`
+            - "yesterday": Use `WHERE saledate >= date('now', '-1 day')`
             
             CRITICAL: SQLite does NOT support "-N weeks" syntax. Always convert weeks to days:
             - 1 week = 7 days
@@ -533,6 +561,8 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             - For week grouping, use: ORDER BY strftime('%Y-%W', date_field_name) ASC (don't CAST to INTEGER)
             - For day grouping, use: ORDER BY date(date_field_name) ASC
             
+            When a user asks for a chart (e.g., "bar chart of ..."), ensure your query returns at least two columns: one for the labels (like time periods) and one for the values.
+
             Please generate SQL based on user requirements and available table structure, ensuring correct SQLite syntax and sorting.
             
             Example SQL for different scenarios:
@@ -555,24 +585,22 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     llm_sql = str(response)
                 
                 # Post-process SQL: convert unsupported "weeks" modifier to "days"
-                import re
-
-                def _convert_weeks_to_days(match):
+                def _convert_weeks_to_days_sql(match):
                     num_weeks = int(match.group(1))
                     return f"date('now', '-{num_weeks * 7} days')"
 
-                # Pattern matches date('now', '-100 weeks')  或其他数字
+                # Pattern matches date('now', '-100 weeks')
                 weeks_pattern_now = re.compile(r"date\('now',\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days, llm_sql)
+                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days_sql, llm_sql)
 
-                # Pattern matches date\(<field>, '-N weeks') 例如 date(saledate, '-4 weeks')
-                def _convert_weeks_generic(match):
+                # Pattern matches date(<field>, '-N weeks')
+                def _convert_weeks_generic_sql(match):
                     field = match.group(1)
                     num_weeks = int(match.group(2))
                     return f"date({field}, '-{num_weeks * 7} days')"
 
                 weeks_pattern_generic = re.compile(r"date\(([^,\s]+),\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic, sql_query)
+                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic_sql, sql_query)
 
                 logger.info(f"LLM generated SQL (post-processed): {sql_query}")
                 
@@ -622,7 +650,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 # Use LLM to generate natural language answer
                 try:
                     answer_generation_prompt = f"""
-                    User query: "{query}"
+                    User query: "{processed_query}"
                     
                     SQL query result: {result}
                     
@@ -651,7 +679,9 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     llm_answer = f"Query returned {len(rows)} records"
                 
                 return {
-                    "query": query, "query_type": "sql_agent", "success": True,
+                    "query": query,
+                    "query_type": "sql_agent",
+                    "success": True,
                     "answer": llm_answer,
                     "data": {
                         "source_datasource_id": active_datasource['id'],
@@ -666,7 +696,9 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 }
             else:
                 return {
-                    "query": query, "query_type": "sql_agent", "success": True,
+                    "query": query,
+                    "query_type": "sql_agent",
+                    "success": True,
                     "answer": "Query returned no data",
                     "data": {
                         "source_datasource_id": active_datasource['id'],
@@ -683,7 +715,9 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         except Exception as sql_error:
             logger.error(f"Direct SQL execution failed: {sql_error}")
             return {
-                "query": query, "query_type": "sql_agent", "success": False,
+                "query": processed_query,
+                "query_type": "sql_agent",
+                "success": False,
                 "answer": f"Database query failed: {str(sql_error)}",
                 "data": {
                     "source_datasource_id": active_datasource['id'],
@@ -698,7 +732,9 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
     except Exception as e:
         logger.error(f"SQL Agent query failed for datasource {active_datasource['name']} on table {db_table_name}: {e}", exc_info=True)
         return {
-            "query": query, "query_type": "sql_agent", "success": False,
+            "query": processed_query,
+            "query_type": "sql_agent",
+            "success": False,
             "answer": f"An error occurred while executing SQL query in data source '{active_datasource['name']}' (Table: {db_table_name}).",
             "data": {"source_datasource_id": active_datasource['id'], "source_datasource_name": active_datasource['name']},
             "error": str(e)

@@ -39,7 +39,6 @@ class Config:
     # Ollama configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
-    OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "300"))
     
     # Common LLM parameters
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
@@ -117,7 +116,6 @@ class Config:
                 "provider": "ollama",
                 "base_url": cls.OLLAMA_BASE_URL,
                 "model": cls.OLLAMA_MODEL,
-                "timeout": cls.OLLAMA_TIMEOUT,
                 "temperature": cls.LLM_TEMPERATURE,
                 "max_tokens": cls.LLM_MAX_TOKENS
             }

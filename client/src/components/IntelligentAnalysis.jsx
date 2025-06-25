@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
 import { 
   FaBrain, 
   FaProjectDiagram, 
@@ -22,8 +23,21 @@ import {
   FaCheckCircle,
   FaRedo,
   FaPlay,
-  FaStop
+  FaStop,
 } from 'react-icons/fa';
+import { FaWifi } from 'react-icons/fa6';
+import { TbWifiOff } from 'react-icons/tb';
+import useWorkflowWebSocket from '../hooks/useWorkflowWebSocket';
+import {
+  selectConnectionStatus,
+  selectCurrentNode,
+  selectActiveEdges,
+  selectCurrentExecutionData,
+  resetCurrentExecution,
+  selectMemoizedNodeStates,
+  selectCurrentExecutionResult,
+  startExecution,
+} from '../store/workflowSlice';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
@@ -31,15 +45,35 @@ import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
 import { Spinner } from './ui/spinner';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
+import { ChevronsUpDown } from 'lucide-react';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
+  const dispatch = useDispatch();
+  
+  // Local state
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [activeDataSource, setActiveDataSource] = useState(null);
   const [availableDataSources, setAvailableDataSources] = useState([]);
+  const [executionId, setExecutionId] = useState(null);
+  
+  // Redux state
+  const connectionStatus = useSelector(selectConnectionStatus);
+  const reduxNodeStates = useSelector(selectMemoizedNodeStates);
+  const currentNode = useSelector(selectCurrentNode);
+  const activeEdges = useSelector(selectActiveEdges);
+  const currentExecutionData = useSelector(selectCurrentExecutionData);
+  const currentExecutionNodes = currentExecutionData?.nodes || {};
+  const executionResult = useSelector(selectCurrentExecutionResult);
+  
+  // WebSocket connection
+  const { 
+    getClientId,
+  } = useWorkflowWebSocket();
   
   // LangGraph nodes and edges definition - complete flow with start and end nodes
   const langGraphNodes = [
@@ -72,136 +106,49 @@ function IntelligentAnalysis() {
     { from: 'validation_node', to: 'end_node', condition: 'Score >= 8', color: '#22c55e' }
   ];
 
-  // Process monitoring state
-  const [currentNode, setCurrentNode] = useState(null);
-  const [executedNodes, setExecutedNodes] = useState([]);
-  const [activeEdges, setActiveEdges] = useState([]);
-  const [nodeStates, setNodeStates] = useState({});
+  // Legacy state for backward compatibility (will be removed)
+  const [localNodeStates, setLocalNodeStates] = useState({});
+  
+  // Local state for expanded node details
+  const [expandedNodeId, setExpandedNodeId] = useState(null);
 
-  // Initialize node states
+  // Initialize node states for fallback
   useEffect(() => {
     const initialStates = {};
     langGraphNodes.forEach(node => {
       initialStates[node.id] = 'pending';
     });
-    setNodeStates(initialStates);
+    setLocalNodeStates(initialStates);
   }, []);
-
-  // Simulate LangGraph flow execution
-  const simulateLangGraphFlow = async (query) => {
-    // Reset state
-    const initialStates = {};
-    langGraphNodes.forEach(node => {
-      initialStates[node.id] = 'pending';
-    });
-    setNodeStates(initialStates);
-    setExecutedNodes([]);
-    setActiveEdges([]);
-    setCurrentNode(null);
-    
-    // Simulate real LangGraph execution path
-    const executionPath = determineExecutionPath(query);
-    
-    for (let i = 0; i < executionPath.length; i++) {
-      const nodeId = executionPath[i];
-      
-      // Set current node
-      setCurrentNode(nodeId);
-      setNodeStates(prev => ({ ...prev, [nodeId]: 'running' }));
-      
-      // Activate edges
-      if (i > 0) {
-        const fromNode = executionPath[i - 1];
-        const edge = langGraphEdges.find(e => e.from === fromNode && e.to === nodeId);
-        if (edge) {
-          setActiveEdges(prev => [...prev, edge]);
-        }
-      }
-      
-      // Simulate node execution time
-      await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 1500));
-      
-      // Complete current node
-      setNodeStates(prev => ({ ...prev, [nodeId]: 'completed' }));
-      setExecutedNodes(prev => [...prev, nodeId]);
+  
+  // Listen for execution result from WebSocket
+  useEffect(() => {
+    console.log('ExecutionResult changed:', executionResult);
+    if (executionResult) {
+      console.log('Setting result from WebSocket execution result:', executionResult);
+      console.log('Result keys:', Object.keys(executionResult));
+      setResult(executionResult);
+      setLoading(false);
     }
-    
-    setCurrentNode(null);
+  }, [executionResult]);
+  
+  // Handler for node click
+  const handleNodeClick = (nodeId) => {
+    if (currentExecutionNodes[nodeId]) {
+      setExpandedNodeId(expandedNodeId === nodeId ? null : nodeId);
+    }
   };
   
-  // Determine execution path based on query content
-  const determineExecutionPath = (query) => {
-    const lowerQuery = query.toLowerCase();
-    const isChart = lowerQuery.includes('chart') || lowerQuery.includes('graph') || 
-                    lowerQuery.includes('plot') || lowerQuery.includes('trend') ||
-                    lowerQuery.includes('generate') || lowerQuery.includes('visualization');
-    const isRAG = lowerQuery.includes('langgraph') || lowerQuery.includes('what is') || 
-                  lowerQuery.includes('explain') || lowerQuery.includes('how');
-    
-    if (isRAG) {
-      return ['start_node', 'router_node', 'rag_query_node', 'llm_processing_node', 'validation_node', 'end_node'];
-    } else if (isChart) {
-      return ['start_node', 'router_node', 'sql_classifier_node', 'sql_execution_node', 'chart_config_node', 'chart_rendering_node', 'llm_processing_node', 'validation_node', 'end_node'];
-    } else {
-      return ['start_node', 'router_node', 'sql_classifier_node', 'sql_execution_node', 'llm_processing_node', 'validation_node', 'end_node'];
-    }
+  const handleSelectExecution = (executionId) => {
+    // Switch to viewing historical execution
+    console.log('Selecting execution for view:', executionId);
   };
-
-  const fetchActiveDataSource = async () => {
-    try {
-      const response = await fetch('/api/v1/datasources/active');
-      if (response.ok) {
-        const result = await response.json();
-        // Ensure returned data format is correct
-        if (result.success && result.data) {
-          setActiveDataSource(result.data);
-        } else {
-          console.warn('No active data source or unexpected format:', result);
-          setActiveDataSource(null);
-        }
-      } else {
-        console.error('Failed to fetch active data source:', response.status);
-        setActiveDataSource(null);
-      }
-    } catch (error) {
-      console.error('Failed to fetch active data source:', error);
-      setActiveDataSource(null);
-    }
-  };
-
-  const fetchAvailableDataSources = async () => {
-    try {
-      const response = await fetch('/api/v1/datasources');
-      if (response.ok) {
-        const result = await response.json();
-        // Ensure returned data format is correct
-        if (result.success && Array.isArray(result.data)) {
-          setAvailableDataSources(result.data);
-        } else {
-          console.warn('Unexpected data format from datasources API:', result);
-          setAvailableDataSources([]);
-        }
-      } else {
-        console.error('Failed to fetch data sources:', response.status);
-        setAvailableDataSources([]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch available data sources:', error);
-      setAvailableDataSources([]);
-    }
-  };
-
-  const handleDataSourceChange = async (dataSourceId) => {
-    try {
-      const response = await fetch(`/api/v1/datasources/${dataSourceId}/activate`, {
-        method: 'POST'
-      });
-      if (response.ok) {
-        await fetchActiveDataSource(); // Refresh active data source
-      }
-    } catch (error) {
-      console.error('Failed to switch data source:', error);
-    }
+  
+  const handleReplayExecution = (query) => {
+    // Set the query and clear current execution
+    setQuery(query);
+    dispatch(resetCurrentExecution());
+    // User can then submit to execute
   };
 
   const handleSubmit = async (e) => {
@@ -215,12 +162,18 @@ function IntelligentAnalysis() {
       return;
     }
 
+    // Check WebSocket connection status
+    if (connectionStatus !== 'connected') {
+      setError('WebSocket连接未建立，请等待连接后重试');
+      return;
+    }
+
     setLoading(true);
     setError('');
     setResult(null);
     
-    // Start LangGraph flow monitoring
-    simulateLangGraphFlow(query.trim());
+    // Reset previous execution states
+    dispatch(resetCurrentExecution());
 
     try {
       const response = await fetch('/api/v1/intelligent-analysis', {
@@ -231,6 +184,7 @@ function IntelligentAnalysis() {
         body: JSON.stringify({
           query: query.trim(),
           datasource_id: activeDataSource.id,
+          client_id: getClientId(),
         }),
       });
 
@@ -239,16 +193,25 @@ function IntelligentAnalysis() {
       }
 
       const data = await response.json();
-      setResult(data);
+      // Don't set result immediately - wait for WebSocket execution_completed event
+      // setResult(data);
+      
+      // Set execution ID for WebSocket connection and start execution tracking
+      if (data.execution_id) {
+        setExecutionId(data.execution_id);
+        // Start execution tracking in Redux even if WebSocket message hasn't arrived yet
+        dispatch(startExecution({
+          executionId: data.execution_id,
+          query: query.trim(),
+          timestamp: Date.now()
+        }));
+      }
+      
     } catch (error) {
       setError(error.message);
-      // Mark currently running node as failed when error occurs
-      if (currentNode) {
-        setNodeStates(prev => ({ ...prev, [currentNode]: 'error' }));
-      }
-    } finally {
       setLoading(false);
     }
+    // Don't set loading to false in finally block - wait for WebSocket completion or error
   };
 
   const handleExampleClick = (exampleQuery) => {
@@ -306,14 +269,52 @@ function IntelligentAnalysis() {
   };
 
   const renderLangGraphDiagram = () => {
+    const nodeStates = reduxNodeStates || localNodeStates;
+    const currentActiveNode = currentNode || null;
+    const currentActiveEdges = activeEdges || [];
+
     return (
       <div className="w-full">
         <h6 className="font-bold text-blue-600 mb-4 flex items-center text-lg">
           <FaProjectDiagram className="mr-2 h-5 w-5" />
           {t('intelligentAnalysis.langGraphProcess')}
-          {currentNode && (
+          
+          {/* Connection Status */}
+          <div className="ml-4 flex items-center">
+            {connectionStatus === 'connected' ? (
+              <div className="flex items-center text-green-600">
+                <FaWifi className="h-3 w-3 mr-1" />
+                <span className="text-xs">{t('intelligentAnalysis.connectionStatus.connected')}</span>
+              </div>
+            ) : connectionStatus === 'connecting' ? (
+              <div className="flex items-center text-yellow-600">
+                <FaSpinner className="h-3 w-3 mr-1 animate-spin" />
+                <span className="text-xs">{t('intelligentAnalysis.connectionStatus.connecting')}</span>
+              </div>
+            ) : connectionStatus === 'error' ? (
+              <div className="flex items-center text-red-600">
+                <TbWifiOff className="h-3 w-3 mr-1" />
+                <span className="text-xs">{t('intelligentAnalysis.connectionStatus.error')}</span>
+              </div>
+            ) : (
+              <div className="flex items-center text-gray-400">
+                <TbWifiOff className="h-3 w-3 mr-1" />
+                <span className="text-xs">{t('intelligentAnalysis.connectionStatus.disconnected')}</span>
+              </div>
+            )}
+          </div>
+          
+          {/* Current Node */}
+          {currentActiveNode && (
             <Badge className="ml-3 bg-blue-100 text-blue-800 text-xs">
-              Running: {langGraphNodes.find(n => n.id === currentNode)?.name}
+              Running: {langGraphNodes.find(n => n.id === currentActiveNode)?.name}
+            </Badge>
+          )}
+          
+          {/* Execution ID */}
+          {executionId && (
+            <Badge className="ml-2 bg-gray-100 text-gray-600 text-xs font-mono">
+              {executionId.substring(0, 8)}...
             </Badge>
           )}
         </h6>
@@ -353,7 +354,7 @@ function IntelligentAnalysis() {
               const toNode = langGraphNodes.find(n => n.id === edge.to);
               if (!fromNode || !toNode) return null;
               
-              const isActive = activeEdges.some(ae => ae.from === edge.from && ae.to === edge.to);
+              const isActive = currentActiveEdges.some(ae => ae.from === edge.from && ae.to === edge.to);
               
               // Node parameter definitions
               const nodeRadius = 24; // Circular node radius (node is 48x48px)
@@ -487,9 +488,11 @@ function IntelligentAnalysis() {
           
                       {/* Render nodes */}
           {langGraphNodes.map((node) => {
+            // Use Redux state if available, fallback to local state
             const status = nodeStates[node.id] || 'pending';
-            const isCurrentNode = currentNode === node.id;
-            const isExecuted = executedNodes.includes(node.id);
+            const isCurrentNode = currentActiveNode === node.id;
+            const nodeExecution = currentExecutionData?.nodes[node.id];
+            const isExecuted = nodeExecution?.status === 'completed';
             
             // Determine circular node color based on state and node type
             let nodeColor = 'bg-gray-300 border-gray-400'; // pending
@@ -513,18 +516,18 @@ function IntelligentAnalysis() {
             return (
               <div key={node.id} style={{ position: 'absolute', left: `${node.position.x}px`, top: `${node.position.y}px`, zIndex: 10 }}>
                 {/* Circular node */}
-                <div className={`w-12 h-12 rounded-full border-2 ${nodeColor} flex items-center justify-center shadow-lg relative`}>
-                  {/* Node icon */}
+                <div 
+                  className={`w-12 h-12 rounded-full border-2 ${nodeColor} flex items-center justify-center shadow-lg relative cursor-pointer transition-transform hover:scale-110 ${currentExecutionNodes[node.id] ? 'hover:shadow-xl' : ''}`}
+                  onClick={() => handleNodeClick(node.id)}
+                >
+                  {/* Node icon - show checkmark for completed nodes, otherwise show default icon */}
                   <div className="text-white text-lg">
-                    {getNodeIcon(node, status)}
+                    {status === 'completed' ? (
+                      <FaCheck className="h-4 w-4 text-white" />
+                    ) : (
+                      getNodeIcon(node, status)
+                    )}
                   </div>
-                  
-                  {/* Execution completion mark */}
-                  {isExecuted && (
-                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-600 rounded-full flex items-center justify-center">
-                      <span className="text-white text-xs">✓</span>
-                    </div>
-                  )}
                   
                   {/* Progress ring for running state */}
                   {status === 'running' && (
@@ -540,6 +543,12 @@ function IntelligentAnalysis() {
                   <p className="text-xs text-gray-500 dark:text-gray-500 leading-tight line-clamp-2 max-h-7 overflow-hidden">
                     {node.description}
                   </p>
+                  {/* Execution time display */}
+                  {nodeExecution?.duration && (
+                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                      {nodeExecution.duration.toFixed(2)}s
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -573,7 +582,7 @@ function IntelligentAnalysis() {
   };
 
   const renderExampleQueries = () => {
-    const examples = ['salesThisMonth', 'lowStockProducts', 'customerDistribution', 'salesTrendChart', 'whatIsLangGraph'];
+    const examples = ['salesThisMonth', 'lowStockProducts', 'customerDistribution', 'salesTrendChart', 'salesBarChartLast10Months'];
     
     return (
       <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 h-full">
@@ -603,6 +612,63 @@ function IntelligentAnalysis() {
     );
   };
 
+  const fetchActiveDataSource = async () => {
+    try {
+      const response = await fetch('/api/v1/datasources/active');
+      if (response.ok) {
+        const result = await response.json();
+        // Ensure returned data format is correct
+        if (result.success && result.data) {
+          setActiveDataSource(result.data);
+        } else {
+          console.warn('No active data source or unexpected format:', result);
+          setActiveDataSource(null);
+        }
+      } else {
+        console.error('Failed to fetch active data source:', response.status);
+        setActiveDataSource(null);
+      }
+    } catch (error) {
+      console.error('Failed to fetch active data source:', error);
+      setActiveDataSource(null);
+    }
+  };
+
+  const fetchAvailableDataSources = async () => {
+    try {
+      const response = await fetch('/api/v1/datasources');
+      if (response.ok) {
+        const result = await response.json();
+        // Ensure returned data format is correct
+        if (result.success && Array.isArray(result.data)) {
+          setAvailableDataSources(result.data);
+        } else {
+          console.warn('Unexpected data format from datasources API:', result);
+          setAvailableDataSources([]);
+        }
+      } else {
+        console.error('Failed to fetch data sources:', response.status);
+        setAvailableDataSources([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch available data sources:', error);
+      setAvailableDataSources([]);
+    }
+  };
+
+  const handleDataSourceChange = async (dataSourceId) => {
+    try {
+      const response = await fetch(`/api/v1/datasources/${dataSourceId}/activate`, {
+        method: 'POST'
+      });
+      if (response.ok) {
+        await fetchActiveDataSource(); // Refresh active data source
+      }
+    } catch (error) {
+      console.error('Failed to switch data source:', error);
+    }
+  };
+
   useEffect(() => {
     fetchActiveDataSource();
     fetchAvailableDataSources();
@@ -612,7 +678,7 @@ function IntelligentAnalysis() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
       <div className="w-full px-6 py-6 space-y-8">
         {/* Main content area */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-16 w-full">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full">
         {/* Left side: Query form */}
         <div className="space-y-6 h-full flex flex-col">
           <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
@@ -716,109 +782,95 @@ function IntelligentAnalysis() {
           </div>
         </div>
 
-        {/* Right side: LangGraph flow */}
-        <div className="h-full">
-          {/* Flow chart - aligned with left side height */}
-          <Card className="shadow-xl border-0 h-full">
-            <CardContent className="p-6 h-full">
+        {/* Center: LangGraph flow */}
+        <div className="space-y-6">
+          {/* Flow chart */}
+          <Card className="shadow-xl border-0">
+            <CardContent className="p-6">
               {renderLangGraphDiagram()}
             </CardContent>
           </Card>
+          
+
         </div>
+
+        
       </div>
 
         {/* Analysis results - full width display */}
-        {result && (
-          <Card className="shadow-xl border-0 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 w-full">
-          <CardHeader className="bg-gradient-to-r from-emerald-200 to-teal-200 text-gray-700 rounded-t-lg">
-            <CardTitle className="flex items-center text-xl justify-between">
-              <div className="flex items-center">
-                <FaLightbulb className="mr-3 h-7 w-7" />
-                {t('intelligentAnalysis.analysisResult')}
-              </div>
-              {result.quality_score && (
-                <Badge variant="secondary" className="bg-green-100 text-green-800">
-                  {t('intelligentAnalysis.qualityScore')}: {result.quality_score}/10
-                </Badge>
+        {(loading || result || currentExecutionData?.result) && (
+          <Card className="w-full shadow-lg border-gray-300">
+            <CardHeader className="bg-gradient-to-r from-emerald-200 to-teal-200 text-gray-700 rounded-t-lg">
+              <CardTitle className="flex items-center text-xl justify-between">
+                <div className="flex items-center">
+                  <FaLightbulb className="mr-3 h-7 w-7" />
+                  {t('intelligentAnalysis.analysisResult')}
+                </div>
+                {(result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score) && (
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">
+                    {t('intelligentAnalysis.qualityScore')}: {result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score}/10
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 space-y-6">
+              {loading && !result && !currentExecutionData?.result && (
+                <div className="flex items-center justify-center h-40">
+                  <Spinner size="large" />
+                  <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
+                </div>
               )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6 space-y-6">
-            {/* Answer */}
-            {result.answer && (
-              <div className="prose prose-lg max-w-none">
-                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-3 flex items-center">
-                  <FaComments className="mr-2 h-5 w-5 text-teal-300" />
-                  {t('intelligentAnalysis.answer')}
-                </h6>
-                <p className="text-gray-800 dark:text-gray-200 leading-relaxed text-lg font-medium bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-emerald-100">
-                  {result.answer}
-                </p>
-              </div>
-            )}
+              
+              {(result || currentExecutionData?.result) && (() => {
+                const actualResult = result || currentExecutionData?.result;
+                // Safely extract chart image and answer from the workflow result
+                console.log('Extracting data from actualResult:', actualResult);
+                const chartImage = actualResult.chart_rendering_node?.chart_image || actualResult.chart_image;
+                const answer = actualResult.llm_processing_node?.answer || actualResult.sql_execution_node?.answer || actualResult.answer;
+                console.log('Extracted chartImage:', chartImage);
+                console.log('Extracted answer:', answer);
 
-            {/* Generated chart */}
-            {result.chart_image && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-teal-100 dark:border-gray-700 shadow-md">
-                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                  <FaChartLine className="mr-2 h-5 w-5 text-teal-300" />
-                  {t('intelligentAnalysis.generatedChart')}
-                </h6>
-                <img 
-                  src={result.chart_image} 
-                  alt="Generated Chart" 
-                  className="w-full h-auto rounded-lg shadow-sm"
-                />
-              </div>
-            )}
+                return (
+                  <div className="flex flex-col gap-6">
+                    {/* Answer Text */}
+                    {answer && (
+                      <div className="prose max-w-none text-gray-700">
+                        <p className="whitespace-pre-wrap">{answer}</p>
+                      </div>
+                    )}
 
-            {/* Data details */}
-            {result.data && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-teal-100 dark:border-gray-700 shadow-md">
-                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                  <FaDatabase className="mr-2 h-5 w-5 text-teal-300" />
-                  {t('intelligentAnalysis.dataDetails')}
-                </h6>
-                <pre 
-                  className="text-sm bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border overflow-auto font-mono max-h-64" 
-                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-                >
-                  {JSON.stringify(result.data, null, 2)}
-                </pre>
-              </div>
-            )}
+                    {/* Chart Image */}
+                    {chartImage && (
+                      <div className="flex items-center justify-center p-4 bg-gray-50 rounded-lg border">
+                        <img 
+                          src={chartImage} 
+                          alt={t('intelligentAnalysis.analysisChart')} 
+                          className="max-w-full h-auto rounded-md shadow-lg"
+                        />
+                      </div>
+                    )}
 
-            {/* Chart configuration */}
-            {result.chart_config && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-yellow-100 dark:border-gray-700 shadow-md">
-                <h6 className="font-bold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                  <FaCode className="mr-2 h-5 w-5 text-yellow-400" />
-                  {t('intelligentAnalysis.chartConfig')}
-                </h6>
-                <pre 
-                  className="text-sm bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border overflow-auto font-mono max-h-64" 
-                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
-                >
-                  {JSON.stringify(result.chart_config, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            {/* Error information */}
-            {result.error && (
-              <div className="bg-red-50 dark:bg-red-950 rounded-xl p-6 border border-red-200 dark:border-red-800 shadow-md">
-                <h6 className="font-bold text-red-800 dark:text-red-200 mb-4 flex items-center">
-                  <FaExclamationTriangle className="mr-2 h-5 w-5 text-red-500" />
-                  {t('intelligentAnalysis.errorInfo')}
-                </h6>
-                <p className="text-red-700 dark:text-red-300 font-mono text-sm">
-                  {result.error}
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                    {/* Raw Data Details - show only if there's data and it's not just the chart/answer */}
+                    {actualResult && (
+                      <Collapsible>
+                        <CollapsibleTrigger asChild>
+                          <Button variant="outline" size="sm" className="flex items-center gap-2 mt-4">
+                            {t('intelligentAnalysis.dataDetails')} <ChevronsUpDown className="h-4 w-4" />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <pre className="mt-4 p-4 bg-gray-900 text-white rounded-md overflow-x-auto text-sm">
+                            {JSON.stringify(actualResult, null, 2)}
+                          </pre>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

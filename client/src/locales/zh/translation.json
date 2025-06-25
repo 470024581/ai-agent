@@ -212,6 +212,12 @@
     "exampleQueries": "示例查询",
     "analysisResult": "分析结果",
     "qualityScore": "质量评分",
+    "connectionStatus": {
+      "connected": "实时连接",
+      "connecting": "连接中",
+      "disconnected": "未连接",
+      "error": "连接错误"
+    },
     "answer": "回答",
     "generatedChart": "生成的图表",
     "chartConfig": "图表配置",
@@ -234,11 +240,12 @@
       "qualityValidationDesc": "评分验证输出质量"
     },
     "examples": {
-      "salesThisMonth": "本月销售额是多少？",
-      "salesTrendChart": "生成销售趋势图表", 
-      "lowStockProducts": "库存低于50的产品有哪些？",
-      "customerDistribution": "分析客户分布情况",
-      "whatIsLangGraph": "什么是LangGraph？"
+      "salesThisMonth": "查询本月销售业绩",
+      "lowStockProducts": "查询库存紧张的商品",
+      "customerDistribution": "分析客户的地域分布情况",
+      "salesTrendChart": "生成最近半年的销售额趋势图",
+      "salesBarChartLast10Months": "最近十个月的销售数量的柱状图",
+      "whatIsLangGraph": "什么是 LangGraph？"
     }
   },
   "deleteConfirmation": {

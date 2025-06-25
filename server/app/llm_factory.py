@@ -114,8 +114,6 @@ class LLMFactory:
                 model=ai_config["model"],
                 base_url=ai_config["base_url"],
                 temperature=ai_config.get("temperature", 0.0),
-                # Ollama specific configuration
-                timeout=ai_config.get("timeout", 300),
             )
             
             logger.info(f"Ollama LLM initialized successfully - Model: {ai_config['model']}, Address: {ai_config['base_url']}")
@@ -202,8 +200,7 @@ class LLMFactory:
                 }
             }
             
-            if ai_config.get("provider") == "ollama":
-                status["config"]["timeout"] = ai_config.get("timeout", 300)
+
             
             return status
             

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import os
@@ -16,6 +16,7 @@ from .agent import (
     initialize_app_state
 )
 from .langgraph_flow import process_intelligent_query
+from .websocket_manager import websocket_manager
 from .db import (
     # Data source management functions
     get_datasources, get_datasource, create_datasource, update_datasource,
@@ -31,6 +32,9 @@ from .file_processor import process_uploaded_file
 import json
 import sqlite3
 from fastapi.responses import FileResponse
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Smart  API"])
 
@@ -479,44 +483,99 @@ async def query_endpoint(request: QueryRequest):
 @router.post("/api/v1/intelligent-analysis", response_model=Dict[str, Any], summary="LangGraph Intelligent Analysis")
 async def intelligent_analysis_endpoint(request: QueryRequest):
     """
-    Based on LangGraph's intelligent data analysis interface
-    
-    Automatically determine the query type and select the appropriate processing flow:
-    - SQL query: Get structured data
-    - Chart generation: Generate visual charts
-    - RAG query: Get knowledge from documents
-    - Quality verification: Ensure output quality
+    New intelligent analysis endpoint using LangGraph and WebSocket for real-time tracking.
     """
+    if not request.datasource_id:
+        raise HTTPException(status_code=400, detail="datasource_id is required.")
+        
     try:
-        # Get the currently active data source
-        active_datasource_dict = await get_active_datasource()
-        if not active_datasource_dict:
-            return {
-                "success": False,
-                "error": "No active data source found, please activate one first",
-                "query": request.query
-            }
+        datasource = await get_datasource(request.datasource_id)
+        if not datasource:
+            raise HTTPException(status_code=404, detail="Data source not found.")
+
+        execution_id = str(uuid.uuid4())
         
-        # Call LangGraph intelligent analysis process
-        result = await process_intelligent_query(request.query, active_datasource_dict)
+        # Clean up any previous executions for this client before starting new one
+        if request.client_id and request.client_id in websocket_manager.client_to_execution:
+            old_execution_id = websocket_manager.client_to_execution[request.client_id]
+            logger.info(f"Cleaning up previous execution {old_execution_id} for client {request.client_id}")
+            websocket_manager.cleanup_execution(old_execution_id)
+        
+        # Associate client with execution if client_id is provided
+        if request.client_id:
+            logger.info(f"Attempting to associate client {request.client_id} with execution {execution_id}")
+            success = websocket_manager.associate_execution(request.client_id, execution_id)
+            if success:
+                logger.info(f"Successfully associated client {request.client_id} with execution {execution_id}")
+            else:
+                logger.warning(f"Failed to associate client {request.client_id} with execution {execution_id}")
+        else:
+            logger.warning("No client_id provided for WebSocket association")
+        
+        # Run the analysis in the background
+        # This part should be handled by a task queue in production
+        result = await process_intelligent_query(
+            user_input=request.query, 
+            datasource=datasource,
+            execution_id=execution_id
+        )
+        
+        # Note: execution_completed event is sent from langgraph_flow.py
+        # No need to send it again here or cleanup immediately
         
         return {
-            "success": result["success"],
-            "query": request.query,
-            "query_type": result.get("query_type", "unknown"),
-            "answer": result.get("answer", ""),
-            "data": result.get("data", {}),
-            "chart_config": result.get("chart_config"),
-            "chart_image": result.get("chart_image"),
-            "quality_score": result.get("quality_score", 0),
-            "datasource_id": active_datasource_dict["id"],
-            "datasource_name": active_datasource_dict["name"],
-            "error": result.get("error")
+            "execution_id": execution_id,
+            "message": "Analysis completed successfully.",
+            "data": result
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Intelligent analysis processing failed: {str(e)}",
-            "query": request.query
-        } 
+        logger.error(f"Error in intelligent analysis endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+@router.websocket("/ws/workflow/{client_id}")
+async def workflow_websocket(websocket: WebSocket, client_id: str):
+    """WebSocket endpoint for real-time workflow tracking using client_id."""
+    await websocket_manager.connect(websocket, client_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Here you can handle client-side messages, e.g., pause, resume
+            message = json.loads(data)
+            execution_id = websocket_manager.client_to_execution.get(client_id)
+            
+            if not execution_id:
+                logger.warning(f"Received message from client {client_id} before execution association.")
+                continue
+
+            if message.get("type") == "pause":
+                websocket_manager.pause_execution(execution_id)
+                await websocket_manager.broadcast_to_execution(
+                    execution_id,
+                    WorkflowEvent(type="execution_paused", execution_id=execution_id, timestamp=datetime.now().timestamp())
+                )
+            elif message.get("type") == "resume":
+                websocket_manager.resume_execution(execution_id)
+                await websocket_manager.broadcast_to_execution(
+                    execution_id,
+                    WorkflowEvent(type="execution_resumed", execution_id=execution_id, timestamp=datetime.now().timestamp())
+                )
+            elif message.get("type") == "cancel":
+                websocket_manager.cancel_execution(execution_id)
+                await websocket_manager.broadcast_to_execution(
+                    execution_id,
+                    WorkflowEvent(type="execution_cancelled", execution_id=execution_id, timestamp=datetime.now().timestamp())
+                )
+                
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(websocket, client_id)
+    except Exception as e:
+        logger.error(f"WebSocket error for client {client_id}: {e}")
+        websocket_manager.disconnect(websocket, client_id)
+
+# ==================== Health and Info ======================
+@router.get("/health", summary="Health Check")
+async def health_check():
+    return {"status": "OK"} 

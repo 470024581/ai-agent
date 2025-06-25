@@ -223,8 +223,7 @@ def create_env_file():
             updated_lines.append('OLLAMA_BASE_URL=http://localhost:11434')
         if not any(line.startswith('OLLAMA_MODEL=') for line in lines):
             updated_lines.append('OLLAMA_MODEL=mistral')
-        if not any(line.startswith('OLLAMA_TIMEOUT=') for line in lines):
-            updated_lines.append('OLLAMA_TIMEOUT=300')
+
         
         with open(env_file, 'w', encoding='utf-8') as f:
             f.write('\n'.join(updated_lines))
@@ -236,7 +235,6 @@ def create_env_file():
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=mistral
-OLLAMA_TIMEOUT=300
 
 # Other configurations can be added below
 """
