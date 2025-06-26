@@ -564,7 +564,6 @@ function DataSourceManager() {
               </div>
               {t('createNewDataSource')}
             </DialogTitle>
-            <p className="text-gray-600 mt-2">创建一个新的数据源来管理您的数据文件</p>
           </DialogHeader>
           <div className="space-y-6 pt-4">
             {alert && showCreateModal && (
@@ -636,24 +635,7 @@ function DataSourceManager() {
                         <FaLightbulb className="h-4 w-4 text-white" />
                       </div>
                       <div className="flex-1">
-                        <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceHelp')}</h4>
-                        <p className="text-gray-600 mb-3 leading-relaxed">{t('hybridDataSourceDescription')}</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="bg-white p-3 rounded-lg border border-blue-100">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                              <span className="font-medium text-gray-700">SQL</span>
-                            </div>
-                            <p className="text-sm text-gray-600">CSV, XLSX</p>
-                          </div>
-                          <div className="bg-white p-3 rounded-lg border border-blue-100">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-                              <span className="font-medium text-gray-700">RAG</span>
-                            </div>
-                            <p className="text-sm text-gray-600">TXT, PDF, DOCX</p>
-                          </div>
-                        </div>
+                        <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceDescription')}</h4>
                       </div>
                     </div>
                   </div>
