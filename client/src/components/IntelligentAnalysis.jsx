@@ -752,7 +752,7 @@ function IntelligentAnalysis() {
                 >
                   {loading ? (
                     <>
-                      <Spinner className="mr-2 h-4 w-4" />
+                      <Spinner className="mr-2 h-5 w-5" />
                       {t('intelligentAnalysis.analyzing')}
                     </>
                   ) : (
@@ -816,7 +816,7 @@ function IntelligentAnalysis() {
             <CardContent className="p-6 space-y-6">
               {loading && !result && !currentExecutionData?.result && (
                 <div className="flex items-center justify-center h-40">
-                  <Spinner size="large" />
+                  <Spinner className="h-8 w-8" />
                   <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
                 </div>
               )}
