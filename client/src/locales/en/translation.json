@@ -277,12 +277,12 @@
       "qualityValidationDesc": "Score and validate output quality"
     },
     "examples": {
-      "salesThisMonth": "Sales performance for this month",
-      "lowStockProducts": "Query products with low stock",
-      "customerDistribution": "Analyze customer geographical distribution",
-      "salesTrendChart": "Generate a sales trend chart for the last six months",
-      "salesBarChartLast10Months": "Bar chart of sales quantity for the last 10 months",
-      "whatIsLangGraph": "What is LangGraph?"
+      "salesThisMonth": "What are the sales this month?",
+      "lowStockProducts": "Which products have stock below 50?",
+      "customerDistribution": "How are customers distributed?",
+      "salesTrendChart": "Generate sales trend chart",
+      "salesBarChartLast10Months": "Generate sales bar chart for last 10 months",
+      "whoIsLongliang": "Who is Longliang?"
     }
   },
   "deleteConfirmation": {

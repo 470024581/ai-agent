@@ -240,12 +240,12 @@
       "qualityValidationDesc": "评分验证输出质量"
     },
     "examples": {
-      "salesThisMonth": "查询本月销售业绩",
-      "lowStockProducts": "查询库存紧张的商品",
-      "customerDistribution": "分析客户的地域分布情况",
-      "salesTrendChart": "生成最近半年的销售额趋势图",
-      "salesBarChartLast10Months": "最近十个月的销售数量的柱状图",
-      "whatIsLangGraph": "什么是 LangGraph？"
+      "salesThisMonth": "本月销售额是多少？",
+      "lowStockProducts": "库存低于50的产品有哪些？",
+      "customerDistribution": "客户分布情况如何？",
+      "salesTrendChart": "生成销售趋势图",
+      "salesBarChartLast10Months": "生成最近10个月的销售柱状图",
+      "whoIsLongliang": "龙亮是谁？"
     }
   },
   "deleteConfirmation": {

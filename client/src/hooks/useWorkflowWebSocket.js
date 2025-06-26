@@ -88,10 +88,13 @@ const useWorkflowWebSocket = () => {
           console.log('Execution completed successfully:', data);
           console.log('Final state data keys:', data.data ? Object.keys(data.data) : 'no data');
           console.log('Final state data:', data.data);
+          
+          // Dispatch completion with final state
           dispatch(completeExecution({
             executionId: data.execution_id,
             timestamp: data.timestamp,
-            summary: data.data // Pass the whole final state as summary
+            summary: data.data, // Pass the whole final state as summary
+            keepActive: true // New flag to indicate we want to keep the execution active
           }));
           break;
 

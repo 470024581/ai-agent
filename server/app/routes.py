@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import os
@@ -10,7 +10,9 @@ from .models import (
     BaseResponse,
     DataSourceCreate, DataSourceUpdate, DataSource, DataSourceResponse, DataSourceListResponse,
     FileInfo, FileListResponse, ProcessingStatus, FileType, DataSourceType,
-    WorkflowEvent
+    WorkflowEvent,
+    WorkflowEventType,
+    NodeStatus,
 )
 from .agent import (
     get_answer_from, 
@@ -34,6 +36,8 @@ import json
 import sqlite3
 from fastapi.responses import FileResponse
 import logging
+import asyncio
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,12 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "sample_sales"
 # Ensure sample data directory exists (though generator script also does this)
 SAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+class IntelligentAnalysisRequest(BaseModel):
+    """Request model for intelligent analysis endpoint"""
+    query: str
+    datasource_id: int
+    client_id: str
 
 # ==================== Sample Data API ======================
 
@@ -481,48 +491,60 @@ async def query_endpoint(request: QueryRequest):
 
 # ==================== LangGraph Intelligent Analysis API ====================
 
-@router.post("/api/v1/intelligent-analysis", response_model=Dict[str, Any], summary="LangGraph Intelligent Analysis")
-async def intelligent_analysis_endpoint(request: QueryRequest):
-    """
-    New intelligent analysis endpoint using LangGraph and WebSocket for real-time tracking.
-    """
-    if not request.datasource_id:
-        raise HTTPException(status_code=400, detail="datasource_id is required.")
-        
+async def process_query(query: str, datasource_id: int, execution_id: str) -> Dict[str, Any]:
+    """Process an intelligent analysis query."""
     try:
-        datasource = await get_datasource(request.datasource_id)
+        # Get the datasource
+        datasource = await get_datasource(datasource_id)
         if not datasource:
             raise HTTPException(status_code=404, detail="Data source not found.")
-
-        execution_id = str(uuid.uuid4())
-        
-        # Clean up any previous executions for this client before starting new one
-        if request.client_id and request.client_id in websocket_manager.client_to_execution:
-            old_execution_id = websocket_manager.client_to_execution[request.client_id]
-            logger.info(f"Cleaning up previous execution {old_execution_id} for client {request.client_id}")
-            websocket_manager.cleanup_execution(old_execution_id)
-        
-        # Associate client with execution if client_id is provided
-        if request.client_id:
-            logger.info(f"Attempting to associate client {request.client_id} with execution {execution_id}")
-            success = websocket_manager.associate_execution(request.client_id, execution_id)
-            if success:
-                logger.info(f"Successfully associated client {request.client_id} with execution {execution_id}")
-            else:
-                logger.warning(f"Failed to associate client {request.client_id} with execution {execution_id}")
-        else:
-            logger.warning("No client_id provided for WebSocket association")
-        
-        # Run the analysis in the background
-        # This part should be handled by a task queue in production
+            
+        # Run the analysis
         result = await process_intelligent_query(
-            user_input=request.query, 
+            user_input=query,
             datasource=datasource,
             execution_id=execution_id
         )
         
-        # Note: execution_completed event is sent from langgraph_flow.py
-        # No need to send it again here or cleanup immediately
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Error processing query: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/api/v1/intelligent-analysis")
+async def intelligent_analysis(data: IntelligentAnalysisRequest):
+    try:
+        # Get the client ID from the request
+        client_id = data.client_id
+        
+        # Create a new execution ID
+        execution_id = str(uuid.uuid4())
+        
+        # Clean up previous execution for this client if it exists
+        previous_execution = websocket_manager.get_client_execution(client_id)
+        if previous_execution:
+            # Instead of cleaning up immediately, mark it for cleanup
+            websocket_manager.mark_for_cleanup(previous_execution)
+        
+        # Create new execution
+        logger.info(f"Attempting to associate client {client_id} with execution {execution_id}")
+        success = websocket_manager.associate_execution(client_id, execution_id)
+        
+        if not success:
+            logger.warning(f"Failed to associate client {client_id} with execution {execution_id}")
+            # Instead of failing, we'll retry the association after a short delay
+            await asyncio.sleep(0.5)  # Give WebSocket time to reconnect
+            success = websocket_manager.associate_execution(client_id, execution_id)
+            if not success:
+                logger.error(f"Failed to associate client {client_id} with execution {execution_id} after retry")
+                return {"error": "Failed to establish WebSocket connection"}
+        
+        # Start the execution
+        logger.info(f"Successfully associated client {client_id} with execution {execution_id}")
+        
+        # Process the query
+        result = await process_query(data.query, data.datasource_id, execution_id)
         
         return {
             "execution_id": execution_id,
@@ -533,8 +555,8 @@ async def intelligent_analysis_endpoint(request: QueryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in intelligent analysis endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        logger.exception(f"Error processing intelligent analysis request: {str(e)}")
+        return {"error": str(e)}
 
 @router.websocket("/ws/workflow/{client_id}")
 async def workflow_websocket(websocket: WebSocket, client_id: str):

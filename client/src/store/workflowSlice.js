@@ -50,23 +50,25 @@ const workflowSlice = createSlice({
       });
     },
     completeExecution: (state, action) => {
-        const { executionId, summary } = action.payload;
-        if (state.executions[executionId]) {
-            const execution = state.executions[executionId];
-            execution.status = 'completed';
-            execution.endTime = Date.now();
-            execution.result = summary; // Store the execution result
-            
-            const historyItem = state.executionHistory.find(h => h.id === executionId);
-            if (historyItem) {
-                historyItem.status = 'completed';
-                historyItem.endTime = execution.endTime;
-            }
+      const { executionId, summary, keepActive } = action.payload;
+      if (state.executions[executionId]) {
+        const execution = state.executions[executionId];
+        execution.status = 'completed';
+        execution.endTime = Date.now();
+        execution.result = summary;
+
+        // Update history
+        const historyItem = state.executionHistory.find(h => h.id === executionId);
+        if (historyItem) {
+          historyItem.status = 'completed';
+          historyItem.endTime = execution.endTime;
         }
-        // Don't clear currentExecution or currentNode immediately - let user see the result
-        // Keep the final state visible for completed executions
-        // state.currentExecution = null;
-        // state.currentNode = null; // Keep this to show final execution state
+
+        // Only clear current execution if not keepActive
+        if (!keepActive) {
+          state.currentExecution = null;
+        }
+      }
     },
     errorExecution: (state, action) => {
         const { executionId, error } = action.payload;
@@ -191,14 +193,17 @@ export const selectCurrentExecutionData = (state) => {
 };
 
 export const selectNodeStates = (state) => state.workflow.nodeStates;
-export const selectCurrentNode = (state) => {
-  const currentId = state.workflow.currentExecution;
-  return currentId ? state.workflow.executions[currentId]?.currentNode : null;
-};
-export const selectActiveEdges = (state) => {
-  const currentId = state.workflow.currentExecution;
-  return currentId ? state.workflow.executions[currentId]?.activeEdges || [] : [];
-};
+export const selectCurrentNode = createSelector(
+  [selectCurrentExecutionData],
+  (executionData) => executionData?.currentNode || null
+);
+
+// Memoized selectors
+export const selectActiveEdges = createSelector(
+  [selectCurrentExecutionData],
+  (executionData) => executionData?.activeEdges || []
+);
+
 export const selectExecutionHistory = (state) => state.workflow.executionHistory;
 export const selectWorkflowError = (state) => state.workflow.error;
 
@@ -219,97 +224,20 @@ export const selectMemoizedCurrentExecution = createSelector(
 );
 
 export const selectMemoizedNodeStates = createSelector(
-  [selectExecutions, selectCurrentExecutionId],
-  (executions, currentId) => {
-    // If there's a current execution, use it
-    let targetExecution = currentId ? executions[currentId] : null;
-    
-    // If no current execution, use the most recent completed execution
-    if (!targetExecution) {
-      const executionEntries = Object.entries(executions);
-      if (executionEntries.length > 0) {
-        // Sort by creation time and get the most recent one
-        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
-          (b.startTime || 0) - (a.startTime || 0)
-        );
-        targetExecution = sortedExecutions[0][1];
-      }
-    }
-    
-    if (!targetExecution) return {};
-    
-    const states = {};
-    if (targetExecution.nodes) {
-      Object.values(targetExecution.nodes).forEach(node => {
-        states[node.id] = node.status;
-      });
-    }
-    return states;
-  }
-);
-
-export const selectMemoizedCurrentNode = createSelector(
-  [selectExecutions, selectCurrentExecutionId],
-  (executions, currentId) => {
-    // Show current node for both active and completed executions
-    let targetExecution = currentId && executions[currentId] ? executions[currentId] : null;
-    
-    // If no current execution, get the most recent one to show its final state
-    if (!targetExecution) {
-      const executionEntries = Object.entries(executions);
-      if (executionEntries.length > 0) {
-        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
-          (b.startTime || 0) - (a.startTime || 0)
-        );
-        targetExecution = sortedExecutions[0][1];
-      }
-    }
-    
-    return targetExecution?.currentNode || null;
-  }
-);
-
-export const selectMemoizedActiveEdges = createSelector(
-  [selectExecutions, selectCurrentExecutionId],
-  (executions, currentId) => {
-    // Show active edges for both active and completed executions
-    let targetExecution = currentId && executions[currentId] ? executions[currentId] : null;
-    
-    // If no current execution, get the most recent one to show its final edges
-    if (!targetExecution) {
-      const executionEntries = Object.entries(executions);
-      if (executionEntries.length > 0) {
-        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
-          (b.startTime || 0) - (a.startTime || 0)
-        );
-        targetExecution = sortedExecutions[0][1];
-      }
-    }
-    
-    return targetExecution?.activeEdges || [];
+  [selectCurrentExecutionData],
+  (executionData) => {
+    if (!executionData?.nodes) return {};
+    const nodeStates = {};
+    Object.entries(executionData.nodes).forEach(([nodeId, node]) => {
+      nodeStates[nodeId] = node.status;
+    });
+    return nodeStates;
   }
 );
 
 export const selectCurrentExecutionResult = createSelector(
-  [selectExecutions, selectCurrentExecutionId],
-  (executions, currentId) => {
-    // If there's a current execution, use its result
-    let targetExecution = currentId ? executions[currentId] : null;
-    
-    // If no current execution, use the most recent completed execution's result
-    if (!targetExecution) {
-      const executionEntries = Object.entries(executions);
-      if (executionEntries.length > 0) {
-        // Sort by creation time and get the most recent one
-        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
-          (b.startTime || 0) - (a.startTime || 0)
-        );
-        targetExecution = sortedExecutions[0][1];
-      }
-    }
-    
-    return targetExecution?.result || null;
-  }
+  [selectCurrentExecutionData],
+  (executionData) => executionData?.result || null
 );
 
 export default workflowSlice.reducer;
