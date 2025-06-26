@@ -34,11 +34,9 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# LLM Factory import
+# Factory imports
 from .llm_factory import get_llm, get_llm_status, reset_llm
-
-# Local embedding model name
-LOCAL_EMBEDDING_MODEL_NAME = 'intfloat/multilingual-e5-small' 
+from .embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
 
 # Determine the correct upload directory relative to this file (agent.py)
 # Assuming agent.py is in server/app/ and uploads are in server/data/uploads/
@@ -129,17 +127,14 @@ except Exception as e:
     logger.error("Please check your LLM configuration in .env file")
     llm = None
 
-# Initialize Local Embeddings (SentenceTransformer)
+# Initialize Embeddings using factory
 try:
-    logger.info(f"Starting initialization of local embedding model: {LOCAL_EMBEDDING_MODEL_NAME}")
-    # Specify a cache folder for sentence-transformers models if desired, e.g., within server/data/
-    # cache_folder = Path(__file__).resolve().parent.parent / "data" / "st_cache"
-    # cache_folder.mkdir(parents=True, exist_ok=True)
-    # embeddings = SentenceTransformerEmbeddings(model_name=LOCAL_EMBEDDING_MODEL_NAME, cache_folder=str(cache_folder))
-    embeddings = SentenceTransformerEmbeddings(model_name=LOCAL_EMBEDDING_MODEL_NAME)
-    logger.info(f"Local embedding model {LOCAL_EMBEDDING_MODEL_NAME} initialized successfully.")
+    logger.info("Starting initialization of embedding model using factory...")
+    embeddings = get_embeddings()
+    embedding_status = get_embeddings_status()
+    logger.info(f"Embedding model initialized successfully - Provider: {embedding_status.get('provider')}, Model: {embedding_status.get('model')}")
 except Exception as e:
-    logger.error(f"Local embedding model {LOCAL_EMBEDDING_MODEL_NAME} initialization failed: {e}", exc_info=True)
+    logger.error(f"Embedding model initialization failed: {e}", exc_info=True)
     embeddings = None
 
 async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str, Any]:

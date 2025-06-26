@@ -68,16 +68,22 @@ class LLMFactory:
             
             kwargs = {
                 "model_name": ai_config["model"],
-                "openai_api_key": ai_config["api_key"],
+                "openai_api_key": ai_config["api_key"],  # This is OPENAI_API_KEY
                 "temperature": ai_config.get("temperature", 0.0),
                 "max_tokens": ai_config.get("max_tokens", 2048),
             }
             
+            # Only set base URL if explicitly configured (for custom OpenAI endpoints)
             if ai_config.get("base_url"):
-                kwargs["openai_api_base"] = ai_config["base_url"]
+                kwargs["openai_api_base"] = ai_config["base_url"]  # This is OPENAI_BASE_URL
+            
+            # Add timeout if configured
+            if ai_config.get("timeout"):
+                kwargs["request_timeout"] = ai_config.get("timeout")
             
             llm = ChatOpenAI(**kwargs)
-            logger.info(f"OpenAI LLM initialized successfully - Model: {ai_config['model']}")
+            base_url_info = f", Base URL: {ai_config['base_url']}" if ai_config.get("base_url") else ""
+            logger.info(f"OpenAI LLM initialized successfully - Model: {ai_config['model']}{base_url_info}")
             return llm
             
         except Exception as e:
@@ -90,14 +96,21 @@ class LLMFactory:
         try:
             from langchain_openai import ChatOpenAI
             
-            llm = ChatOpenAI(
-                model_name=ai_config["model"],
-                openai_api_key=ai_config["api_key"],
-                openai_api_base=ai_config["base_url"],
-                temperature=ai_config.get("temperature", 0.0),
-                max_tokens=ai_config.get("max_tokens", 2048),
-            )
-            logger.info(f"OpenRouter LLM initialized successfully - Model: {ai_config['model']}")
+            # OpenRouter uses OpenAI-compatible API but with different key and base URL
+            kwargs = {
+                "model_name": ai_config["model"],
+                "openai_api_key": ai_config["api_key"],  # This is OPENROUTER_API_KEY
+                "openai_api_base": ai_config["base_url"],  # This is OPENROUTER_BASE_URL
+                "temperature": ai_config.get("temperature", 0.0),
+                "max_tokens": ai_config.get("max_tokens", 2048),
+            }
+            
+            # Add timeout if configured
+            if ai_config.get("timeout"):
+                kwargs["request_timeout"] = ai_config.get("timeout")
+            
+            llm = ChatOpenAI(**kwargs)
+            logger.info(f"OpenRouter LLM initialized successfully - Model: {ai_config['model']}, Base URL: {ai_config['base_url']}")
             return llm
             
         except Exception as e:

@@ -25,24 +25,29 @@ class Config:
     
     # LLM configuration - Multi-provider support
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai, openrouter, ollama
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Unified model control
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+    LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
+    
+    # Embedding configuration
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "512"))
+    EMBEDDING_CACHE_DIR: Path = DATA_DIR / "embeddings_cache"
     
     # OpenAI configuration
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
     OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    OPENAI_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     
     # OpenRouter configuration
     OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
     OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
     
     # Ollama configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
-    
-    # Common LLM parameters
-    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
-    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
     
     # CORS configuration
     CORS_ORIGINS: list[str] = [
@@ -96,9 +101,10 @@ class Config:
                 "provider": "openai",
                 "api_key": cls.OPENAI_API_KEY,
                 "base_url": cls.OPENAI_BASE_URL,
-                "model": cls.OPENAI_MODEL,
+                "model": cls.LLM_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
-                "max_tokens": cls.LLM_MAX_TOKENS
+                "max_tokens": cls.LLM_MAX_TOKENS,
+                "timeout": cls.LLM_TIMEOUT
             }
         elif provider == "openrouter":
             if not cls.OPENROUTER_API_KEY:
@@ -107,20 +113,61 @@ class Config:
                 "provider": "openrouter",
                 "api_key": cls.OPENROUTER_API_KEY,
                 "base_url": cls.OPENROUTER_BASE_URL,
-                "model": cls.OPENROUTER_MODEL,
+                "model": cls.LLM_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
-                "max_tokens": cls.LLM_MAX_TOKENS
+                "max_tokens": cls.LLM_MAX_TOKENS,
+                "timeout": cls.LLM_TIMEOUT
             }
         elif provider == "ollama":
             return {
                 "provider": "ollama",
                 "base_url": cls.OLLAMA_BASE_URL,
-                "model": cls.OLLAMA_MODEL,
+                "model": cls.LLM_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
-                "max_tokens": cls.LLM_MAX_TOKENS
+                "max_tokens": cls.LLM_MAX_TOKENS,
+                "timeout": cls.LLM_TIMEOUT
             }
         else:
             raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama")
+    
+    @classmethod
+    def get_embedding_config(cls) -> dict:
+        """Get Embedding configuration based on EMBEDDING_PROVIDER"""
+        provider = cls.EMBEDDING_PROVIDER.lower()
+        
+        if provider == "local":
+            return {
+                "provider": "local",
+                "model": cls.EMBEDDING_MODEL,
+                "cache_dir": cls.EMBEDDING_CACHE_DIR,
+                "dimension": cls.EMBEDDING_DIMENSION
+            }
+        elif provider == "openai":
+            if not cls.OPENAI_API_KEY:
+                raise ValueError("EMBEDDING_PROVIDER is set to openai, but OPENAI_API_KEY is not configured")
+            return {
+                "provider": "openai",
+                "api_key": cls.OPENAI_API_KEY,
+                "base_url": cls.OPENAI_BASE_URL,
+                "model": cls.OPENAI_EMBEDDING_MODEL,
+                "dimension": cls.EMBEDDING_DIMENSION
+            }
+        elif provider == "huggingface":
+            return {
+                "provider": "huggingface",
+                "model": cls.EMBEDDING_MODEL,
+                "cache_dir": cls.EMBEDDING_CACHE_DIR,
+                "dimension": cls.EMBEDDING_DIMENSION
+            }
+        elif provider == "ollama":
+            return {
+                "provider": "ollama",
+                "base_url": cls.OLLAMA_BASE_URL,
+                "model": cls.OLLAMA_EMBEDDING_MODEL,
+                "dimension": cls.EMBEDDING_DIMENSION
+            }
+        else:
+            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama")
     
     @classmethod
     def is_development(cls) -> bool:
@@ -146,6 +193,7 @@ class Config:
         """Ensure necessary directories exist"""
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         cls.REPORT_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+        cls.EMBEDDING_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     
     @classmethod
     def validate_config(cls) -> list[str]:
@@ -170,6 +218,9 @@ class Config:
 
 # Create global configuration instance
 config = Config()
+
+# Ensure directories exist on import
+config.ensure_directories()
 
 # Environment variable loading status check
 def check_environment():
