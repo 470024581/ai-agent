@@ -125,6 +125,20 @@ def main():
     
     # Start server
     try:
+        # Configure Python logging before starting uvicorn
+        import logging
+        log_level = config.LOG_LEVEL.upper()
+        
+        # Set the root logger level
+        logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
+        
+        # Set specific loggers for our application
+        logging.getLogger("app").setLevel(getattr(logging, log_level, logging.INFO))
+        logging.getLogger("app.langgraph_flow").setLevel(getattr(logging, log_level, logging.INFO))
+        logging.getLogger("app.agent").setLevel(getattr(logging, log_level, logging.INFO))
+        
+        print(f"🔧 Python logging configured - Level: {log_level}")
+        
         uvicorn.run(
             "app.main:app",
             host=args.host,

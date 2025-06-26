@@ -144,20 +144,29 @@ class EmbeddingFactory:
     
     @classmethod
     def _create_ollama_embeddings(cls, embedding_config: Dict[str, Any]) -> Embeddings:
-        """Create Ollama embeddings instance"""
+        """Create Ollama embeddings instance - Uses local SentenceTransformer model for compatibility"""
         try:
-            from langchain_community.embeddings import OllamaEmbeddings
+            from langchain_community.embeddings import SentenceTransformerEmbeddings
             
-            embeddings = OllamaEmbeddings(
-                model=embedding_config["model"],
-                base_url=embedding_config["base_url"]
-            )
+            # Use intfloat/multilingual-e5-small model locally instead of Ollama service
+            # This provides better compatibility and avoids Ollama embedding service dependency
+            local_model = "intfloat/multilingual-e5-small"
             
-            logger.info(f"Ollama embeddings initialized successfully - Model: {embedding_config['model']}, Address: {embedding_config['base_url']}")
+            # Ensure cache directory exists
+            cache_dir = embedding_config.get("cache_dir", str(Path(__file__).parent.parent / "data" / "embeddings_cache"))
+            Path(cache_dir).mkdir(parents=True, exist_ok=True)
+                
+            kwargs = {
+                "model_name": local_model,
+                "cache_folder": str(cache_dir)
+            }
+            
+            embeddings = SentenceTransformerEmbeddings(**kwargs)
+            logger.info(f"Ollama embeddings initialized successfully (using local model) - Model: {local_model}")
             return embeddings
             
         except ImportError:
-            logger.error("Ollama dependencies not installed, please run: pip install langchain-community")
+            logger.error("SentenceTransformer dependencies not installed, please run: pip install sentence-transformers")
             raise
         except Exception as e:
             logger.error(f"Ollama embeddings initialization failed: {e}")
@@ -180,6 +189,10 @@ class EmbeddingFactory:
             
         except Exception as e:
             logger.error(f"{provider} embeddings connection verification failed: {e}")
+            # For ollama provider using local model, don't treat verification failure as critical
+            if provider == "ollama":
+                logger.warning(f"ollama embeddings connection verification failed: {e}, but continuing...")
+                return False  # Return False but don't raise exception
             return False
     
     @classmethod

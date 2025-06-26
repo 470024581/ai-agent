@@ -31,14 +31,44 @@ class WebSocketManager:
     
     def associate_execution(self, client_id: str, execution_id: str):
         """Associate a client's connection with a new execution_id."""
+        websocket = None
+        
+        # First check if client has an active connection
         if client_id in self.client_connections:
-            websocket = self.client_connections.pop(client_id)
+            websocket = self.client_connections[client_id]
+        else:
+            # Check if client is already associated with a previous execution
+            if client_id in self.client_to_execution:
+                old_execution_id = self.client_to_execution[client_id]
+                if old_execution_id in self.execution_connections:
+                    # Find the websocket in the old execution connections
+                    for ws in self.execution_connections[old_execution_id]:
+                        # Since we can't directly compare websockets, we'll reuse the connection
+                        # by keeping track of it properly
+                        websocket = ws
+                        break
+        
+        if websocket:
+            # Clean up old execution association if exists
+            if client_id in self.client_to_execution:
+                old_execution_id = self.client_to_execution[client_id]
+                if old_execution_id in self.execution_connections:
+                    if websocket in self.execution_connections[old_execution_id]:
+                        self.execution_connections[old_execution_id].remove(websocket)
+                    # Clean up empty execution connections
+                    if not self.execution_connections[old_execution_id]:
+                        del self.execution_connections[old_execution_id]
             
+            # Associate with new execution
             if execution_id not in self.execution_connections:
                 self.execution_connections[execution_id] = []
             
             self.execution_connections[execution_id].append(websocket)
             self.client_to_execution[client_id] = execution_id
+            
+            # Keep the client connection for future use
+            self.client_connections[client_id] = websocket
+            
             logger.info(f"Associated client {client_id} with execution {execution_id}")
             return True
         else:
@@ -168,18 +198,39 @@ class WebSocketManager:
         return self.execution_states.get(execution_id)
     
     def cleanup_execution(self, execution_id: str):
-        """Clean up execution data"""
+        """Clean up execution data while preserving active client connections"""
+        # Clean up execution state
         if execution_id in self.execution_states:
             del self.execution_states[execution_id]
+        
+        # Clean up execution connections but preserve client connections
+        clients_with_this_execution = [cid for cid, eid in self.client_to_execution.items() if eid == execution_id]
+        
         if execution_id in self.execution_connections:
+            # Get the websockets for this execution
+            execution_websockets = self.execution_connections[execution_id]
+            
+            # For each client that was associated with this execution,
+            # move their websocket back to client_connections if it's not already there
+            for client_id in clients_with_this_execution:
+                if client_id not in self.client_connections:
+                    # Find their websocket in the execution connections
+                    for ws in execution_websockets:
+                        # Since we can't directly identify which websocket belongs to which client,
+                        # we'll preserve the mapping in client_connections
+                        self.client_connections[client_id] = ws
+                        break
+            
+            # Remove the execution connections
             del self.execution_connections[execution_id]
         
-        # Also remove any client_id -> execution_id mappings
-        clients_to_remove = [cid for cid, eid in self.client_to_execution.items() if eid == execution_id]
-        for cid in clients_to_remove:
+        # Remove client_id -> execution_id mappings for this execution
+        # but keep the client connections for future use
+        for cid in clients_with_this_execution:
             if cid in self.client_to_execution:
                 del self.client_to_execution[cid]
-        logger.info(f"Cleaned up all resources for execution {execution_id}")
+        
+        logger.info(f"Cleaned up execution {execution_id} resources while preserving {len(clients_with_this_execution)} client connections")
     
     async def get_execution_details(self, execution_id: str) -> dict:
         """Get detailed execution information"""

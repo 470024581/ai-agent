@@ -63,9 +63,10 @@ const workflowSlice = createSlice({
                 historyItem.endTime = execution.endTime;
             }
         }
-        // Don't clear currentExecution immediately - let user see the result
+        // Don't clear currentExecution or currentNode immediately - let user see the result
+        // Keep the final state visible for completed executions
         // state.currentExecution = null;
-        state.currentNode = null;
+        // state.currentNode = null; // Keep this to show final execution state
     },
     errorExecution: (state, action) => {
         const { executionId, error } = action.payload;
@@ -250,16 +251,42 @@ export const selectMemoizedNodeStates = createSelector(
 export const selectMemoizedCurrentNode = createSelector(
   [selectExecutions, selectCurrentExecutionId],
   (executions, currentId) => {
-    // Only show current node if there's an active execution
-    return currentId && executions[currentId] ? executions[currentId].currentNode : null;
+    // Show current node for both active and completed executions
+    let targetExecution = currentId && executions[currentId] ? executions[currentId] : null;
+    
+    // If no current execution, get the most recent one to show its final state
+    if (!targetExecution) {
+      const executionEntries = Object.entries(executions);
+      if (executionEntries.length > 0) {
+        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
+          (b.startTime || 0) - (a.startTime || 0)
+        );
+        targetExecution = sortedExecutions[0][1];
+      }
+    }
+    
+    return targetExecution?.currentNode || null;
   }
 );
 
 export const selectMemoizedActiveEdges = createSelector(
   [selectExecutions, selectCurrentExecutionId],
   (executions, currentId) => {
-    // Only show active edges if there's an active execution
-    return currentId && executions[currentId] ? executions[currentId].activeEdges || [] : [];
+    // Show active edges for both active and completed executions
+    let targetExecution = currentId && executions[currentId] ? executions[currentId] : null;
+    
+    // If no current execution, get the most recent one to show its final edges
+    if (!targetExecution) {
+      const executionEntries = Object.entries(executions);
+      if (executionEntries.length > 0) {
+        const sortedExecutions = executionEntries.sort(([, a], [, b]) => 
+          (b.startTime || 0) - (a.startTime || 0)
+        );
+        targetExecution = sortedExecutions[0][1];
+      }
+    }
+    
+    return targetExecution?.activeEdges || [];
   }
 );
 

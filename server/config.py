@@ -47,7 +47,7 @@ class Config:
     
     # Ollama configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
     
     # CORS configuration
     CORS_ORIGINS: list[str] = [
@@ -163,8 +163,9 @@ class Config:
             return {
                 "provider": "ollama",
                 "base_url": cls.OLLAMA_BASE_URL,
-                "model": cls.OLLAMA_EMBEDDING_MODEL,
-                "dimension": cls.EMBEDDING_DIMENSION
+                "model": cls.OLLAMA_EMBEDDING_MODEL,  # This will be ignored, uses intfloat/multilingual-e5-small internally
+                "dimension": cls.EMBEDDING_DIMENSION,
+                "cache_dir": cls.EMBEDDING_CACHE_DIR
             }
         else:
             raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama")

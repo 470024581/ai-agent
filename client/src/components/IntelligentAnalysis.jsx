@@ -124,13 +124,16 @@ function IntelligentAnalysis() {
   // Listen for execution result from WebSocket
   useEffect(() => {
     console.log('ExecutionResult changed:', executionResult);
-    if (executionResult) {
+    console.log('Current executionId:', executionId);
+    console.log('Current execution from Redux:', currentExecutionData?.id);
+    
+    if (executionResult && currentExecutionData && currentExecutionData.status === 'completed') {
       console.log('Setting result from WebSocket execution result:', executionResult);
       console.log('Result keys:', Object.keys(executionResult));
       setResult(executionResult);
       setLoading(false);
     }
-  }, [executionResult]);
+  }, [executionResult, currentExecutionData]);
   
   // Handler for node click
   const handleNodeClick = (nodeId) => {
@@ -172,8 +175,7 @@ function IntelligentAnalysis() {
     setError('');
     setResult(null);
     
-    // Reset previous execution states
-    dispatch(resetCurrentExecution());
+    // Note: Don't reset current execution here - let the new execution start event handle it
 
     try {
       const response = await fetch('/api/v1/intelligent-analysis', {
@@ -490,9 +492,16 @@ function IntelligentAnalysis() {
           {langGraphNodes.map((node) => {
             // Use Redux state if available, fallback to local state
             const status = nodeStates[node.id] || 'pending';
+            // Show current node highlight for both running and completed executions
             const isCurrentNode = currentActiveNode === node.id;
             const nodeExecution = currentExecutionData?.nodes[node.id];
             const isExecuted = nodeExecution?.status === 'completed';
+            
+            // For completed executions, highlight the last executed node (end_node typically)
+            const isLastExecutedNode = currentExecutionData?.status === 'completed' && 
+                                      node.id === 'end_node' && 
+                                      status === 'completed' && 
+                                      !currentActiveNode;
             
             // Determine circular node color based on state and node type
             let nodeColor = 'bg-gray-300 border-gray-400'; // pending
@@ -517,7 +526,7 @@ function IntelligentAnalysis() {
               <div key={node.id} style={{ position: 'absolute', left: `${node.position.x}px`, top: `${node.position.y}px`, zIndex: 10 }}>
                 {/* Circular node */}
                 <div 
-                  className={`w-12 h-12 rounded-full border-2 ${nodeColor} flex items-center justify-center shadow-lg relative cursor-pointer transition-transform hover:scale-110 ${currentExecutionNodes[node.id] ? 'hover:shadow-xl' : ''}`}
+                  className={`w-12 h-12 rounded-full border-2 ${nodeColor} flex items-center justify-center shadow-lg relative cursor-pointer transition-transform hover:scale-110 ${currentExecutionNodes[node.id] ? 'hover:shadow-xl' : ''} ${(isCurrentNode || isLastExecutedNode) ? 'ring-2 ring-offset-2 ring-blue-300' : ''}`}
                   onClick={() => handleNodeClick(node.id)}
                 >
                   {/* Node icon - show checkmark for completed nodes, otherwise show default icon */}
