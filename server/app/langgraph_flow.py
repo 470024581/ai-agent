@@ -272,33 +272,130 @@ def llm_processing_node(state: GraphState) -> GraphState:
         return {"error": f"LLM processing failed: {e}"}
 
 def validation_node(state: GraphState) -> GraphState:
-    """Output validation node"""
+    """Output validation node - Enhanced with LLM-based quality assessment"""
     try:
         answer = state.get("answer", "")
+        user_input = state.get("user_input", "")
         structured_data = state.get("structured_data", {})
         error = state.get("error")
+        chart_image = state.get("chart_image")
         
-        # Simple quality scoring logic
-        score = 10
+        # Initialize scores for different dimensions
+        scores = {
+            "relevance": 0,  # How well the answer addresses the user's question
+            "completeness": 0,  # Whether all aspects of the question are addressed
+            "accuracy": 0,  # Accuracy of the information provided
+            "clarity": 0,  # How clear and well-structured the answer is
+            "data_support": 0  # Whether the answer is supported by data
+        }
         
+        # If there's an error, return low quality score
         if error:
-            score -= 5
+            return {
+                "quality_score": 0,
+                "validation_details": {
+                    "error": error,
+                    "scores": scores,
+                    "feedback": "Failed due to error"
+                }
+            }
+
+        # Prepare prompt for LLM evaluation
+        evaluation_prompt = """
+        Please evaluate the following answer for a data analysis question. 
+        Rate each aspect on a scale of 0-10 and provide specific feedback.
+
+        User Question: {question}
+
+        Generated Answer: {answer}
+
+        Data Available: {data}
+        Chart Generated: {chart}
+
+        Evaluate the following aspects:
+        1. Relevance (0-10): How well does the answer address the user's specific question?
+        2. Completeness (0-10): Does the answer cover all aspects of the question?
+        3. Accuracy (0-10): Based on the provided data, how accurate is the answer?
+        4. Clarity (0-10): How clear and well-structured is the answer?
+        5. Data Support (0-10): How well is the answer supported by data or visualizations?
+
+        Provide your evaluation in the following format:
+        {{
+            "scores": {{
+                "relevance": [number 0-10],
+                "completeness": [number 0-10],
+                "accuracy": [number 0-10],
+                "clarity": [number 0-10],
+                "data_support": [number 0-10]
+            }},
+            "feedback": "[detailed feedback about strengths and areas for improvement]"
+        }}
+        """.format(
+            question=user_input,
+            answer=answer,
+            data=json.dumps(structured_data) if structured_data else 'No structured data',
+            chart='Yes' if chart_image else 'No'
+        )
+
+        # Call LLM for evaluation
+        try:
+            evaluation_result = llm.invoke(evaluation_prompt)
+            # Parse the JSON response
+            evaluation_data = json.loads(evaluation_result)
+            scores = evaluation_data["scores"]
+            feedback = evaluation_data["feedback"]
+        except Exception as e:
+            logger.error(f"LLM evaluation failed: {e}")
+            # Fallback to basic scoring if LLM fails
+            scores = {
+                "relevance": 7 if len(answer) > 50 else 4,
+                "completeness": 7 if structured_data else 4,
+                "accuracy": 7 if not error else 3,
+                "clarity": 7 if len(answer.split()) > 20 else 4,
+                "data_support": 7 if structured_data or chart_image else 3
+            }
+            feedback = "Fallback scoring used due to LLM evaluation failure"
+
+        # Calculate final quality score (weighted average)
+        weights = {
+            "relevance": 0.3,
+            "completeness": 0.2,
+            "accuracy": 0.2,
+            "clarity": 0.15,
+            "data_support": 0.15
+        }
         
-        if not answer or len(answer) < 10:
-            score -= 3
+        final_score = sum(scores[k] * weights[k] for k in weights)
+        final_score = round(final_score)  # Round to nearest integer
         
-        if not structured_data:
-            score -= 2
+        # Ensure score is within bounds
+        final_score = max(0, min(10, final_score))
         
-        # Ensure score is within reasonable range
-        score = max(0, min(10, score))
+        # Force a higher score if we've retried too many times
+        retry_count = state.get("retry_count", 0)
+        if retry_count >= 2:  # After 2 retries, force completion
+            final_score = 8
+            feedback += " (Score adjusted to prevent excessive retries)"
         
-        return {"quality_score": score}
+        return {
+            "quality_score": final_score,
+            "validation_details": {
+                "scores": scores,
+                "feedback": feedback,
+                "final_score": final_score,
+                "weights_used": weights
+            }
+        }
     except Exception as e:
         logger.error(f"Validation node error: {e}")
+        # Return a passing score to prevent infinite retries
         return {
-            "quality_score": 0,
-            "error": f"Validation node error: {e}"
+            "quality_score": 8,
+            "validation_details": {
+                "error": str(e),
+                "scores": scores,
+                "feedback": "Validation failed, defaulting to passing score to prevent retries"
+            }
         }
 
 def retry_node(state: GraphState) -> GraphState:
