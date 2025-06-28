@@ -24,6 +24,8 @@ from pathlib import Path # Added Path
 import logging # Added logging
 import pandas as pd # Added pandas
 import re
+import asyncio
+from config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -396,341 +398,125 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         # SQLDatabase will connect to the main smart.db, but we tell it to only include the specific table.
         db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=3)
         
-        # Pre-process the query for common time-based requests to guide the LLM
-        processed_query = query
-        try:
-            # More specific conversions for simple cases, e.g., "last 6 weeks" -> "last 42 days"
-            def _convert_weeks_to_days(match):
-                num_weeks = int(match.group(1))
-                return f"last {num_weeks * 7} days"
-
-            processed_query = re.sub(r'last\s+week', "last 7 days", processed_query, flags=re.IGNORECASE)
-            processed_query = re.sub(r'last (\d+)\s+weeks', _convert_weeks_to_days, processed_query, flags=re.IGNORECASE)
-            
-            logger.info(f"Original query: '{query}', Processed for time hints: '{processed_query}'")
-        except Exception as e:
-            logger.error(f"Error during query pre-processing: {e}")
-            processed_query = query # Fallback to original query
-
-        logger.info(f"Creating SQL Agent for table: {db_table_name}")
+        # Get schema info for validation
+        schema_info = db.get_table_info()
         
-        # Try to use SQL Agent first, fallback to direct query if it fails
-        sql_agent_executor = None
+        # Process time expressions in query
+        processed_query = _process_time_expressions(query)
+
+        # Get available tables
+        available_tables = db.get_usable_table_names()
+        logger.info(f"Available tables: {available_tables}")
+
+        # Generate SQL using direct LLM call
+        sql_generation_prompt = f"""
+        User query: "{processed_query}"
+
+        Available tables: {available_tables}
+        Table schema: {schema_info}
+
+        Please generate a SQLite query to answer the user's question. The query should:
+        1. Only use SELECT statements (no INSERT, UPDATE, DELETE, etc.)
+        2. Only use tables that are available in the database
+        3. Use appropriate time filters for temporal queries:
+           - "this month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now')
+           - "last month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now', '-1 month')
+           - "this year" -> WHERE strftime('%Y', saledate) = strftime('%Y', 'now')
+        4. Use appropriate aggregations (SUM, COUNT, AVG) if needed
+        5. Include proper WHERE clauses to filter data
+        6. Use GROUP BY if needed to aggregate data
+        7. Order results appropriately
+        8. Limit results to a reasonable number (e.g., LIMIT 50)
+
+        Only return the SQL query, no explanations or other text.
+        """
+
         try:
-            from langchain.agents import AgentType
-            # Use ZERO_SHOT_REACT_DESCRIPTION for better compatibility with non-OpenAI models
-            sql_agent_executor = create_sql_agent(
-                llm=llm, 
-                db=db, 
-                agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION, 
-                verbose=True,
-                max_iterations=3,
-                early_stopping_method="generate",
-                handle_parsing_errors=True  # Handle parsing errors gracefully
+            # Execute query with timeout from config
+            sql_response = await asyncio.wait_for(
+                llm.agenerate([sql_generation_prompt]),
+                timeout=Config.LLM_TIMEOUT
             )
-            logger.info(f"SQL Agent created successfully for table: {db_table_name}")
-        except Exception as e:
-            logger.warning(f"Failed to create SQL Agent: {e}, will use direct query fallback")
-            sql_agent_executor = None
-        
-        # Try SQL Agent first if available
-        if sql_agent_executor:
-            try:
-                logger.info(f"Using SQL Agent for query: {processed_query}")
-                response = sql_agent_executor.invoke({"input": processed_query})
-                
-                # Extract answer from agent response
-                if isinstance(response, dict):
-                    answer = response.get("output", str(response))
-                else:
-                    answer = str(response)
-                
-                # Post-process SQL: convert unsupported "weeks" modifier to "days"
-                def _convert_weeks_to_days_sql(match):
-                    num_weeks = int(match.group(1))
-                    return f"date('now', '-{num_weeks * 7} days')"
-
-                # Pattern matches date('now', '-100 weeks')
-                weeks_pattern_now = re.compile(r"date\('now',\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days_sql, answer)
-
-                # Pattern matches date(<field>, '-N weeks')
-                def _convert_weeks_generic_sql(match):
-                    field = match.group(1)
-                    num_weeks = int(match.group(2))
-                    return f"date({field}, '-{num_weeks * 7} days')"
-
-                weeks_pattern_generic = re.compile(r"date\(([^,\s]+),\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic_sql, sql_query)
-
-                logger.info(f"LLM generated SQL (post-processed): {sql_query}")
-                
-            except Exception as agent_error:
-                logger.warning(f"SQL Agent execution failed: {agent_error}, falling back to direct query")
-        
-        # Execute database query directly as fallback using LLM-generated SQL
-        try:
-            # Get all tables and their schemas for this datasource
-            from .db import get_datasource_tables, get_datasource_schema_info
             
-            datasource_tables = await get_datasource_tables(active_datasource['id'])
-            schema_info = await get_datasource_schema_info(active_datasource['id'])
+            # Extract SQL from response
+            sql = sql_response.generations[0][0].text.strip()
             
-            logger.info(f"Datasource {active_datasource['id']} has tables: {datasource_tables}")
-            logger.info(f"Schema info: {schema_info}")
-            
-            # Prepare schema information for LLM
-            schema_description = ""
-            for table_name, columns in schema_info.items():
-                schema_description += f"\nTable name: {table_name}\n"
-                schema_description += "Columns: " + ", ".join([f"{col['name']}({col['type']})" for col in columns]) + "\n"
-            
-            # Use the primary table name if available, otherwise use the first table
-            primary_table = db_table_name if db_table_name in datasource_tables else datasource_tables[0] if datasource_tables else db_table_name
-            
-            # Use LLM to generate appropriate SQL query
-            sql_generation_prompt = f"""
-            User query: "{processed_query}"
-            
-            Data source table structure information: {schema_description}
-            
-            Please understand the user's real intent and generate the most suitable SQLite query statement.
-            
-            Analysis points:
-            1. What data does the user want? (sales volume, amount, quantity, etc.)
-            2. How does the user want to group? (by time, by product, by category, etc.)
-            3. What time granularity does the user expect? (year, month, week, day, etc.)
-            4. Does the user need sorting? Sort by what?
-            5. Does the user need aggregation calculations? (sum, average, count, etc.)
-            6. Which table to query? If multi-table association is needed, use JOIN statements
-            
-            Important Grouping Rules:
-            - For trend analysis ("趋势图", "trend"): Group ONLY by time period, aggregate all products together
-            - For product comparison: Group by product AND time if needed
-            - For overall statistics: Use SUM() to aggregate across all records
-            - Don't group by product name unless user specifically asks for product breakdown
-            
-            Time Period Analysis (IMPORTANT):
-            - If user mentions "周" (week) or "weeks": Group by week using strftime('%Y-%W', date_field)
-            - If user mentions "月" (month) or "months": Group by month using strftime('%Y-%m', date_field)
-            - If user mentions "年" (year) or "years": Group by year using strftime('%Y', date_field)
-            - If user mentions "天" (day) or "days": Group by day using strftime('%Y-%m-%d', date_field)
-            - If user asks for "最近X周" (recent X weeks): Use WHERE clause with date filtering
-            - If user asks for "最近X月" (recent X months): Use WHERE clause with date filtering
-            - For recent time periods, always filter data BEFORE grouping
-            
-            Recent Time Period Examples:
-            - "last 10 months": Use `WHERE saledate >= date('now', '-10 months')`
-            - "last 6 weeks": Use `WHERE saledate >= date('now', '-42 days')` (6 weeks * 7 days)
-            - "this year": Use `WHERE strftime('%Y', saledate) = strftime('%Y', 'now')`
-            - "last year": Use `WHERE strftime('%Y', saledate) = strftime('%Y', 'now', '-1 year')`
-            - "yesterday": Use `WHERE saledate >= date('now', '-1 day')`
-            
-            CRITICAL: SQLite does NOT support "-N weeks" syntax. Always convert weeks to days:
-            - 1 week = 7 days
-            - 100 weeks = 700 days
-            - Use: date('now', '-700 days') NOT date('now', '-100 weeks')
-            
-            Technical requirements:
-            - Only return complete SQL query statements, no explanations
-            - Available table names: {', '.join(datasource_tables)}
-            - Database: SQLite (not MySQL, don't use MySQL functions)
-            - All fields are TEXT type, numeric operations need CAST conversion
-            - Date format is usually: YYYY-MM-DD
-            - Reasonably limit result count (LIMIT 10-50)
-            - Use appropriate ORDER BY clause
-            
-            SQLite date function examples:
-            - Extract year: strftime('%Y', date_field_name)
-            - Extract month: strftime('%Y-%m', date_field_name)
-            - Extract week: strftime('%Y-%W', date_field_name) (keep as string, don't CAST to INTEGER)
-            - Extract date: date(date_field_name)
-            - Recent weeks: date('now', '-N days') where N = weeks * 7
-            - Recent months: date('now', '-N months')
-            - Don't use YEAR(), MONTH() and other MySQL functions
-            
-            Sorting Requirements:
-            - For time-based grouping (year, month, week, day), always sort in ascending time order: ORDER BY time_field ASC
-            - For year grouping, use: ORDER BY CAST(strftime('%Y', date_field_name) AS INTEGER) ASC
-            - For month grouping, use: ORDER BY strftime('%Y-%m', date_field_name) ASC
-            - For week grouping, use: ORDER BY strftime('%Y-%W', date_field_name) ASC (don't CAST to INTEGER)
-            - For day grouping, use: ORDER BY date(date_field_name) ASC
-            
-            When a user asks for a chart (e.g., "bar chart of ..."), ensure your query returns at least two columns: one for the labels (like time periods) and one for the values.
-
-            Please generate SQL based on user requirements and available table structure, ensuring correct SQLite syntax and sorting.
-            
-            Example SQL for different scenarios:
-            - Weekly trend query: "SELECT strftime('%Y-%W', saledate) as week, SUM(CAST(quantitysold AS INTEGER)) as total FROM table WHERE saledate >= date('now', '-700 days') GROUP BY strftime('%Y-%W', saledate) ORDER BY strftime('%Y-%W', saledate) ASC"
-            - Monthly trend query: "SELECT strftime('%Y-%m', saledate) as month, SUM(CAST(quantitysold AS INTEGER)) as total FROM table GROUP BY month ORDER BY month ASC"
-            - Product breakdown: "SELECT productname, SUM(CAST(quantitysold AS INTEGER)) as total FROM table GROUP BY productname ORDER BY total DESC"
-            
-            SQL query statement:
-            """
+            # Clean and validate SQL
+            clean_sql = _clean_sql_statement(sql)
+            if not _validate_sql_statement(clean_sql, schema_info):
+                raise ValueError(f"Invalid SQL statement generated: {clean_sql}")
             
             try:
-                response = llm.invoke(sql_generation_prompt)
+                # Execute the cleaned SQL
+                query_result = db.run(clean_sql)
                 
-                # Handle LLM response
-                if hasattr(response, 'content'):
-                    llm_sql = response.content
-                elif isinstance(response, str):
-                    llm_sql = response
+                # Handle different result types
+                if isinstance(query_result, str):
+                    # If result is a string, it might be an error or a single value
+                    logger.warning(f"Query returned string result: {query_result}")
+                    structured_data = {
+                        "rows": [{"result": query_result}],
+                        "columns": ["result"],
+                        "executed_sql": clean_sql,
+                        "queried_table": db_table_name
+                    }
                 else:
-                    llm_sql = str(response)
-                
-                # Post-process SQL: convert unsupported "weeks" modifier to "days"
-                def _convert_weeks_to_days_sql(match):
-                    num_weeks = int(match.group(1))
-                    return f"date('now', '-{num_weeks * 7} days')"
-
-                # Pattern matches date('now', '-100 weeks')
-                weeks_pattern_now = re.compile(r"date\('now',\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_now.sub(_convert_weeks_to_days_sql, llm_sql)
-
-                # Pattern matches date(<field>, '-N weeks')
-                def _convert_weeks_generic_sql(match):
-                    field = match.group(1)
-                    num_weeks = int(match.group(2))
-                    return f"date({field}, '-{num_weeks * 7} days')"
-
-                weeks_pattern_generic = re.compile(r"date\(([^,\s]+),\s*'-\s*(\d+)\s*weeks'\)", re.IGNORECASE)
-                sql_query = weeks_pattern_generic.sub(_convert_weeks_generic_sql, sql_query)
-
-                logger.info(f"LLM generated SQL (post-processed): {sql_query}")
-                
-            except Exception as llm_error:
-                logger.warning(f"LLM SQL generation failed: {llm_error}, using fallback query")
-                sql_query = f"SELECT * FROM {db_table_name} LIMIT 10"
-            
-            # Execute SQL query
-            logger.info(f"Executing SQL: {sql_query}")
-            result = db.run(sql_query)
-            logger.info(f"SQL result: {result}")
-            
-            # Parse results and use LLM to generate natural language answer
-            if result:
-                # Parse SQL result - handle different result formats
-                rows = []
-                
-                # Check result type
-                if isinstance(result, list):
-                    # If result is in list format (e.g., [(2025, 5.6)])
-                    rows = [list(row) if isinstance(row, tuple) else row for row in result]
-                    logger.info(f"Parsed {len(rows)} rows from list result")
-                elif isinstance(result, str) and result.strip():
-                    # If result is in string format
-                    if '|' in result:  # Table format result
-                        lines = result.strip().split('\n')
-                        if len(lines) > 1:  # Has data rows
-                            for line in lines[1:]:  # Skip header row
-                                if '|' in line:
-                                    row_data = [cell.strip() for cell in line.split('|')]
-                                    if len(row_data) >= 2:
-                                        rows.append(row_data)
-                    else:
-                        # Try parsing other string result formats
-                        try:
-                            # Try eval parsing (security consideration: only use in development environment)
-                            import ast
-                            parsed_result = ast.literal_eval(result)
-                            if isinstance(parsed_result, list):
-                                rows = [list(row) if isinstance(row, tuple) else row for row in parsed_result]
-                        except:
-                            # If parsing fails, treat the entire result as single row data
-                            rows = [[result]]
-                
-                logger.info(f"Final parsed rows: {rows}")
-                
-                # Use LLM to generate natural language answer
-                try:
-                    answer_generation_prompt = f"""
-                    User query: "{processed_query}"
-                    
-                    SQL query result: {result}
-                    
-                    Please answer the user's question in natural language based on the query results. Requirements:
-                    1. Answer should be concise and clear
-                    2. Highlight key data points
-                    3. Answer in English
-                    4. For numerical data, provide appropriate analysis and summary
-                    5. Don't repeat the raw format of SQL results
-                    """
-                    
-                    answer_response = llm.invoke(answer_generation_prompt)
-                    
-                    # Handle LLM response
-                    if hasattr(answer_response, 'content'):
-                        llm_answer = answer_response.content
-                    elif isinstance(answer_response, str):
-                        llm_answer = answer_response
-                    else:
-                        llm_answer = str(answer_response)
-                    
-                    logger.info(f"LLM generated answer: {llm_answer[:100]}...")
-                    
-                except Exception as answer_error:
-                    logger.warning(f"LLM answer generation failed: {answer_error}, using fallback")
-                    llm_answer = f"Query returned {len(rows)} records"
+                    # Normal case: result is a list of dictionaries
+                    if not query_result:
+                        return {
+                            "success": False,
+                            "error": "Query returned no results. Please check if the time period contains data.",
+                            "query": processed_query,
+                            "executed_sql": clean_sql
+                        }
+                        
+                    # Ensure query_result is a list
+                    if not isinstance(query_result, list):
+                        query_result = [query_result]
+                        
+                    structured_data = {
+                        "rows": query_result,
+                        "columns": list(query_result[0].keys()) if query_result else [],
+                        "executed_sql": clean_sql,
+                        "queried_table": db_table_name
+                    }
                 
                 return {
-                    "query": query,
-                    "query_type": "sql_agent",
                     "success": True,
-                    "answer": llm_answer,
-                    "data": {
-                        "source_datasource_id": active_datasource['id'],
-                        "source_datasource_name": active_datasource['name'],
-                        "queried_table": primary_table,
-                        "available_tables": datasource_tables,
-                        "executed_sql": sql_query,
-                        "rows": rows,
-                        "answer": llm_answer,
-                        "method": "llm_generated_sql"
-                    }
-                }
-            else:
-                return {
-                    "query": query,
-                    "query_type": "sql_agent",
-                    "success": True,
-                    "answer": "Query returned no data",
-                    "data": {
-                        "source_datasource_id": active_datasource['id'],
-                        "source_datasource_name": active_datasource['name'],
-                        "queried_table": primary_table,
-                        "available_tables": datasource_tables,
-                        "executed_sql": sql_query,
-                        "rows": [],
-                        "answer": "Query returned no data",
-                        "method": "llm_generated_sql"
-                    }
+                    "data": structured_data,
+                    "answer": f"Here are the results for your query about {processed_query}",
+                    "executed_sql": clean_sql,
+                    "query": processed_query
                 }
                 
-        except Exception as sql_error:
-            logger.error(f"Direct SQL execution failed: {sql_error}")
+            except Exception as e:
+                error_msg = str(e)
+                if "no such table" in error_msg.lower():
+                    error_msg = f"Table not found. Available tables are: {', '.join(available_tables)}"
+                elif "no such column" in error_msg.lower():
+                    error_msg = f"Column not found in schema: {error_msg}"
+                    
+                logger.error(f"SQL execution failed: {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"Error executing SQL query: {error_msg}",
+                    "query": processed_query,
+                    "executed_sql": clean_sql
+                }
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Query SQL generation timed out for query: {processed_query}")
             return {
-                "query": processed_query,
-                "query_type": "sql_agent",
                 "success": False,
-                "answer": f"Database query failed: {str(sql_error)}",
-                "data": {
-                    "source_datasource_id": active_datasource['id'],
-                    "source_datasource_name": active_datasource['name'],
-                    "queried_table": primary_table if 'primary_table' in locals() else db_table_name,
-                    "available_tables": datasource_tables if 'datasource_tables' in locals() else [db_table_name]
-                },
-                "error": str(sql_error)
+                "error": "Query generation timed out",
+                "query": processed_query
             }
 
-
     except Exception as e:
-        logger.error(f"SQL Agent query failed for datasource {active_datasource['name']} on table {db_table_name}: {e}", exc_info=True)
+        logger.error(f"Error during SQL Agent query: {e}")
         return {
-            "query": processed_query,
-            "query_type": "sql_agent",
-            "success": False,
-            "answer": f"An error occurred while executing SQL query in data source '{active_datasource['name']}' (Table: {db_table_name}).",
+            "query": query, "query_type": "sql_agent", "success": False,
+            "answer": f"Error during SQL Agent query: {str(e)}",
             "data": {"source_datasource_id": active_datasource['id'], "source_datasource_name": active_datasource['name']},
             "error": str(e)
         }
@@ -1096,4 +882,234 @@ def initialize_app_state():
         logger.warning("Embedding model not initialized. RAG functionality will be unavailable.")
         
     logger.info("Application state initialization completed.")
+
+# Add new function for query SQL processing
+async def get_query_from_sqltable_datasource(
+    query: str, 
+    active_datasource: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Get answer from SQL table datasource with improved error handling and SQL cleaning
+    Specifically optimized for data queries (not charts)
+    """
+    logger.info(f"Attempting Query SQL on datasource: {active_datasource['name']} (ID: {active_datasource['id']}) for query: '{query}'")
+
+    if not llm:
+        return {
+            "success": False,
+            "error": "LLM not initialized. SQL query cannot be processed.",
+            "query": query
+        }
+
+    try:
+        # Get table name from datasource
+        table_name = f"dstable_{active_datasource['id']}_sample_sales_2025_19f7aeb7"
+        logger.info(f"Initializing SQLDatabase for query: {table_name}")
+        
+        # Initialize database connection
+        db = SQLDatabase.from_uri(DB_URI)
+        
+        # Get schema info for validation
+        schema_info = db.get_table_info()
+        
+        # Process time expressions in query
+        processed_query = _process_time_expressions(query)
+
+        # Get available tables
+        available_tables = db.get_usable_table_names()
+        logger.info(f"Available tables: {available_tables}")
+
+        # Generate SQL using direct LLM call
+        sql_generation_prompt = f"""
+        User query: "{processed_query}"
+
+        Available tables: {available_tables}
+        Table schema: {schema_info}
+
+        Please generate a SQLite query to answer the user's question. The query should:
+        1. Only use SELECT statements (no INSERT, UPDATE, DELETE, etc.)
+        2. Only use tables that are available in the database
+        3. Use appropriate time filters for temporal queries:
+           - "this month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now')
+           - "last month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now', '-1 month')
+           - "this year" -> WHERE strftime('%Y', saledate) = strftime('%Y', 'now')
+        4. Use appropriate aggregations (SUM, COUNT, AVG) if needed
+        5. Include proper WHERE clauses to filter data
+        6. Use GROUP BY if needed to aggregate data
+        7. Order results appropriately
+        8. Limit results to a reasonable number (e.g., LIMIT 50)
+
+        Only return the SQL query, no explanations or other text.
+        """
+
+        try:
+            # Execute query with timeout from config
+            sql_response = await asyncio.wait_for(
+                llm.agenerate([sql_generation_prompt]),
+                timeout=Config.LLM_TIMEOUT
+            )
+            
+            # Extract SQL from response
+            sql = sql_response.generations[0][0].text.strip()
+            
+            # Clean and validate SQL
+            clean_sql = _clean_sql_statement(sql)
+            if not _validate_sql_statement(clean_sql, schema_info):
+                raise ValueError(f"Invalid SQL statement generated: {clean_sql}")
+            
+            try:
+                # Execute the cleaned SQL
+                query_result = db.run(clean_sql)
+                
+                # Handle different result types
+                if isinstance(query_result, str):
+                    # If result is a string, it might be an error or a single value
+                    logger.warning(f"Query returned string result: {query_result}")
+                    structured_data = {
+                        "rows": [{"result": query_result}],
+                        "columns": ["result"],
+                        "executed_sql": clean_sql,
+                        "queried_table": table_name
+                    }
+                else:
+                    # Normal case: result is a list of dictionaries
+                    if not query_result:
+                        return {
+                            "success": False,
+                            "error": "Query returned no results. Please check if the time period contains data.",
+                            "query": processed_query,
+                            "executed_sql": clean_sql
+                        }
+                        
+                    # Ensure query_result is a list
+                    if not isinstance(query_result, list):
+                        query_result = [query_result]
+                        
+                    structured_data = {
+                        "rows": query_result,
+                        "columns": list(query_result[0].keys()) if query_result else [],
+                        "executed_sql": clean_sql,
+                        "queried_table": table_name
+                    }
+                
+                return {
+                    "success": True,
+                    "data": structured_data,
+                    "answer": f"Here are the results for your query about {processed_query}",
+                    "executed_sql": clean_sql,
+                    "query": processed_query
+                }
+                
+            except Exception as e:
+                error_msg = str(e)
+                if "no such table" in error_msg.lower():
+                    error_msg = f"Table not found. Available tables are: {', '.join(available_tables)}"
+                elif "no such column" in error_msg.lower():
+                    error_msg = f"Column not found in schema: {error_msg}"
+                    
+                logger.error(f"SQL execution failed: {error_msg}")
+                return {
+                    "success": False,
+                    "error": f"Error executing SQL query: {error_msg}",
+                    "query": processed_query,
+                    "executed_sql": clean_sql
+                }
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Query SQL generation timed out for query: {processed_query}")
+            return {
+                "success": False,
+                "error": "Query generation timed out",
+                "query": processed_query
+            }
+
+    except Exception as e:
+        logger.error(f"Error in get_query_from_sqltable_datasource: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Failed to process query: {str(e)}",
+            "query": query
+        }
+
+def _clean_sql_statement(sql: str) -> str:
+    """Clean SQL statement by removing comments and extra text"""
+    # Remove comments
+    sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)  # Remove /* ... */ comments
+    sql = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)   # Remove -- comments
+    
+    # Remove explanation text after semicolon
+    sql = sql.split(';')[0] + ';' if ';' in sql else sql
+    
+    # Clean whitespace
+    sql = ' '.join(sql.split())
+    
+    return sql
+
+def _validate_sql_statement(sql: str, schema_info: str) -> bool:
+    """Validate SQL statement against schema and basic rules"""
+    sql_lower = sql.lower()
+    
+    # Basic security checks
+    dangerous_keywords = ['drop', 'truncate', 'delete', 'update', 'insert', 'alter', 'create']
+    if any(keyword in sql_lower for keyword in dangerous_keywords):
+        return False
+    
+    # Must be a SELECT statement
+    if not sql_lower.strip().startswith('select'):
+        return False
+    
+    return True
+
+def _extract_sql_from_result(result: Dict[str, Any]) -> Optional[str]:
+    """Extract SQL statement from agent result"""
+    if not result or not isinstance(result, dict):
+        return None
+        
+    # Try to find SQL in the output
+    output = result.get("output", "")
+    if not output:
+        return None
+        
+    # Look for SQL between backticks or after "SQL:" or similar markers
+    sql_markers = [
+        r"```sql\n(.*?)\n```",
+        r"```(.*?)```",
+        r"SQL:\s*(.*?)(?:\n|$)",
+        r"Query:\s*(.*?)(?:\n|$)",
+        r"Generated SQL:\s*(.*?)(?:\n|$)"
+    ]
+    
+    for marker in sql_markers:
+        match = re.search(marker, output, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    
+    # If no SQL found in markers, try to find the first statement that looks like SQL
+    lines = output.split('\n')
+    for line in lines:
+        if line.strip().lower().startswith('select'):
+            return line.strip()
+    
+    return None
+
+def _process_time_expressions(query: str) -> str:
+    """Process time-related expressions in the query"""
+    # Convert "last X weeks/months/years" to specific date ranges
+    patterns = [
+        (r'last (\d+) weeks?', lambda m: f'in the past {m.group(1)} weeks'),
+        (r'last (\d+) months?', lambda m: f'in the past {m.group(1)} months'),
+        (r'last (\d+) years?', lambda m: f'in the past {m.group(1)} years'),
+        (r'past (\d+) weeks?', lambda m: f'in the past {m.group(1)} weeks'),
+        (r'past (\d+) months?', lambda m: f'in the past {m.group(1)} months'),
+        (r'past (\d+) years?', lambda m: f'in the past {m.group(1)} years'),
+        (r'previous (\d+) weeks?', lambda m: f'in the past {m.group(1)} weeks'),
+        (r'previous (\d+) months?', lambda m: f'in the past {m.group(1)} months'),
+        (r'previous (\d+) years?', lambda m: f'in the past {m.group(1)} years')
+    ]
+    
+    processed = query
+    for pattern, replacement in patterns:
+        processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
+    
+    return processed
 

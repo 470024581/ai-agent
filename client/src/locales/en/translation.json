@@ -276,12 +276,13 @@
       "qualityValidation": "Quality Validation",
       "qualityValidationDesc": "Score and validate output quality"
     },
+    "exampleTitle": "Example Queries",
     "examples": {
-      "salesThisMonth": "What are the sales this month?",
-      "lowStockProducts": "Which products have stock below 50?",
-      "customerDistribution": "How are customers distributed?",
-      "salesTrendChart": "Generate sales trend chart",
-      "salesBarChartLast10Months": "Generate sales bar chart for last 10 months",
+      "currentMonthSales": "What are the sales this month?",
+      "topProductsByAmount": "Show me the top 5 products by total sales amount",
+      "categoryPriceAnalysis": "What's the average price of each product category?",
+      "salesTrendChart2025": "Generate a monthly sales trend chart for 2025",
+      "bestSellerByQuantity": "Which product has the highest quantity sold?",
       "whoIsLongliang": "Who is Longliang?"
     }
   },

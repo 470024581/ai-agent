@@ -239,12 +239,13 @@
       "qualityValidation": "质量验证",
       "qualityValidationDesc": "评分验证输出质量"
     },
+    "exampleTitle": "示例查询",
     "examples": {
-      "salesThisMonth": "本月销售额是多少？",
-      "lowStockProducts": "库存低于50的产品有哪些？",
-      "customerDistribution": "客户分布情况如何？",
-      "salesTrendChart": "生成销售趋势图",
-      "salesBarChartLast10Months": "生成最近10个月的销售柱状图",
+      "currentMonthSales": "本月的销售情况如何？",
+      "topProductsByAmount": "显示销售额前5名的产品",
+      "categoryPriceAnalysis": "各个产品类别的平均价格是多少？",
+      "salesTrendChart2025": "生成2025年月度销售趋势图",
+      "bestSellerByQuantity": "哪个产品的销售数量最多？",
       "whoIsLongliang": "龙亮是谁？"
     }
   },

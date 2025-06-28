@@ -46,7 +46,7 @@ import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
 import { Spinner } from './ui/spinner';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
-import { ChevronsUpDown } from 'lucide-react';
+import { ChevronsUpDown, Lightbulb } from 'lucide-react';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
@@ -81,12 +81,13 @@ function IntelligentAnalysis() {
     { id: 'router_node', name: 'Router', type: 'decision', position: { x: 300, y: 100 }, description: 'Determine SQL or RAG path' },
     { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', position: { x: 150, y: 180 }, description: 'Classify as query or chart' },
     { id: 'rag_query_node', name: 'RAG Query', type: 'process', position: { x: 450, y: 180 }, description: 'Vector search & retrieval' },
-    { id: 'sql_execution_node', name: 'SQL Execution', type: 'process', position: { x: 150, y: 300 }, description: 'Execute database query' },
+    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', position: { x: 50, y: 270 }, description: 'Execute chart data query' },
+    { id: 'sql_query_node', name: 'SQL Query', type: 'process', position: { x: 300, y: 270 }, description: 'Execute database query' },
     { id: 'chart_config_node', name: 'Chart Config', type: 'process', position: { x: 50, y: 400 }, description: 'Generate chart configuration' },
     { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', position: { x: 190, y: 400 }, description: 'Call QuickChart API' },
     { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 300, y: 400 }, description: 'Generate natural language response' },
-    { id: 'retry_node', name: 'Retry', type: 'retry', position: { x: 150, y: 520 }, description: 'Retry with improvements' },
     { id: 'validation_node', name: 'Validation', type: 'validation', position: { x: 300, y: 520 }, description: 'Quality score validation' },
+    { id: 'retry_node', name: 'Retry', type: 'retry', position: { x: 150, y: 520 }, description: 'Retry with improvements' },
     { id: 'end_node', name: 'End', type: 'end', position: { x: 200, y: 680 }, description: 'Process completed' }
   ];
 
@@ -94,9 +95,10 @@ function IntelligentAnalysis() {
     { from: 'start_node', to: 'router_node', condition: 'Start Process', color: '#22c55e' },
     { from: 'router_node', to: 'sql_classifier_node', condition: 'SQL Path', color: '#3b82f6' },
     { from: 'router_node', to: 'rag_query_node', condition: 'RAG Path', color: '#8b5cf6' },
-    { from: 'sql_classifier_node', to: 'sql_execution_node', condition: 'Both Paths', color: '#10b981' },
-    { from: 'sql_execution_node', to: 'chart_config_node', condition: 'Chart Type', color: '#f59e0b' },
-    { from: 'sql_execution_node', to: 'llm_processing_node', condition: 'Query Type', color: '#10b981' },
+    { from: 'sql_classifier_node', to: 'sql_chart_node', condition: 'Chart Type', color: '#f59e0b' },
+    { from: 'sql_classifier_node', to: 'sql_query_node', condition: 'Query Type', color: '#10b981' },
+    { from: 'sql_chart_node', to: 'chart_config_node', condition: 'Chart Data', color: '#f59e0b' },
+    { from: 'sql_query_node', to: 'llm_processing_node', condition: 'Query Result', color: '#10b981' },
     { from: 'chart_config_node', to: 'chart_rendering_node', condition: 'Chart Config', color: '#f59e0b' },
     { from: 'chart_rendering_node', to: 'llm_processing_node', condition: 'Chart URL', color: '#f59e0b' },
     { from: 'rag_query_node', to: 'llm_processing_node', condition: 'RAG Result', color: '#8b5cf6' },
@@ -572,33 +574,38 @@ function IntelligentAnalysis() {
   };
 
   const renderExampleQueries = () => {
-    const examples = ['salesThisMonth', 'lowStockProducts', 'customerDistribution', 'salesTrendChart', 'salesBarChartLast10Months', 'whoIsLongliang'];
+    const examples = [
+      'currentMonthSales',      // Basic sales query
+      'topProductsByAmount',    // Analysis of top selling products
+      'categoryPriceAnalysis',  // Average price analysis by category
+      'salesTrendChart2025',    // Sales trend visualization
+      'bestSellerByQuantity',   // Best-selling product analysis
+      'whoIsLongliang'         // Keep this as a non-data query example
+    ];
     
     return (
-      <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 h-full">
-        <CardContent className="p-6 h-full flex flex-col">
-          <h6 className="font-bold text-blue-600 mb-4 flex items-center text-lg">
-            <FaLightbulb className="mr-2 h-5 w-5" />
-            {t('intelligentAnalysis.exampleQueries')}
-          </h6>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3 flex-1 content-start">
-            {examples.map((example, index) => (
-              <Button
-                key={index}
-                variant="outline"
-                size="sm"
-                onClick={() => handleExampleClick(t(`intelligentAnalysis.examples.${example}`))}
-                disabled={loading}
-                className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-              >
-                <span className="block w-full text-left leading-relaxed">
-                  {t(`intelligentAnalysis.examples.${example}`)}
-                </span>
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        <h6 className="text-sm font-medium text-blue-500 flex items-center gap-2">
+          <Lightbulb size={18} />
+          {t('intelligentAnalysis.exampleTitle')}
+        </h6>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3 flex-1 content-start">
+          {examples.map((example, index) => (
+            <Button
+              key={index}
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick(t(`intelligentAnalysis.examples.${example}`))}
+              disabled={loading}
+              className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                {t(`intelligentAnalysis.examples.${example}`)}
+              </span>
+            </Button>
+          ))}
+        </div>
+      </div>
     );
   };
 

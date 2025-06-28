@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional, TypedDict
 import logging
 import requests
 from langgraph.graph import StateGraph
-from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource
+from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
 from .models import WorkflowEvent, WorkflowEventType, NodeStatus
 
 logger = logging.getLogger(__name__)
@@ -147,33 +147,157 @@ def sql_classifier_node(state: GraphState) -> GraphState:
     
     return {"sql_task_type": sql_task_type}
 
-async def sql_execution_node(state: GraphState) -> GraphState:
-    """SQL execution node: retrieve structured data"""
+async def sql_query_node(state: GraphState) -> GraphState:
+    """SQL query node: execute SQL query and return results"""
     try:
         user_input = state["user_input"]
         datasource = state["datasource"]
         
-        # Call existing SQL query logic
-        result = await get_answer_from_sqltable_datasource(user_input, datasource)
+        # Call SQL query logic with improved error handling
+        result = await get_query_from_sqltable_datasource(
+            user_input, 
+            datasource
+        )
         
         if result["success"]:
-            # Ensure data is correctly passed, including original answer for chart data extraction
-            structured_data = result["data"]
-            if not structured_data.get("rows") and result.get("answer"):
-                # If no rows data, put answer in structured_data for subsequent parsing
-                structured_data["answer"] = result["answer"]
+            structured_data = result.get("data", {})
+            executed_sql = result.get("executed_sql", "")
             
-            logger.info(f"SQL execution successful, structured_data keys: {list(structured_data.keys())}")
+            # Validate the result structure
+            if not structured_data:
+                return {
+                    "error": "No structured data returned from query",
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "sql_query": {
+                            "status": "error",
+                            "timestamp": time.time(),
+                            "error": "No data available"
+                        }
+                    }
+                }
+            
+            logger.info(f"SQL query successful, data: {structured_data}")
             
             return {
                 "structured_data": structured_data,
-                "answer": result["answer"]
+                "answer": result["answer"],
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "sql_query": {
+                        "status": "completed",
+                        "timestamp": time.time(),
+                        "data_summary": {
+                            "row_count": len(structured_data.get("rows", [])),
+                            "executed_sql": executed_sql,
+                            "has_answer": bool(result.get("answer"))
+                        }
+                    }
+                }
             }
         else:
-            return {"error": result.get("error", "SQL execution failed")}
+            error_msg = result.get("error", "SQL query execution failed")
+            logger.error(f"SQL query failed: {error_msg}")
+            
+            return {
+                "error": error_msg,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "sql_query": {
+                        "status": "error",
+                        "timestamp": time.time(),
+                        "error": error_msg
+                    }
+                }
+            }
     except Exception as e:
-        logger.error(f"SQL execution node error: {e}")
-        return {"error": str(e)}
+        error_msg = f"Unexpected error in SQL query node: {str(e)}"
+        logger.exception(error_msg)
+        return {
+            "error": error_msg,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "sql_query": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": error_msg
+                }
+            }
+        }
+
+async def sql_chart_node(state: GraphState) -> GraphState:
+    """SQL chart node: execute SQL query for chart data"""
+    try:
+        user_input = state["user_input"]
+        datasource = state["datasource"]
+        
+        # Call existing SQL query logic with chart context
+        result = await get_answer_from_sqltable_datasource(user_input, datasource)
+        
+        if result["success"]:
+            structured_data = result["data"]
+            
+            # Ensure we have the required data for charting
+            if not structured_data.get("rows"):
+                return {
+                    "error": "No data returned for chart generation",
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "sql_chart": {
+                            "status": "error",
+                            "timestamp": time.time(),
+                            "error": "No data available for charting"
+                        }
+                    }
+                }
+            
+            logger.info(f"SQL chart data query successful, data rows: {len(structured_data.get('rows', []))}")
+            
+            # Update state with chart data
+            return {
+                "structured_data": structured_data,
+                "answer": result["answer"],
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "sql_chart": {
+                        "status": "completed",
+                        "timestamp": time.time(),
+                        "data_summary": {
+                            "row_count": len(structured_data.get("rows", [])),
+                            "executed_sql": structured_data.get("executed_sql"),
+                            "queried_table": structured_data.get("queried_table")
+                        }
+                    }
+                }
+            }
+        else:
+            error_msg = result.get("error", "SQL chart data query failed")
+            logger.error(f"SQL chart query failed: {error_msg}")
+            return {
+                "error": error_msg,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "sql_chart": {
+                        "status": "error",
+                        "timestamp": time.time(),
+                        "error": error_msg
+                    }
+                }
+            }
+    except Exception as e:
+        error_msg = f"SQL chart node error: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return {
+            "error": error_msg,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "sql_chart": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": error_msg
+                }
+            }
+        }
 
 def chart_config_node(state: GraphState) -> GraphState:
     """Chart configuration node: generate chart configuration"""
@@ -1010,14 +1134,14 @@ async def process_intelligent_query(
     workflow.add_node("start_node", lambda state: state)  # Start node just passes through
     workflow.add_node("router_node", router_node)
     workflow.add_node("sql_classifier_node", sql_classifier_node)
-    workflow.add_node("sql_execution_node", sql_execution_node)
+    workflow.add_node("sql_query_node", sql_query_node)  # New node for SQL queries
+    workflow.add_node("sql_chart_node", sql_chart_node)  # Renamed from sql_execution_node
     workflow.add_node("rag_query_node", rag_query_node)
     workflow.add_node("chart_config_node", chart_config_node)
     workflow.add_node("chart_rendering_node", chart_rendering_node)
     workflow.add_node("llm_processing_node", llm_processing_node)
     workflow.add_node("validation_node", validation_node)
     workflow.add_node("retry_node", retry_node)
-    # Define the end node explicitly
     workflow.add_node("end_node", lambda state: {"success": True})
 
     # Set entry point
@@ -1035,38 +1159,40 @@ async def process_intelligent_query(
             "rag": "rag_query_node"
         }
     )
+
+    # SQL Classifier routes based on task type
     workflow.add_conditional_edges(
         "sql_classifier_node",
         lambda state: state["sql_task_type"],
         {
-            "query": "llm_processing_node",  # Direct data query goes to LLM for summary
-            "chart": "sql_execution_node"   # Corrected: Chart task goes to execution first
+            "query": "sql_query_node",     # Query task goes to SQL Query node
+            "chart": "sql_chart_node"      # Chart task goes to SQL Chart node
         }
     )
-    
-    workflow.add_edge("rag_query_node", "llm_processing_node")
-    workflow.add_edge("sql_execution_node", "chart_config_node")
-    
-    # After chart is configured, render it
-    workflow.add_edge("chart_config_node", "chart_rendering_node")
-    
-    # CRITICAL FIX: After rendering the chart, go to LLM processing to get a description
-    workflow.add_edge("chart_rendering_node", "llm_processing_node")
 
-    # After processing, validate the result
+    # Connect SQL Query node to LLM Processing
+    workflow.add_edge("sql_query_node", "llm_processing_node")
+
+    # Connect SQL Chart node to Chart Config
+    workflow.add_edge("sql_chart_node", "chart_config_node")
+
+    # Rest of the edges remain the same
+    workflow.add_edge("chart_config_node", "chart_rendering_node")
+    workflow.add_edge("chart_rendering_node", "llm_processing_node")
+    workflow.add_edge("rag_query_node", "llm_processing_node")
     workflow.add_edge("llm_processing_node", "validation_node")
 
-    # Conditional logic for validation
+    # Add conditional edges for validation
     workflow.add_conditional_edges(
         "validation_node",
-        lambda state: "retry" if state.get("quality_score", 10) < 8 else "end",
+        lambda state: "retry" if state["quality_score"] < 8 else "end",
         {
             "retry": "retry_node",
-            "end": "end_node"  # Connect validation to the end node
+            "end": "end_node"
         }
     )
-    
-    # Retry logic
+
+    # Connect retry node back to LLM processing
     workflow.add_edge("retry_node", "llm_processing_node")
 
     # Set finish point
