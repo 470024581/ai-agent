@@ -589,21 +589,103 @@ function IntelligentAnalysis() {
           <Lightbulb size={18} />
           {t('intelligentAnalysis.exampleTitle')}
         </h6>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3 flex-1 content-start">
-          {examples.map((example, index) => (
+        {/* SQL Chart Section */}
+        <div className="space-y-3">
+          <div className="flex items-center">
+            <div className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-medium border border-blue-200">
+              SQL Chart
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
             <Button
-              key={index}
               variant="outline"
               size="sm"
-              onClick={() => handleExampleClick(t(`intelligentAnalysis.examples.${example}`))}
+              onClick={() => handleExampleClick("Generate a monthly sales trend chart for 2025.")}
               disabled={loading}
               className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
             >
               <span className="block w-full text-left leading-relaxed">
-                {t(`intelligentAnalysis.examples.${example}`)}
+                Generate a monthly sales trend chart for 2025.
               </span>
             </Button>
-          ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick("Show me the top 5 products by total sales amount")}
+              disabled={loading}
+              className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                Show me the top 5 products by total sales amount
+              </span>
+            </Button>
+          </div>
+        </div>
+
+        {/* SQL Query Section */}
+        <div className="space-y-3">
+          <div className="flex items-center">
+            <div className="px-3 py-1.5 bg-green-50 text-green-600 rounded-full text-sm font-medium border border-green-200">
+              SQL Query
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick("What's the average price of each product category?")}
+              disabled={loading}
+              className="text-left justify-start border-green-200 hover:border-green-300 hover:text-green-500 hover:bg-green-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                What's the average price of each product category?
+              </span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick("What are the sales this month?")}
+              disabled={loading}
+              className="text-left justify-start border-green-200 hover:border-green-300 hover:text-green-500 hover:bg-green-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                What are the sales this month?
+              </span>
+            </Button>
+          </div>
+        </div>
+
+        {/* RAG Query Section */}
+        <div className="space-y-3">
+          <div className="flex items-center">
+            <div className="px-3 py-1.5 bg-purple-50 text-purple-600 rounded-full text-sm font-medium border border-purple-200">
+              RAG Query
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick("Do you know any software developers?")}
+              disabled={loading}
+              className="text-left justify-start border-purple-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                Do you know any software developers?
+              </span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleExampleClick("Who is Longliang?")}
+              disabled={loading}
+              className="text-left justify-start border-purple-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
+            >
+              <span className="block w-full text-left leading-relaxed">
+                Who is Longliang?
+              </span>
+            </Button>
+          </div>
         </div>
       </div>
     );
