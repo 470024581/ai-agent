@@ -34,7 +34,7 @@ function DataSourceManager() {
   const [newDatasource, setNewDatasource] = useState({
     name: '',
     description: '',
-    type: 'sql_table_from_file'
+    type: 'hybrid'
   });
 
   const dismissAlert = () => setAlertMessage(null);
@@ -51,7 +51,8 @@ function DataSourceManager() {
       const response = await res.json();
       
       if (response.success) {
-        setDatasources(response.data);
+        const filteredDatasources = response.data.filter(ds => ds.type !== 'default');
+        setDatasources(filteredDatasources);
       } else {
         setAlertMessage({ type: 'danger', message: response.error || t('fetchingDataSourcesFailed') });
       }
@@ -100,7 +101,7 @@ function DataSourceManager() {
       if (response.success) {
         await loadDatasources();
         setShowCreateModal(false);
-        setNewDatasource({ name: '', description: '', type: 'sql_table_from_file' });
+        setNewDatasource({ name: '', description: '', type: 'hybrid' });
         setAlertMessage({ type: 'success', message: response.message || t('dataSource.createSuccess', { name: newDatasource.name }) });
       } else {
         setAlertMessage({ type: 'danger', message: response.error || t('creatingDataSourceFailed') });
@@ -174,11 +175,6 @@ function DataSourceManager() {
         if (!isPollingRefresh) setFilesLoading(false);
         return;
     }
-     if (datasource.type === 'default') {
-        if (!isPollingRefresh) setAlertMessage({ type: 'info', message: t('defaultDSNoFileManagement') });
-        if (!isPollingRefresh) setFilesLoading(false);
-        return;
-    }
 
     try {
       if (!isPollingRefresh || files.length === 0) {
@@ -199,8 +195,6 @@ function DataSourceManager() {
     } finally {
        if (!isPollingRefresh || (isPollingRefresh && files.length === 0 && !response?.success)) {
          setFilesLoading(false);
-       } else if (isPollingRefresh) {
-         setFilesLoading(false); 
        }
     }
   };
@@ -383,12 +377,6 @@ function DataSourceManager() {
   
   const getTypeLabel = (type) => {
     switch (type) {
-      case 'default':
-        return t('defaultERFormatted');
-      case 'knowledge_base':
-        return t('knowledgeBaseDocsRAG');
-      case 'sql_table_from_file':
-        return t('formattedDataTableSQL');
       case 'hybrid':
         return t('dataSourceType.hybrid');
       default:
@@ -621,25 +609,20 @@ function DataSourceManager() {
                     <SelectValue placeholder={t('selectType')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="sql_table_from_file">{t('formattedDataTableSQL')}</SelectItem>
-                    <SelectItem value="knowledge_base">{t('knowledgeBaseDocsRAG')}</SelectItem>
                     <SelectItem value="hybrid">{t('dataSourceType.hybrid')}</SelectItem>
                   </SelectContent>
                 </Select>
                 
-                {/* Show description for hybrid data source */}
-                {newDatasource.type === 'hybrid' && (
-                  <div className="mt-4 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl shadow-sm">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <FaLightbulb className="h-4 w-4 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceDescription')}</h4>
-                      </div>
+                <div className="mt-4 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl shadow-sm">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <FaLightbulb className="h-4 w-4 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceDescription')}</h4>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
               <DialogFooter className="pt-6 border-t border-purple-200 space-x-3">
                 <Button 
@@ -691,7 +674,7 @@ function DataSourceManager() {
                   </button>
                 </Alert>
               )}
-              {selectedDatasource && selectedDatasource.type !== 'default' && (
+              {selectedDatasource && (
                 <div className="flex items-center justify-between py-3 border-b border-gray-200 mb-3">
                   <p className="text-gray-600 text-sm">{t('file.modal.currentDS', { name: selectedDatasource?.name || t('unknown') })}</p>
                   <div className="flex items-center space-x-2">
@@ -721,7 +704,7 @@ function DataSourceManager() {
                   <p>{t('fetchingFiles')}</p>
                 </div>
               ) : (
-                selectedDatasource && selectedDatasource.type !== 'default' ? (
+                selectedDatasource ? (
                   files.length > 0 ? (
                     <div className="h-full overflow-y-auto border border-gray-200 rounded-lg bg-white">
                       <Table>
@@ -773,7 +756,7 @@ function DataSourceManager() {
                 ) : (
                   <div className="flex items-center justify-center h-32">
                     <Alert className="max-w-md">
-                      <AlertDescription className="text-center">{t('defaultDSNoFileManagement')}</AlertDescription>
+                      <AlertDescription className="text-center">{t('noDataSourceSelected')}</AlertDescription>
                     </Alert>
                   </div>
                 )
