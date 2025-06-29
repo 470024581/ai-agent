@@ -1,175 +1,523 @@
 # Smart AI Assistant
 
-> 一个结合自然语言理解与业务数据的智能问答与自动化建议平台
+> Enterprise-grade intelligent data analysis platform combining natural language processing with advanced workflow orchestration
 
-## 🎯 项目概述
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+[![React](https://img.shields.io/badge/React-18.0+-blue.svg)](https://reactjs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
+[![LangChain](https://img.shields.io/badge/LangChain-Latest-purple.svg)](https://langchain.com)
 
-Smart AI Assistant是基于产品方案构建的演示项目，展示了如何将AI技术与系统结合，提供智能化的业务数据查询和分析功能。
+## 🎯 Project Overview
 
-### 核心功能
+Smart AI Assistant is a sophisticated full-stack platform that demonstrates the integration of cutting-edge AI technologies with enterprise data management. The system combines React-based frontend interfaces with a powerful FastAPI backend, featuring LangGraph workflow orchestration, multi-LLM support, and real-time data processing capabilities.
 
-- 🧠 **智能问答**: 使用自然语言查询数据
-- 📦 **库存检查**: 实时监控库存状态，智能预警
-- 📊 **数据图表**: 可视化销售和库存数据
-- 📋 **报表生成**: AI自动生成各类业务报表
+### 🌟 Key Highlights
 
-## 🛠️ 技术栈
+- **🧠 Advanced AI Processing**: LangGraph-powered workflow orchestration with multi-step reasoning
+- **🔄 Real-time Monitoring**: WebSocket-based live workflow execution tracking
+- **📊 Intelligent Data Analysis**: Natural language queries with automated chart generation
+- **🗂️ Multi-source Data Integration**: SQL databases, document repositories, and hybrid data sources
+- **🌐 Modern Architecture**: React 18 frontend with FastAPI backend and enterprise-grade scalability
+- **🔧 Multi-LLM Support**: OpenAI, OpenRouter, and Ollama integration with unified configuration
 
-### 前端技术
-- **React 18** - 用户界面框架
-- **Bootstrap 5** - UI组件库
-- **React Router** - 路由管理
-- **Recharts** - 数据可视化
-- **React Icons** - 图标库
-- **Axios** - HTTP客户端
-- **Vite** - 构建工具
+## 🏗️ System Architecture
 
-### 后端技术（计划中）
-- **FastAPI** - Python Web框架
-- **LangChain** - AI Agent框架
-- **OpenAI API** - 大语言模型
-- **SQLite/PostgreSQL** - 数据库
+```mermaid
+graph TB
+    subgraph "Frontend Layer"
+        A[React 18 Client]
+        B[Redux Toolkit]
+        C[Tailwind CSS + Radix UI]
+        D[WebSocket Client]
+    end
+    
+    subgraph "Backend Layer"
+        E[FastAPI Server]
+        F[LangGraph Engine]
+        G[WebSocket Manager]
+        H[Multi-LLM Factory]
+    end
+    
+    subgraph "Data Layer"
+        I[SQLite/PostgreSQL]
+        J[FAISS Vector Store]
+        K[File Storage]
+    end
+    
+    subgraph "AI Services"
+        L[OpenAI GPT]
+        M[OpenRouter Models]
+        N[Ollama Local]
+        O[HuggingFace Embeddings]
+    end
+    
+    A --> E
+    D --> G
+    E --> F
+    F --> H
+    H --> L
+    H --> M
+    H --> N
+    E --> I
+    E --> J
+    E --> K
+    J --> O
+```
 
-## 🚀 快速开始
+## 🚀 Features
 
-### 安装依赖
+### Frontend Capabilities
+- **📱 Modern React Interface**: Built with React 18, Redux Toolkit, and Tailwind CSS
+- **🎨 Professional UI Components**: Radix UI-based design system with dark/light theme support
+- **🌍 Internationalization**: Multi-language support (English/Chinese) with i18next
+- **📊 Interactive Visualizations**: Real-time charts and data dashboards
+- **⚡ Real-time Updates**: Live workflow monitoring with WebSocket integration
+- **🔍 Node Inspection**: Detailed workflow step analysis and debugging tools
 
+### Backend Capabilities
+- **🔄 LangGraph Workflows**: Sophisticated AI processing pipelines with error recovery
+- **🤖 Multi-LLM Integration**: Seamless switching between OpenAI, OpenRouter, and Ollama
+- **📁 Intelligent File Processing**: Support for CSV, PDF, Word, Excel, and text documents
+- **🔍 Hybrid Data Sources**: SQL queries, document search, and combined reasoning
+- **🌐 WebSocket Broadcasting**: Real-time client notifications and status updates
+- **🛡️ Enterprise Security**: Comprehensive error handling and validation
+
+## 🛠️ Technology Stack
+
+### Frontend Technologies
+| Category | Technology | Purpose |
+|----------|------------|---------|
+| **Framework** | React 18 | Modern component-based UI |
+| **State Management** | Redux Toolkit | Predictable state container |
+| **Styling** | Tailwind CSS + Radix UI | Utility-first CSS + accessible components |
+| **Build Tool** | Vite | Fast development and build |
+| **Internationalization** | i18next | Multi-language support |
+| **HTTP Client** | Axios | API communication |
+| **Real-time** | WebSocket | Live data updates |
+
+### Backend Technologies
+| Category | Technology | Purpose |
+|----------|------------|---------|
+| **Framework** | FastAPI | High-performance async web framework |
+| **AI Orchestration** | LangGraph | Workflow management and execution |
+| **LLM Integration** | LangChain | AI model abstraction and chaining |
+| **Vector Database** | FAISS | Similarity search and embeddings |
+| **Database** | SQLAlchemy + SQLite/PostgreSQL | Data persistence |
+| **Document Processing** | PyPDF2, python-docx, openpyxl | File parsing |
+| **Embeddings** | Sentence Transformers | Local text embeddings |
+| **Real-time** | WebSocket Manager | Connection management |
+
+## 📦 Project Structure
+
+```
+smart-ai-assistant/
+├── client/                     # React Frontend Application
+│   ├── src/
+│   │   ├── components/         # React components
+│   │   │   ├── Dashboard.jsx   # Main dashboard interface
+│   │   │   ├── IntelligentAnalysis.jsx # AI workflow interface
+│   │   │   ├── DataSourceManager.jsx  # Data source management
+│   │   │   └── ui/            # Reusable UI components
+│   │   ├── hooks/             # Custom React hooks
+│   │   ├── store/             # Redux store configuration
+│   │   ├── services/          # API service layer
+│   │   └── locales/           # Internationalization files
+│   ├── package.json           # Frontend dependencies
+│   └── README.md              # Frontend documentation
+├── server/                     # FastAPI Backend Application
+│   ├── app/
+│   │   ├── main.py            # FastAPI application entry
+│   │   ├── routes.py          # API route definitions
+│   │   ├── models.py          # Pydantic data models
+│   │   ├── langgraph_flow.py  # LangGraph workflow definitions
+│   │   ├── websocket_manager.py # WebSocket handling
+│   │   ├── llm_factory.py     # Multi-LLM provider management
+│   │   ├── db.py              # Database operations
+│   │   └── file_processor.py  # Document processing
+│   ├── data/                  # Data storage directory
+│   ├── requirements.txt       # Python dependencies
+│   └── README.md              # Backend documentation
+├── docs/                      # Project documentation
+│   └── data/                  # Sample data files
+├── package.json               # Root package configuration
+└── README.md                  # This file
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Node.js 16+** with npm/yarn
+- **Python 3.8+** with pip
+- **Git** for version control
+
+### Installation
+
+1. **Clone the repository**
 ```bash
+git clone <repository-url>
+cd smart-ai-assistant
+```
+
+2. **Install dependencies**
+```bash
+# Install root dependencies
 npm install
+
+# Install frontend dependencies
+cd client
+npm install
+cd ..
+
+# Install backend dependencies
+cd server
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cd ..
 ```
 
-### 启动开发服务器
-
+3. **Environment configuration**
 ```bash
+# Backend configuration
+cd server
+cp env.example .env
+# Edit .env with your API keys and preferences
+
+# Frontend configuration (if needed)
+cd ../client
+cp .env.example .env.local
+# Edit .env.local if custom configuration is needed
+```
+
+4. **Initialize the database**
+```bash
+cd server
+python start.py
+# This will create the database and initialize sample data
+```
+
+### Development Setup
+
+1. **Start the backend server**
+```bash
+cd server
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+python start.py
+# Server will run on http://localhost:8000
+```
+
+2. **Start the frontend development server**
+```bash
+cd client
 npm run dev
+# Client will run on http://localhost:3000
 ```
 
-项目将在 `http://localhost:5173` 启动
+3. **Access the application**
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Documentation: http://localhost:8000/docs
 
-### 构建生产版本
+## 🎯 Usage Examples
+
+### Natural Language Queries
+
+The system supports sophisticated natural language queries across different data sources:
+
+```javascript
+// Sales Analysis
+"What were the total sales for this month?"
+"Show me daily sales trends for the past week"
+"Generate a sales performance chart"
+
+// Inventory Management
+"Which products are running low on stock?"
+"List all products with inventory below 50 units"
+
+// Document Questions (RAG)
+"What does our policy document say about returns?"
+"Summarize the key points from the uploaded manual"
+```
+
+### Workflow Monitoring
+
+Track AI processing in real-time:
+
+```javascript
+// Connect to WebSocket for live updates
+const ws = new WebSocket('ws://localhost:8000/ws/workflow/client-123');
+
+ws.onmessage = (event) => {
+  const update = JSON.parse(event.data);
+  console.log('Workflow Progress:', update);
+  // Handle workflow node updates, completion, errors
+};
+```
+
+### API Integration
 
 ```bash
-npm run build
+# Start intelligent analysis workflow
+curl -X POST "http://localhost:8000/api/v1/intelligent-analysis" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show me sales data for this quarter",
+    "datasource_id": 1,
+    "client_id": "client-123"
+  }'
+
+# Upload data file
+curl -X POST "http://localhost:8000/api/v1/datasources/1/upload" \
+  -F "file=@sales_data.csv" \
+  -F "description=Q4 Sales Data"
 ```
 
-## 📁 项目结构
+## 🔧 Configuration
 
-```
-src/
-├── components/          # React组件
-│   ├── Header.jsx      # 导航头部
-│   ├── Dashboard.jsx   # 仪表板首页
-│   ├── QueryForm.jsx   # 智能问答
-│   ├── ChartDisplay.jsx # 图表展示
-│   ├── InventoryCheck.jsx # 库存检查
-│   └── ReportGenerator.jsx # 报表生成
-├── services/           # API服务
-│   └── api.js         # API接口定义
-├── App.jsx            # 主应用组件
-└── main.jsx           # 应用入口点
-```
+### Backend Configuration
 
-## 🎨 功能演示
-
-### 1. 智能问答
-- 输入自然语言查询，如"本月销售额多少？"
-- AI解析查询意图并返回结构化数据
-- 支持查询历史记录
-
-### 2. 库存检查
-- 实时库存状态监控
-- 自动识别低库存和缺货商品
-- AI智能补货建议
-
-### 3. 数据图表
-- 多种图表类型：折线图、柱状图、饼图、区域图
-- 销售数据和库存数据可视化
-- 交互式图表控制
-
-### 4. 报表生成
-- 支持多种报表类型：日报、周报、月报
-- AI生成智能分析和建议
-- 报表下载和打印功能
-
-## 🎯 演示场景
-
-| 场景 | 示例查询 | 预期结果 |
-|------|----------|----------|
-| 销售查询 | "过去7天每天的销售额是多少？" | 显示图表 + 总结 |
-| 库存检查 | "当前库存低于50的产品有哪些？" | 列出低库存产品 |
-| 报表生成 | "请生成今天的销售日报。" | 生成格式化报告 |
-
-## 🔧 配置说明
-
-### 环境变量
-
-创建 `.env` 文件：
+Key environment variables in `server/.env`:
 
 ```env
-REACT_APP_API_URL=http://localhost:8000/api
+# LLM Provider (openai, openrouter, ollama)
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-3.5-turbo
+OPENAI_API_KEY=your_api_key_here
+
+# Embedding Provider (local, openai, huggingface)
+EMBEDDING_PROVIDER=local
+EMBEDDING_MODEL=intfloat/multilingual-e5-small
+
+# Database
+DATABASE_URL=sqlite:///./data/smart.db
+
+# Server
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
 ```
 
-### API配置
+### Frontend Configuration
 
-项目目前使用模拟数据，要连接真实后端，请修改 `src/services/api.js` 中的API端点。
+Key environment variables in `client/.env.local`:
 
-## 📊 数据说明
+```env
+VITE_API_URL=http://localhost:8000
+VITE_WS_URL=ws://localhost:8000/ws
+```
 
-当前项目使用模拟数据进行演示：
-- 销售数据：模拟一周的销售情况
-- 库存数据：6种产品的库存状态
-- 报表数据：AI生成的示例报表内容
+## 🎨 Key Components
 
-## 🚧 开发计划
+### Intelligent Analysis Interface
+- **LangGraph Workflow Visualization**: Real-time workflow execution with node-by-node progress
+- **Interactive Query Interface**: Natural language input with intelligent suggestions
+- **Result Visualization**: Charts, tables, and formatted responses
+- **Node Inspection**: Detailed view of each processing step with input/output data
 
-### MVP功能（已完成）
-- ✅ 智能问答界面
-- ✅ 库存检查功能
-- ✅ 数据图表展示
-- ✅ 报表生成器
+### Data Source Management
+- **Multi-type Support**: Knowledge bases, SQL tables, and hybrid sources
+- **File Upload Interface**: Drag-and-drop with progress tracking
+- **Real-time Processing**: Live status updates during file processing
+- **Source Configuration**: Flexible data source setup and management
 
-### 后续计划
-- 🔄 后端API集成
-- 🔄 真实数据连接
-- 🔄 用户认证系统
-- 🔄 OCR发票识别
-- 🔄 RAG文档问答
+### Dashboard & Analytics
+- **Executive Summary**: High-level metrics and KPIs
+- **Interactive Charts**: Multiple chart types with real-time data
+- **Performance Monitoring**: System health and processing statistics
+- **Historical Analysis**: Trend analysis and comparative reports
 
-## 🎯 技术亮点
+## 🚀 Deployment
 
-1. **组件化设计**: 高度模块化的React组件
-2. **响应式布局**: 适配桌面和移动设备
-3. **现代化UI**: 基于Bootstrap 5的美观界面
-4. **交互式图表**: 支持多种数据可视化
-5. **模拟数据**: 完整的前端演示体验
+### Production Build
 
-## 📝 使用指南
+```bash
+# Frontend production build
+cd client
+npm run build
 
-1. **浏览首页**: 了解项目功能概览
-2. **智能问答**: 尝试输入自然语言查询
-3. **查看图表**: 切换不同的图表类型和数据
-4. **检查库存**: 查看库存状态和AI建议
-5. **生成报表**: 选择报表类型并生成
+# Backend production setup
+cd server
+pip install gunicorn
+gunicorn app.main:app --bind 0.0.0.0:8000
+```
 
-## 🤝 贡献指南
+### Docker Deployment
 
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
+```dockerfile
+# Multi-stage Dockerfile example
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app/client
+COPY client/package*.json ./
+RUN npm ci
+COPY client/ .
+RUN npm run build
 
-## 📄 许可证
+FROM python:3.11-slim AS backend
+WORKDIR /app
+COPY server/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY server/ .
+COPY --from=frontend-builder /app/client/dist ./static
+EXPOSE 8000
+CMD ["python", "start.py"]
+```
 
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情
+### Environment-Specific Configurations
 
-## 📞 联系方式
+- **Development**: Hot reload, debug logging, mock data
+- **Staging**: Production-like environment with test data
+- **Production**: Optimized builds, minimal logging, real data
 
-如有问题或建议，欢迎通过以下方式联系：
+## 📊 Performance & Monitoring
 
-- 项目问题: [GitHub Issues](https://github.com/yourusername/smart-ai-assistant/issues)
-- 邮箱: your.email@example.com
+### Key Metrics
+- **Response Time**: Average API response times
+- **Workflow Duration**: End-to-end processing times
+- **Concurrent Users**: Active WebSocket connections
+- **Error Rates**: Failed requests and workflow errors
+- **Resource Usage**: CPU, memory, and storage consumption
+
+### Monitoring Tools
+- **Built-in Logging**: Structured JSON logging with multiple levels
+- **Health Checks**: Automated system health monitoring
+- **WebSocket Monitoring**: Connection status and message tracking
+- **Database Metrics**: Query performance and connection pooling
+
+## 🧪 Testing
+
+### Manual Testing
+
+```bash
+# Health check
+curl http://localhost:8000/api/v1/health
+
+# WebSocket connection test
+# Using websocat tool
+websocat ws://localhost:8000/ws/workflow/test-client
+
+# Frontend testing
+cd client
+npm run test
+```
+
+### Automated Testing
+
+```bash
+# Backend unit tests
+cd server
+python -m pytest tests/
+
+# Frontend component tests
+cd client
+npm run test:coverage
+
+# End-to-end testing
+npm run test:e2e
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Please follow these steps:
+
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
+3. **Follow coding standards**:
+   - Frontend: ESLint + Prettier
+   - Backend: Black + isort + flake8
+4. **Add tests** for new functionality
+5. **Update documentation** as needed
+6. **Submit a Pull Request**
+
+### Development Guidelines
+
+- **Code Style**: Follow established patterns and conventions
+- **Documentation**: Update README files and inline comments
+- **Testing**: Add unit tests for new features
+- **Performance**: Consider performance implications
+- **Security**: Follow security best practices
+
+## 🔒 Security Considerations
+
+- **Input Validation**: All user inputs are validated and sanitized
+- **API Authentication**: Secure API key management
+- **CORS Configuration**: Properly configured cross-origin requests
+- **Error Handling**: Secure error messages without information leakage
+- **Environment Variables**: Sensitive data stored in environment files
+
+## 📈 Roadmap
+
+### Current Features ✅
+- ✅ React 18 + Redux Toolkit frontend
+- ✅ FastAPI + LangGraph backend
+- ✅ Multi-LLM provider support
+- ✅ Real-time WebSocket communication
+- ✅ Intelligent workflow orchestration
+- ✅ Document processing and RAG
+- ✅ Internationalization support
+
+### Planned Features 🔄
+- 🔄 User authentication and authorization
+- 🔄 Advanced analytics dashboard
+- 🔄 Multi-tenant support
+- 🔄 Advanced caching strategies
+- 🔄 Mobile app development
+- 🔄 Integration with external APIs
+- 🔄 Advanced visualization options
+
+### Future Enhancements 🚀
+- 🚀 Machine learning model training
+- 🚀 Advanced workflow templates
+- 🚀 Plugin system architecture
+- 🚀 Cloud deployment automation
+- 🚀 Enterprise SSO integration
+
+## 📚 Documentation
+
+- **[Frontend Documentation](./client/README.md)** - React application details
+- **[Backend Documentation](./server/README.md)** - FastAPI service architecture  
+- **[API Documentation](http://localhost:8000/docs)** - Interactive API reference
+- **[Deployment Guide](./docs/deployment.md)** - Production deployment instructions
+
+## 🆘 Support & Troubleshooting
+
+### Common Issues
+
+1. **Port Conflicts**: Ensure ports 3000 and 8000 are available
+2. **Environment Variables**: Verify all required API keys are configured
+3. **Database Issues**: Check database initialization and permissions
+4. **WebSocket Connection**: Confirm WebSocket URL configuration
+5. **LLM Provider Issues**: Validate API keys and model availability
+
+### Getting Help
+
+- **📁 GitHub Issues**: [Create an issue](https://github.com/your-repo/issues)
+- **💬 Discussions**: [Join the discussion](https://github.com/your-repo/discussions)
+- **📖 Documentation**: Check the comprehensive docs
+- **🔍 Search**: Look through existing issues and solutions
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **[LangChain Team](https://langchain.com)** - For the powerful AI framework
+- **[FastAPI](https://fastapi.tiangolo.com)** - For the excellent web framework
+- **[React Team](https://reactjs.org)** - For the modern frontend framework
+- **[OpenAI](https://openai.com)** - For advanced language models
+- **[HuggingFace](https://huggingface.co)** - For transformer models and tools
+- **Open Source Community** - For the amazing ecosystem of tools
 
 ---
 
-⭐ 如果这个项目对您有帮助，请给个Star支持！ 
+<div align="center">
+
+**⭐ If this project helps you, please give it a star! ⭐**
+
+[📚 Documentation](./docs) • [🐛 Report Bug](https://github.com/your-repo/issues) • [✨ Request Feature](https://github.com/your-repo/issues) • [💬 Discuss](https://github.com/your-repo/discussions)
+
+Made with ❤️ by the Smart AI Assistant team
+
+</div> 
