@@ -562,25 +562,36 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             "data_field_for_labels": "Data field name or index for labels",
             "data_field_for_values": "Data field name or index for values",
             "aggregation_method": "none|sum|average|count",
-            "time_grouping": "none|week|month|quarter|year"
+            "time_grouping": "none|week|month|quarter|year",
+            "is_time_series": true|false
         }}
         
         Analysis requirements:
         1. Determine the most suitable chart type based on user query
         2. Generate meaningful titles and axis labels
         3. Identify which fields in the data should be used for labels and values
-        4. If it's time series data, determine appropriate time grouping method
+        4. **CRITICAL**: Analyze if this is a time series query by looking for keywords:
+           - "trend", "over time", "monthly", "weekly", "yearly", "quarterly"
+           - "sales trend", "time series", "by month", "by year", "by quarter"
+           - "2025", specific years, date ranges
+           - If ANY time-related keywords found, set "is_time_series": true and appropriate "time_grouping"
         5. Pay attention to time units mentioned in user query:
-           - If user mentions "周" (week) or "weeks": set time_grouping to "week"
-           - If user mentions "月" (month) or "months": set time_grouping to "month"  
-           - If user mentions "年" (year) or "years": set time_grouping to "year"
-           - If user mentions "季度" (quarter): set time_grouping to "quarter"
+           - If user mentions "week" or "weekly": set time_grouping to "week"
+           - If user mentions "month" or "monthly": set time_grouping to "month"  
+           - If user mentions "year" or "yearly": set time_grouping to "year"
+           - If user mentions "quarter" or "quarterly": set time_grouping to "quarter"
+           - If user mentions "trend" without specific time unit, default to "month"
         6. Generate appropriate x_axis_label based on time grouping:
-           - For week grouping: use "Week" or "周"
-           - For month grouping: use "Month" or "月"
-           - For year grouping: use "Year" or "年"
-           - For quarter grouping: use "Quarter" or "季度"
-        7. Only return JSON, no other explanation
+           - For week grouping: use "Week"
+           - For month grouping: use "Month"
+           - For year grouping: use "Year"
+           - For quarter grouping: use "Quarter"
+           - For non-time series: use appropriate category label
+        7. For time series data:
+           - Always use "line" chart type for trends
+           - Set data_field_for_labels to "0" (first column, usually time)
+           - Set data_field_for_values to "1" (second column, usually aggregated values)
+        8. Only return JSON, no other explanation
         """
         
         response = llm.invoke(chart_analysis_prompt)
@@ -677,7 +688,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         }
         
         # Process data using LLM-guided approach
-        labels, values = extract_chart_data_with_llm_guidance(data, chart_analysis)
+        labels, values = extract_chart_data_with_llm_guidance(data, chart_analysis, user_input)
         
         if labels and values:
             chart_config["data"]["labels"] = labels
@@ -750,7 +761,7 @@ def extract_data_summary(data: Dict[str, Any]) -> str:
         logger.error(f"Error extracting data summary: {e}")
         return "Data summary extraction failed"
 
-def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: Dict[str, Any]) -> tuple:
+def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: Dict[str, Any], user_input: str = "") -> tuple:
     """Extract chart data based on LLM analysis results"""
     try:
         labels = []
@@ -762,18 +773,51 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         rows = data["rows"]
         aggregation_method = chart_analysis.get("aggregation_method", "none")
         time_grouping = chart_analysis.get("time_grouping", "none")
-        label_field = chart_analysis.get("data_field_for_labels", "2")  # Default product name
-        value_field = chart_analysis.get("data_field_for_values", "6")  # Default total amount
+        is_time_series = chart_analysis.get("is_time_series", False)
         
-        # Convert field indices
-        try:
-            label_idx = int(label_field) if str(label_field).isdigit() else 2
-            value_idx = int(value_field) if str(value_field).isdigit() else 6
-        except (ValueError, TypeError):
-            label_idx, value_idx = 2, 6
+        # Smart field detection based on data structure
+        sample_row = rows[0] if rows else {}
+        num_cols = len(sample_row) if isinstance(sample_row, (list, tuple)) else len(sample_row.keys()) if isinstance(sample_row, dict) else 0
+        
+        # For time series queries, intelligently detect time and value fields
+        if is_time_series or time_grouping != "none" or any(keyword in user_input.lower() for keyword in ['trend', 'monthly', 'yearly', 'over time']):
+            # This is likely a time series query
+            if num_cols == 2:
+                # Two columns: likely (time/period, value)
+                label_idx, value_idx = 0, 1
+            elif isinstance(sample_row, dict) and "label" in sample_row and "value" in sample_row:
+                # Dictionary format from parsed results
+                label_field, value_field = "label", "value"  
+                label_idx, value_idx = "label", "value"
+            else:
+                # Multi-column: use field specification or defaults
+                label_field = chart_analysis.get("data_field_for_labels", "0")  # First column for time
+                value_field = chart_analysis.get("data_field_for_values", "1")  # Second column for values
+                try:
+                    label_idx = int(label_field) if str(label_field).isdigit() else 0
+                    value_idx = int(value_field) if str(value_field).isdigit() else 1
+                    # Ensure indices are within bounds
+                    if label_idx >= num_cols: label_idx = 0
+                    if value_idx >= num_cols: value_idx = min(1, num_cols - 1)
+                except (ValueError, TypeError):
+                    label_idx, value_idx = 0, min(1, num_cols - 1)
+        else:
+            # Non-time series: use original logic
+            label_field = chart_analysis.get("data_field_for_labels", "2")  # Default product name  
+            value_field = chart_analysis.get("data_field_for_values", "6")  # Default total amount
+            try:
+                label_idx = int(label_field) if str(label_field).isdigit() else 2
+                value_idx = int(value_field) if str(value_field).isdigit() else 6
+                # Ensure indices are within bounds
+                if num_cols > 0:
+                    if label_idx >= num_cols: label_idx = min(2, num_cols - 1)
+                    if value_idx >= num_cols: value_idx = min(num_cols - 1, max(1, num_cols - 1))
+            except (ValueError, TypeError):
+                label_idx, value_idx = min(2, num_cols - 1), min(num_cols - 1, max(1, num_cols - 1))
         
         logger.info(f"Using label_idx: {label_idx}, value_idx: {value_idx}")
-        logger.info(f"Sample row: {rows[0] if rows else 'No rows'}")
+        logger.info(f"Sample row: {sample_row}")
+        logger.info(f"Is time series: {is_time_series}, Time grouping: {time_grouping}")
         
         if time_grouping != "none" and len(rows[0]) > 7:
             # Time series data processing
@@ -880,7 +924,23 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
             for i, row in enumerate(rows):
                 logger.info(f"Processing row {i}: {row}, length: {len(row)}")
                 
-                if len(row) == 2:
+                # Handle dictionary format with label/value keys (from parsed string results)
+                if isinstance(row, dict) and "label" in row and "value" in row:
+                    try:
+                        label = str(row["label"]) if row["label"] else f"Item{len(labels)+1}"
+                        value = float(row["value"]) if isinstance(row["value"], (int, float)) else 0
+                        
+                        # Smart label formatting for better display based on context
+                        label = _format_label_based_on_context(label, chart_analysis, user_input)
+                        
+                        data_dict[label] = value
+                        logger.info(f"Added data point: {label} -> {value}")
+                        
+                    except (ValueError, TypeError, IndexError) as e:
+                        logger.warning(f"Error processing dictionary row data: {e}")
+                        continue
+                        
+                elif len(row) == 2:
                     # Handle aggregated query results (e.g., month and sales)
                     try:
                         label = str(row[0]) if row[0] else f"Item{len(labels)+1}"
@@ -894,21 +954,8 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                             numbers = re.findall(r'-?\d+\.?\d*', value_str)
                             value = float(numbers[0]) if numbers else 0
                         
-                        # Smart label formatting for better display
-                        if str(label).isdigit():
-                            label_num = int(label)
-                            if label_num >= 2020 and label_num <= 2030:
-                                # Year format - keep as is for now, can be localized later
-                                label = str(label)
-                            elif label_num >= 1 and label_num <= 12:
-                                # Month format - use numeric representation
-                                label = f"Month {label_num}"
-                            elif label_num >= 202001 and label_num <= 203012:
-                                # YYYYMM format
-                                year = label_num // 100
-                                month = label_num % 100
-                                if 1 <= month <= 12:
-                                    label = f"{year}-{month:02d}"
+                        # Smart label formatting for better display based on context
+                        label = _format_label_based_on_context(label, chart_analysis, user_input)
                         
                         data_dict[label] = value
                         logger.info(f"Added data point: {label} -> {value}")
@@ -1012,6 +1059,54 @@ def _extract_year_from_label(label) -> int:
         return int(float(label_str))
     except:
         raise ValueError(f"Cannot extract year from label: {label}")
+
+def _format_label_based_on_context(label: str, chart_analysis: Dict[str, Any], user_input: str) -> str:
+    """Format label based on query context and chart analysis"""
+    try:
+        if not str(label).isdigit():
+            return label
+            
+        label_num = int(label)
+        
+        # Analyze user input to determine context
+        user_input_lower = user_input.lower()
+        
+        # Check if it's explicitly about products
+        if any(keyword in user_input_lower for keyword in ['product', 'item', 'goods', 'merchandise']):
+            return f"Product {label}"
+            
+        # Check if it's explicitly about time periods
+        elif any(keyword in user_input_lower for keyword in ['month', 'monthly', 'quarter', 'quarterly', 'year', 'yearly', 'time', 'trend']):
+            if label_num >= 2020 and label_num <= 2030:
+                return str(label)  # Year format
+            elif label_num >= 1 and label_num <= 12:
+                return f"Month {label_num}"
+            elif label_num >= 202001 and label_num <= 203012:
+                year = label_num // 100
+                month = label_num % 100
+                if 1 <= month <= 12:
+                    return f"{year}-{month:02d}"
+            else:
+                return f"Period {label}"
+                
+        # Default logic based on number characteristics
+        else:
+            if label_num >= 2020 and label_num <= 2030:
+                # Likely year
+                return str(label)
+            elif label_num >= 202001 and label_num <= 203012:
+                # YYYYMM format
+                year = label_num // 100
+                month = label_num % 100
+                if 1 <= month <= 12:
+                    return f"{year}-{month:02d}"
+            else:
+                # For other numbers, assume product ID by default
+                # This is safer than assuming months for 1-12
+                return f"Product {label}"
+                
+    except (ValueError, TypeError):
+        return str(label)
 
 def format_time_label(time_key: str, time_grouping: str) -> str:
     """Format time labels for display"""

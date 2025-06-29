@@ -408,25 +408,55 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         available_tables = db.get_usable_table_names()
         logger.info(f"Available tables: {available_tables}")
 
-        # Generate SQL using direct LLM call
+        # Detect if this is a time series/trend query
+        is_trend_query = any(keyword in processed_query.lower() for keyword in [
+            'trend', 'monthly', 'weekly', 'yearly', 'over time', 'by month', 'by year', 
+            'time series', 'sales trend', '2025', 'quarterly'
+        ])
+
+        # Generate SQL using direct LLM call with enhanced time series support
         sql_generation_prompt = f"""
         User query: "{processed_query}"
 
         Available tables: {available_tables}
         Table schema: {schema_info}
 
+        **CRITICAL ANALYSIS**: This query appears to be a {'TIME SERIES/TREND' if is_trend_query else 'STANDARD'} query.
+
         Please generate a SQLite query to answer the user's question. The query should:
         1. Only use SELECT statements (no INSERT, UPDATE, DELETE, etc.)
         2. Only use tables that are available in the database
-        3. Use appropriate time filters for temporal queries:
+        
+        **FOR TIME SERIES/TREND QUERIES** (like "monthly sales trend", "sales by month", etc.):
+        3a. Use time grouping with strftime functions:
+           - Monthly trends: SELECT strftime('%Y-%m', saledate) as month, SUM(totalamount) as total_sales
+           - Weekly trends: SELECT strftime('%Y-W%W', saledate) as week, SUM(totalamount) as total_sales  
+           - Yearly trends: SELECT strftime('%Y', saledate) as year, SUM(totalamount) as total_sales
+        3b. Include GROUP BY with the same time function
+        3c. Order by the time field for proper chronological display
+        3d. Example for monthly trend: 
+            SELECT strftime('%Y-%m', saledate) as month, SUM(totalamount) as total_sales 
+            FROM table_name 
+            WHERE strftime('%Y', saledate) = '2025'
+            GROUP BY strftime('%Y-%m', saledate) 
+            ORDER BY strftime('%Y-%m', saledate)
+            
+        **FOR STANDARD QUERIES** (like "top products", "product sales", etc.):
+        3e. Use appropriate filters and aggregations based on the question
+        3f. Use time filters for temporal queries:
            - "this month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now')
            - "last month" -> WHERE strftime('%Y-%m', saledate) = strftime('%Y-%m', 'now', '-1 month')
            - "this year" -> WHERE strftime('%Y', saledate) = strftime('%Y', 'now')
-        4. Use appropriate aggregations (SUM, COUNT, AVG) if needed
-        5. Include proper WHERE clauses to filter data
-        6. Use GROUP BY if needed to aggregate data
-        7. Order results appropriately
-        8. Limit results to a reasonable number (e.g., LIMIT 50)
+           
+        4. Use appropriate aggregations (SUM, COUNT, AVG) based on what user asks
+        5. Include proper WHERE clauses to filter data as needed
+        6. Order results appropriately (time series by time, others by value DESC)  
+        7. Limit results to a reasonable number (e.g., LIMIT 20 for trends, LIMIT 10 for products)
+
+        **IMPORTANT**: 
+        - For trend queries, return (time_period, aggregated_value) pairs
+        - For product queries, return (product_name, aggregated_value) pairs
+        - Match the query intent precisely
 
         Only return the SQL query, no explanations or other text.
         """
@@ -454,12 +484,24 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 if isinstance(query_result, str):
                     # If result is a string, it might be an error or a single value
                     logger.warning(f"Query returned string result: {query_result}")
-                    structured_data = {
-                        "rows": [{"result": query_result}],
-                        "columns": ["result"],
-                        "executed_sql": clean_sql,
-                        "queried_table": db_table_name
-                    }
+                    
+                    # Try to parse if it's a string representation of data
+                    parsed_data = _parse_string_query_result(query_result)
+                    if parsed_data:
+                        structured_data = {
+                            "rows": parsed_data,
+                            "columns": ["label", "value"] if len(parsed_data[0]) == 2 else [f"col_{i}" for i in range(len(parsed_data[0]))],
+                            "executed_sql": clean_sql,
+                            "queried_table": db_table_name
+                        }
+                    else:
+                        # Fallback to original logic for simple string results
+                        structured_data = {
+                            "rows": [{"result": query_result}],
+                            "columns": ["result"],
+                            "executed_sql": clean_sql,
+                            "queried_table": db_table_name
+                        }
                 else:
                     # Normal case: result is a list of dictionaries
                     if not query_result:
@@ -965,12 +1007,24 @@ async def get_query_from_sqltable_datasource(
                 if isinstance(query_result, str):
                     # If result is a string, it might be an error or a single value
                     logger.warning(f"Query returned string result: {query_result}")
-                    structured_data = {
-                        "rows": [{"result": query_result}],
-                        "columns": ["result"],
-                        "executed_sql": clean_sql,
-                        "queried_table": table_name
-                    }
+                    
+                    # Try to parse if it's a string representation of data
+                    parsed_data = _parse_string_query_result(query_result)
+                    if parsed_data:
+                        structured_data = {
+                            "rows": parsed_data,
+                            "columns": ["label", "value"] if len(parsed_data[0]) == 2 else [f"col_{i}" for i in range(len(parsed_data[0]))],
+                            "executed_sql": clean_sql,
+                            "queried_table": table_name
+                        }
+                    else:
+                        # Fallback to original logic for simple string results
+                        structured_data = {
+                            "rows": [{"result": query_result}],
+                            "columns": ["result"],
+                            "executed_sql": clean_sql,
+                            "queried_table": table_name
+                        }
                 else:
                     # Normal case: result is a list of dictionaries
                     if not query_result:
@@ -1112,4 +1166,46 @@ def _process_time_expressions(query: str) -> str:
         processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
     
     return processed
+
+def _parse_string_query_result(result: str) -> Optional[List[Dict[str, Any]]]:
+    """Parse a string result that contains Python tuple list representation"""
+    try:
+        # Check if the result looks like a Python tuple list string
+        if result.startswith('[') and result.endswith(']') and '(' in result and ')' in result:
+            # Try to safely evaluate the string as Python literal
+            import ast
+            try:
+                # Use ast.literal_eval for safe parsing of Python literals
+                parsed_tuples = ast.literal_eval(result)
+                
+                if isinstance(parsed_tuples, list) and all(isinstance(item, tuple) for item in parsed_tuples):
+                    # Convert tuples to dictionaries with generic column names
+                    parsed_data = []
+                    for tuple_item in parsed_tuples:
+                        if len(tuple_item) == 2:
+                            # Common case: (label, value) pairs
+                            parsed_data.append({
+                                "label": str(tuple_item[0]),
+                                "value": float(tuple_item[1]) if isinstance(tuple_item[1], (int, float)) else tuple_item[1]
+                            })
+                        else:
+                            # Multiple columns: create numbered columns
+                            row_dict = {}
+                            for i, value in enumerate(tuple_item):
+                                row_dict[f"col_{i}"] = value
+                            parsed_data.append(row_dict)
+                    
+                    logger.info(f"Successfully parsed {len(parsed_data)} rows from string result")
+                    return parsed_data
+                    
+            except (ValueError, SyntaxError) as e:
+                logger.warning(f"Failed to parse tuple list string: {e}")
+                return None
+        
+        # If not a tuple list format, return None to use fallback logic
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error parsing string query result: {e}")
+        return None
 

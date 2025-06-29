@@ -611,12 +611,12 @@ function IntelligentAnalysis() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleExampleClick("Show me the top 5 products by total sales amount")}
+              onClick={() => handleExampleClick("The pie chart shows the sales proportion of each product.")}
               disabled={loading}
               className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
             >
               <span className="block w-full text-left leading-relaxed">
-                Show me the top 5 products by total sales amount
+                The pie chart shows the sales proportion of each product.
               </span>
             </Button>
           </div>
