@@ -284,6 +284,20 @@
       "salesTrendChart2025": "Generate a monthly sales trend chart for 2025",
       "bestSellerByQuantity": "Which product has the highest quantity sold?",
       "whoIsLongliang": "Who is Longliang?"
+    },
+    "nodeDetail": {
+      "basicInfo": "Basic Information",
+      "nodeType": "Node Type",
+      "nodeId": "Node ID",
+      "description": "Description",
+      "executionInfo": "Execution Information",
+      "startTime": "Start Time",
+      "endTime": "End Time",
+      "duration": "Duration",
+      "retryCount": "Retry Count",
+      "inputData": "Input Data",
+      "outputData": "Output Data",
+      "errorInfo": "Error Information"
     }
   },
   "deleteConfirmation": {

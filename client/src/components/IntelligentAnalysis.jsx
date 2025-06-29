@@ -46,7 +46,8 @@ import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
 import { Spinner } from './ui/spinner';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
-import { ChevronsUpDown, Lightbulb } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, FileText, AlertCircle } from 'lucide-react';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
@@ -113,6 +114,9 @@ function IntelligentAnalysis() {
   
   // Local state for expanded node details
   const [expandedNodeId, setExpandedNodeId] = useState(null);
+  
+  // Node detail dialog state
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
 
   // Initialize node states for fallback
   useEffect(() => {
@@ -139,7 +143,7 @@ function IntelligentAnalysis() {
   // Handler for node click
   const handleNodeClick = (nodeId) => {
     if (currentExecutionNodes[nodeId]) {
-      setExpandedNodeId(expandedNodeId === nodeId ? null : nodeId);
+      setSelectedNodeId(nodeId);
     }
   };
   
@@ -208,6 +212,208 @@ function IntelligentAnalysis() {
 
   const handleExampleClick = (exampleQuery) => {
     setQuery(exampleQuery);
+  };
+
+  // Data formatting utilities for node details
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    return new Date(timestamp).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  };
+
+  const formatDuration = (duration) => {
+    if (!duration) return 'N/A';
+    if (duration < 1) {
+      return `${Math.round(duration * 1000)}ms`;
+    }
+    return `${duration.toFixed(2)}s`;
+  };
+
+  const formatNodeData = (data, maxLength = 200) => {
+    if (data === null || data === undefined) return 'No data';
+    
+    let jsonString;
+    if (typeof data === 'string') {
+      jsonString = data;
+    } else {
+      try {
+        jsonString = JSON.stringify(data, null, 2);
+      } catch (e) {
+        jsonString = String(data);
+      }
+    }
+    
+    if (jsonString.length <= maxLength) {
+      return jsonString;
+    }
+    
+    return jsonString.substring(0, maxLength) + '...';
+  };
+
+  const formatBytes = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Node detail dialog component
+  const renderNodeDetailDialog = () => {
+    if (!selectedNodeId) return null;
+
+    const nodeInfo = langGraphNodes.find(n => n.id === selectedNodeId);
+    const nodeExecution = currentExecutionNodes[selectedNodeId];
+    
+    if (!nodeInfo || !nodeExecution) return null;
+
+    const getStatusBadgeVariant = (status) => {
+      switch (status) {
+        case 'completed': return 'default';
+        case 'running': return 'secondary';
+        case 'error': return 'destructive';
+        default: return 'outline';
+      }
+    };
+
+    const getStatusIcon = (status) => {
+      switch (status) {
+        case 'completed': return <FaCheck className="h-3 w-3" />;
+        case 'running': return <FaSpinner className="h-3 w-3 animate-spin" />;
+        case 'error': return <AlertCircle className="h-3 w-3" />;
+        default: return <Clock className="h-3 w-3" />;
+      }
+    };
+
+    return (
+      <Dialog open={!!selectedNodeId} onOpenChange={(open) => !open && setSelectedNodeId(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                {getNodeIcon(nodeInfo, nodeExecution.status)}
+                <span>{nodeInfo.name}</span>
+              </div>
+              <Badge variant={getStatusBadgeVariant(nodeExecution.status)} className="flex items-center gap-1">
+                {getStatusIcon(nodeExecution.status)}
+                {nodeExecution.status}
+              </Badge>
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-6">
+            {/* Basic Information */}
+                         <div className="space-y-3">
+               <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                 <Database className="h-4 w-4" />
+                 {t('intelligentAnalysis.nodeDetail.basicInfo')}
+               </h4>
+               <div className="grid grid-cols-2 gap-4 text-sm">
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.nodeType')}:</span>
+                   <span className="ml-2 font-medium">{nodeInfo.type}</span>
+                 </div>
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.nodeId')}:</span>
+                   <span className="ml-2 font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1 rounded">{nodeInfo.id}</span>
+                 </div>
+                 <div className="col-span-2">
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.description')}:</span>
+                   <span className="ml-2">{nodeInfo.description}</span>
+                 </div>
+               </div>
+             </div>
+
+            {/* Execution Information */}
+                         <div className="space-y-3">
+               <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                 <Clock className="h-4 w-4" />
+                 {t('intelligentAnalysis.nodeDetail.executionInfo')}
+               </h4>
+               <div className="grid grid-cols-2 gap-4 text-sm">
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.startTime')}:</span>
+                   <span className="ml-2 font-mono text-xs">{formatTimestamp(nodeExecution.startTime)}</span>
+                 </div>
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.endTime')}:</span>
+                   <span className="ml-2 font-mono text-xs">{formatTimestamp(nodeExecution.endTime)}</span>
+                 </div>
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.duration')}:</span>
+                   <span className="ml-2 font-medium text-blue-600 dark:text-blue-400">{formatDuration(nodeExecution.duration)}</span>
+                 </div>
+                 <div>
+                   <span className="text-gray-500 dark:text-gray-400">{t('intelligentAnalysis.nodeDetail.retryCount')}:</span>
+                   <span className="ml-2">{nodeExecution.retryCount || 0}</span>
+                 </div>
+               </div>
+             </div>
+
+            {/* Input Data */}
+                         {nodeExecution.input && (
+               <div className="space-y-3">
+                 <Collapsible>
+                   <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                     <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
+                     <FileText className="h-4 w-4" />
+                     {t('intelligentAnalysis.nodeDetail.inputData')}
+                   </CollapsibleTrigger>
+                   <CollapsibleContent>
+                     <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border">
+                       <pre className="text-xs overflow-x-auto whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                         {formatNodeData(nodeExecution.input, 500)}
+                       </pre>
+                     </div>
+                   </CollapsibleContent>
+                 </Collapsible>
+               </div>
+             )}
+
+            {/* Output Data */}
+                         {nodeExecution.output && (
+               <div className="space-y-3">
+                 <Collapsible>
+                   <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                     <ChevronRight className="h-4 w-4 transition-transform data-[state=open]:rotate-90" />
+                     <FileText className="h-4 w-4" />
+                     {t('intelligentAnalysis.nodeDetail.outputData')}
+                   </CollapsibleTrigger>
+                   <CollapsibleContent>
+                     <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border">
+                       <pre className="text-xs overflow-x-auto whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+                         {formatNodeData(nodeExecution.output, 500)}
+                       </pre>
+                     </div>
+                   </CollapsibleContent>
+                 </Collapsible>
+               </div>
+             )}
+
+            {/* Error Information */}
+                         {nodeExecution.error && (
+               <div className="space-y-3">
+                 <h4 className="text-sm font-medium text-red-600 dark:text-red-400 flex items-center gap-2">
+                   <AlertCircle className="h-4 w-4" />
+                   {t('intelligentAnalysis.nodeDetail.errorInfo')}
+                 </h4>
+                 <div className="p-3 bg-red-50 dark:bg-red-950 rounded-lg border border-red-200 dark:border-red-800">
+                   <pre className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap">
+                     {nodeExecution.error}
+                   </pre>
+                 </div>
+               </div>
+             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   };
 
   const getNodeIcon = (node, status) => {
@@ -947,6 +1153,9 @@ function IntelligentAnalysis() {
           </Card>
         )}
       </div>
+      
+      {/* Node Detail Dialog */}
+      {renderNodeDetailDialog()}
     </div>
   );
 }

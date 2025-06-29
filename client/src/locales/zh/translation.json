@@ -247,6 +247,20 @@
       "salesTrendChart2025": "生成2025年月度销售趋势图",
       "bestSellerByQuantity": "哪个产品的销售数量最多？",
       "whoIsLongliang": "龙亮是谁？"
+    },
+    "nodeDetail": {
+      "basicInfo": "基本信息",
+      "nodeType": "节点类型",
+      "nodeId": "节点ID",
+      "description": "描述",
+      "executionInfo": "执行信息",
+      "startTime": "开始时间",
+      "endTime": "结束时间",
+      "duration": "执行时长",
+      "retryCount": "重试次数",
+      "inputData": "输入数据",
+      "outputData": "输出数据",
+      "errorInfo": "错误信息"
     }
   },
   "deleteConfirmation": {
