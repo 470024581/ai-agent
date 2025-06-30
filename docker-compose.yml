@@ -1,96 +1,7 @@
 version: '3.8'
 
 services:
-  # Frontend Service
-  frontend:
-    build:
-      context: ./client
-      dockerfile: Dockerfile.dev
-    image: ai-agent-frontend:latest
-    container_name: ai-agent-frontend
-    restart: unless-stopped
-    
-    # Port mapping
-    ports:
-      - "3000:3000"
-    
-    # Environment variables
-    environment:
-      - REACT_APP_API_URL=http://localhost:8000
-      - NODE_ENV=production
-    
-    # Health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    
-    # Network
-    networks:
-      - ai-agent-network
-    
-    # Depends on backend
-    depends_on:
-      - backend
-
-  # Backend Service (AI Agent API)
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    image: ai-agent-backend:latest
-    container_name: ai-agent-backend
-    restart: unless-stopped
-    
-    # Port mapping
-    ports:
-      - "8000:8000"
-    
-    # Environment variables
-    environment:
-      - HOST=0.0.0.0
-      - PORT=8000
-      - DEBUG=false
-      - DATABASE_URL=sqlite:///./data/smart.db
-      - EMBEDDING_PROVIDER=local
-      - EMBEDDING_MODEL=intfloat/multilingual-e5-small
-      # OpenAI Configuration
-      - LLM_PROVIDER=openai
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - LLM_MODEL=gpt-3.5-turbo
-      - LLM_TEMPERATURE=0.0
-      - LLM_MAX_TOKENS=2048
-      # CORS Configuration for frontend
-      - CORS_ORIGINS=["http://localhost:3000","http://frontend:3000"]
-    
-    # Data persistence
-    volumes:
-      - ai_agent_data:/app/server/data
-      - ai_agent_cache:/app/server/data/embeddings_cache
-    
-    # Health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    
-    # Resource limits
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 1G
-    
-    # Network
-    networks:
-      - ai-agent-network
-
-  # Legacy: Combined Frontend+Backend Service (Alternative)
+  # Combined Frontend+Backend Service (All-in-one deployment)
   ai-agent:
     build:
       context: .
@@ -98,8 +9,6 @@ services:
     image: ai-agent:latest
     container_name: ai-agent-app
     restart: unless-stopped
-    profiles:
-      - combined
     
     # Port mapping
     ports:
@@ -122,8 +31,8 @@ services:
     
     # Data persistence
     volumes:
-      - ai_agent_data_combined:/app/server/data
-      - ai_agent_cache_combined:/app/server/data/embeddings_cache
+      - ai_agent_data:/app/server/data
+      - ai_agent_cache:/app/server/data/embeddings_cache
     
     # Health check
     healthcheck:
@@ -160,21 +69,6 @@ volumes:
       type: none
       o: bind
       device: ./docker_data/embeddings_cache
-
-  # Volumes for combined service
-  ai_agent_data_combined:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./docker_data_combined/app_data
-  
-  ai_agent_cache_combined:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./docker_data_combined/embeddings_cache
 
 # Network definition
 networks:
