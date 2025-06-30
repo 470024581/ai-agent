@@ -39,6 +39,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include the router from routes.py
+app.include_router(routes.router) # This line registers all routes from routes.py
+
+
 # Configure static files for frontend
 static_dir = Path(__file__).parent.parent.parent / "client" / "dist"
 if static_dir.exists():
@@ -69,8 +73,6 @@ if static_dir.exists():
         
         return {"message": f"File not found: {path}"}
 
-# Include the router from routes.py
-app.include_router(routes.router) # This line registers all routes from routes.py
 
 @app.on_event("startup")
 async def startup_event():
