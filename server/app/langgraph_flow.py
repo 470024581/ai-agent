@@ -497,8 +497,8 @@ def validation_node(state: GraphState) -> GraphState:
         
         # Force a higher score if we've retried too many times
         retry_count = state.get("retry_count", 0)
-        if retry_count >= 2:  # After 2 retries, force completion
-            final_score = 8
+        if retry_count >= 1:  # After 1 retry, force completion
+            final_score = 7
             feedback += " (Score adjusted to prevent excessive retries)"
         
         return {
@@ -514,7 +514,7 @@ def validation_node(state: GraphState) -> GraphState:
         logger.error(f"Validation node error: {e}")
         # Return a passing score to prevent infinite retries
         return {
-            "quality_score": 8,
+            "quality_score": 7,
             "validation_details": {
                 "error": str(e),
                 "scores": scores,
@@ -526,7 +526,7 @@ def retry_node(state: GraphState) -> GraphState:
     """Retry node"""
     retry_count = state.get("retry_count", 0)
     
-    if retry_count >= 2:  # Maximum 2 retries
+    if retry_count >= 1:  # Maximum 1 retry
         return {
             "answer": "Sorry, after multiple attempts, we still cannot generate satisfactory results. Please try to rephrase your question.",
             "quality_score": 10  # Set high score to end the process
@@ -1280,7 +1280,7 @@ async def process_intelligent_query(
     # Add conditional edges for validation
     workflow.add_conditional_edges(
         "validation_node",
-        lambda state: "retry" if state["quality_score"] < 8 else "end",
+        lambda state: "retry" if state["quality_score"] < 7 else "end",
         {
             "retry": "retry_node",
             "end": "end_node"

@@ -320,24 +320,24 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
             state = validation_node(state)
             await tracker.on_node_end("validation_node", {
                 "quality_score": state["quality_score"],
-                "validation_passed": state["quality_score"] >= 8
+                "validation_passed": state["quality_score"] >= 7
             })
         except Exception as e:
             await tracker.on_node_error("validation_node", e)
             state["error"] = str(e)
         
         # 4. Retry if needed
-        if state["quality_score"] < 8 and state["retry_count"] < 2 and not state.get("error"):
+        if state["quality_score"] < 7 and state["retry_count"] < 1 and not state.get("error"):
             await tracker.on_node_start("retry_node", {"retry_count": state["retry_count"]})
             await asyncio.sleep(0.5)
             try:
                 state = retry_node(state)
                 await tracker.on_node_end("retry_node", {
                     "retry_count": state["retry_count"],
-                    "will_retry": state["retry_count"] < 2
+                    "will_retry": state["retry_count"] < 1
                 })
                 # Simplified: set quality score to pass to avoid infinite retry
-                state["quality_score"] = 8
+                state["quality_score"] = 7
             except Exception as e:
                 await tracker.on_node_error("retry_node", e)
                 state["error"] = str(e)
@@ -351,12 +351,12 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
             data={
                 "final_quality_score": state["quality_score"],
                 "execution_summary": execution_summary,
-                "success": state["quality_score"] >= 8 and not state.get("error")
+                "success": state["quality_score"] >= 7 and not state.get("error")
             }
         )
         
         return {
-            "success": state["quality_score"] >= 8 and not state.get("error"),
+            "success": state["quality_score"] >= 7 and not state.get("error"),
             "answer": state["answer"],
             "query_type": state["query_type"],
             "sql_task_type": state.get("sql_task_type"),

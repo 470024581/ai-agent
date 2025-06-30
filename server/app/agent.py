@@ -26,6 +26,13 @@ import pandas as pd # Added pandas
 import re
 import asyncio
 from config import Config
+# Factory imports
+from .llm_factory import get_llm, get_llm_status, reset_llm
+from .embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
+# Imports for file parsing
+import PyPDF2
+from docx import Document as DocxDocument
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +43,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Factory imports
-from .llm_factory import get_llm, get_llm_status, reset_llm
-from .embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
 
 # Determine the correct upload directory relative to this file (agent.py)
 # Assuming agent.py is in server/app/ and uploads are in server/data/uploads/
@@ -48,9 +52,6 @@ DB_URI = f"sqlite:///{DATABASE_PATH}" # Construct DB URI for LangChain
 llm = None
 embeddings = None # Initialize embeddings variable
 
-# Imports for file parsing
-import PyPDF2
-from docx import Document as DocxDocument
 
 # Helper functions for parsing files
 def _extract_text_from_pdf(file_path: Path) -> str:

@@ -172,7 +172,7 @@ class EnhancedWorkflowTracker:
             start_timestamp=self.start_time,
             end_timestamp=current_time,
             final_quality_score=final_state.get("quality_score", 0),
-            success=final_state.get("quality_score", 0) >= 8 and not final_state.get("error"),
+            success=final_state.get("quality_score", 0) >= 7 and not final_state.get("error"),
             node_details=list(self.node_details.values())
         )
         
@@ -519,7 +519,7 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
                 state = validation_node(state)
                 await tracker.complete_node("validation_node", {
                     "quality_score": state["quality_score"],
-                    "validation_passed": state["quality_score"] >= 8
+                    "validation_passed": state["quality_score"] >= 7
                 })
             except Exception as e:
                 await tracker.error_node("validation_node", e)
@@ -527,9 +527,9 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
         
         # 4. Retry logic with enhanced tracking
         original_retry_count = state.get("retry_count", 0)
-        max_retries = 2
+        max_retries = 1
         
-        while (state.get("quality_score", 0) < 8 and 
+        while (state.get("quality_score", 0) < 7 and
                state.get("retry_count", 0) < max_retries and 
                not state.get("error")):
             
@@ -557,7 +557,7 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
         await tracker.emit_execution_summary(state)
         
         return {
-            "success": state.get("quality_score", 0) >= 8 and not state.get("error"),
+            "success": state.get("quality_score", 0) >= 7 and not state.get("error"),
             "answer": state.get("answer", ""),
             "query_type": state.get("query_type", ""),
             "sql_task_type": state.get("sql_task_type"),
