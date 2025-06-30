@@ -22,13 +22,14 @@ i18n
     resources,
     supportedLngs: ['en', 'zh'],
     fallbackLng: 'en', // use en if detected lng is not available
+    lng: 'en', // Default language set to English
     debug: import.meta.env.DEV,
     interpolation: {
       escapeValue: false, // React already safes from xss
     },
     detection: {
       // Order and from where user language should be detected
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage'], // Only check localStorage, ignore navigator
       // Keys or params to lookup language from
       lookupLocalStorage: 'i18nextLng',
       // Cache user language on
