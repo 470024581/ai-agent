@@ -34,10 +34,11 @@ from .utils import (
 from .file_processor import process_uploaded_file
 import json
 import sqlite3
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import logging
 import asyncio
 from pydantic import BaseModel
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +598,73 @@ async def workflow_websocket(websocket: WebSocket, client_id: str):
     except Exception as e:
         logger.error(f"WebSocket error for client {client_id}: {e}")
         websocket_manager.disconnect(websocket, client_id)
+
+# ==================== File Download API ====================
+
+@router.get("/api/v1/download/resume", summary="Download Resume")
+async def download_resume():
+    """Download the author's resume file (PDF preferred, fallback to other formats)."""
+    try:
+        # Look for resume file in server/data/resume/ directory
+        resume_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'resume')
+        
+        if not os.path.exists(resume_dir):
+            logger.error(f"Resume directory not found: {resume_dir}")
+            raise HTTPException(
+                status_code=404, 
+                detail="Resume directory not found"
+            )
+        
+        # Priority order: PDF first, then TXT, then any other file
+        file_extensions = ['.pdf', '.txt', '.doc', '.docx']
+        resume_file = None
+        
+        for ext in file_extensions:
+            files = [f for f in os.listdir(resume_dir) if f.lower().endswith(ext.lower())]
+            if files:
+                resume_file = files[0]
+                break
+        
+        if not resume_file:
+            logger.error(f"No resume files found in directory: {resume_dir}")
+            raise HTTPException(
+                status_code=404, 
+                detail="Resume file not found. Please contact the author directly."
+            )
+        
+        resume_path = os.path.join(resume_dir, resume_file)
+        
+        if not os.path.exists(resume_path):
+            logger.error(f"Resume file not found at path: {resume_path}")
+            raise HTTPException(
+                status_code=404, 
+                detail="Resume file not found"
+            )
+        
+        # Determine media type based on file extension
+        file_ext = os.path.splitext(resume_file)[1].lower()
+        media_type_map = {
+            '.pdf': 'application/pdf',
+            '.txt': 'text/plain',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        }
+        
+        media_type = media_type_map.get(file_ext, 'application/octet-stream')
+        download_filename = f"LiangLong_Resume{file_ext}"
+        
+        # Return the file
+        return FileResponse(
+            path=resume_path,
+            filename=download_filename,
+            media_type=media_type
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading resume: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==================== Health and Info ======================
 @router.get("/health", summary="Health Check")

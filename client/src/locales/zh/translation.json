@@ -1,6 +1,7 @@
 {
   "language": "语言",
   "smartAIAssistant": "智能 AI助手",
+  "systemDescription": "一个集成知识库和数据库的增强检索AI系统，支持问答、数据分析和图表可视化的自然语言查询。",
   "intelligentQA": "智能问答",
   "dataSourceManagement": "数据源管理",
   "createDataSource": "创建数据源",
@@ -285,5 +286,43 @@
     "warning": "此操作不可撤销，请谨慎操作！",
     "cancel": "取消",
     "confirm": "确认删除"
+  },
+  "about": {
+    "title": "关于项目",
+    "resumeDownloadError": "简历下载失败，请稍后重试",
+    "projectInfo": {
+      "title": "项目信息",
+      "description": {
+        "title": "功能介绍",
+        "content": "本项目旨在提供一个智能数据分析平台，利用先进的AI技术帮助用户更好地理解和利用他们的数据。"
+      },
+      "features": {
+        "title": "主要特征",
+        "multiModel": "多模型接入实现了云平台OpenAI和OpenRouter的API接入，私有化ollama接入。",
+        "mcpIntegration": "MCP接入实现了基于图表的MCP服务。",
+        "websocket": "WebSocket实现了流程执行状态的实时追踪，可视化。",
+        "multiDataSource": "多数据源隔离，可以自定义多个数据源，数据逻辑互相隔离。"
+      },
+      "techStack": {
+        "title": "主要技术栈",
+        "content": "React，LangChain，LangGraph，FastAPI，LLM，Embedding Model，Chart MCP。"
+      },
+      "links": {
+        "github": "GitHub项目",
+        "youtube": "YouTube演示（待制作）"
+      }
+    },
+    "author": {
+      "title": "作者信息",
+      "name": "姓名",
+      "nameValue": "梁龙",
+      "email": "邮箱",
+      "linkedin": "LinkedIn主页",
+      "downloadResume": "下载简历",
+      "introduction": {
+        "title": "个人介绍",
+        "content": "我有超过10年的软件开发经验，项目涵盖前端，后端，大数据，机器学习等领域。目前在奥克兰大学读IT Master学位。在此期间主要研究AI Agent应用，希望能找到一份相关的工作。"
+      }
+    }
   }
 } 

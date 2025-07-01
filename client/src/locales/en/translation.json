@@ -1,6 +1,7 @@
 {
   "language": "Language",
   "smartAIAssistant": "Smart AI Assistant",
+  "systemDescription": "A retrieval-augmented AI system that integrates both knowledge bases and databases to support natural language queries for Q&A, data analysis, and chart visualization.",
   "intelligentQA": "Intelligent Q&A",
   "dataSourceManagement": "Data Source Management",
   "createDataSource": "Create Data Source",
@@ -322,5 +323,43 @@
     "warning": "This operation cannot be undone, please proceed with caution!",
     "cancel": "Cancel",
     "confirm": "Confirm Delete"
+  },
+  "about": {
+    "title": "About Project",
+    "resumeDownloadError": "Resume download failed, please try again later",
+    "projectInfo": {
+      "title": "Project Information",
+      "description": {
+        "title": "Function Introduction",
+        "content": "This project aims to provide an intelligent data analysis platform that leverages advanced AI technologies to help users better understand and utilize their data."
+      },
+      "features": {
+        "title": "Main Features",
+        "multiModel": "Multi-model integration with cloud platform OpenAI and OpenRouter API access, private Ollama integration.",
+        "mcpIntegration": "MCP integration implements chart-based MCP services.",
+        "websocket": "WebSocket enables real-time tracking and visualization of process execution status.",
+        "multiDataSource": "Multi-data source isolation, allowing custom multiple data sources with mutually isolated data logic."
+      },
+      "techStack": {
+        "title": "Main Technology Stack",
+        "content": "React, LangChain, LangGraph, FastAPI, LLM, Embedding Model, Chart MCP."
+      },
+      "links": {
+        "github": "GitHub Project",
+        "youtube": "YouTube Demo (Coming Soon)"
+      }
+    },
+    "author": {
+      "title": "Author Information",
+      "name": "Name",
+      "nameValue": "Long Liang",
+      "email": "Email",
+      "linkedin": "LinkedIn Profile",
+      "downloadResume": "Download Resume",
+      "introduction": {
+        "title": "Personal Introduction",
+        "content": "I have over 10 years of software development experience, covering projects in frontend, backend, big data, machine learning and other fields. Currently pursuing an IT Master's degree at the University of Auckland. During this period, I mainly research AI Agent applications and hope to find a related job."
+      }
+    }
   }
 } 
