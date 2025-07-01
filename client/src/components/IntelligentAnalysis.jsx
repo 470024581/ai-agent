@@ -28,6 +28,7 @@ import {
 import { FaWifi } from 'react-icons/fa6';
 import { TbWifiOff } from 'react-icons/tb';
 import useWorkflowWebSocket from '../hooks/useWorkflowWebSocket';
+import useRateLimit from '../hooks/useRateLimit';
 import {
   selectConnectionStatus,
   selectCurrentNode,
@@ -52,6 +53,15 @@ import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
   const dispatch = useDispatch();
+  
+  // Rate limiting hook
+  const {
+    isLimited,
+    remainingClicks,
+    recordClick,
+    getTimeUntilReset,
+    maxClicks
+  } = useRateLimit('analysis_clicks', 10, 60 * 60 * 1000); // 每小时最多10次
   
   // Local state
   const [query, setQuery] = useState('');
@@ -163,6 +173,17 @@ function IntelligentAnalysis() {
     e.preventDefault();
     if (!query.trim()) {
       setError(t('intelligentAnalysis.enterQueryError'));
+      return;
+    }
+
+    // Check rate limit before proceeding
+    if (isLimited) {
+      return;
+    }
+
+    // Record the click attempt
+    const clickRecorded = recordClick();
+    if (!clickRecorded) {
       return;
     }
 
@@ -985,6 +1006,12 @@ function IntelligentAnalysis() {
     fetchAvailableDataSources();
   }, []);
 
+  // Format remaining clicks text
+  const formatRemainingClicks = () => {
+    const text = t('intelligentAnalysis.rateLimit.remainingClicks');
+    return text.replace('{remaining}', remainingClicks).replace('{total}', maxClicks);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
       <div className="w-full px-6 py-6 space-y-8">
@@ -1054,23 +1081,69 @@ function IntelligentAnalysis() {
                   />
                 </div>
 
-                <Button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all duration-200 shadow-lg"
-                >
-                  {loading ? (
-                    <>
-                      <Spinner className="mr-2 h-5 w-5" />
-                      {t('intelligentAnalysis.analyzing')}
-                    </>
-                  ) : (
-                    <>
-                      <FaPaperPlane className="mr-2 h-4 w-4" />
-                      {t('intelligentAnalysis.startAnalysis')}
-                    </>
-                  )}
-                </Button>
+                <div className="space-y-2">
+                  <Button
+                    type="submit"
+                    disabled={loading || isLimited}
+                    className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <>
+                        <Spinner className="mr-2 h-5 w-5" />
+                        {t('intelligentAnalysis.analyzing')}
+                      </>
+                    ) : isLimited ? (
+                      <>
+                        <FaClock className="mr-2 h-4 w-4" />
+                        {t('intelligentAnalysis.rateLimit.buttonExceeded')}
+                        {getTimeUntilReset() && (
+                          <span className="ml-1">
+                            ({t('intelligentAnalysis.rateLimit.waitTime').replace('{time}', getTimeUntilReset())})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <FaPaperPlane className="mr-2 h-4 w-4" />
+                        {t('intelligentAnalysis.startAnalysis')}
+                      </>
+                    )}
+                  </Button>
+                  
+                  {/* Rate limit status */}
+                  <div className="text-sm text-center">
+                    {isLimited ? (
+                      <div className="space-y-2">
+                        <Alert variant="destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            {t('intelligentAnalysis.rateLimit.exceeded')}
+                          </AlertDescription>
+                        </Alert>
+                        <p className="text-red-600">
+                          <span>{t('intelligentAnalysis.rateLimit.pleaseContactAuthor')}</span>
+                          <a href={`mailto:${t('intelligentAnalysis.rateLimit.contactAuthor')}`} className="text-blue-600 hover:underline mx-1">
+                            {t('intelligentAnalysis.rateLimit.contactAuthor')}
+                          </a>
+                          {getTimeUntilReset() && (
+                            <span className="block mt-1 text-red-600">
+                              {t('intelligentAnalysis.rateLimit.waitTime').replace('{time}', getTimeUntilReset())}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-gray-600">
+                        {formatRemainingClicks()}
+                        {remainingClicks <= 3 && remainingClicks > 0 && (
+                          <span className="text-amber-600 ml-2">
+                            {t('intelligentAnalysis.rateLimit.almostExceeded')}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
               </form>
 
               {/* Error display */}

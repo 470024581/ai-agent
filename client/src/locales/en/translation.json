@@ -277,6 +277,19 @@
       "qualityValidationDesc": "Score and validate output quality"
     },
     "exampleTitle": "Example Queries",
+    "rateLimit": {
+      "exceeded": "Usage frequency exceeded",
+      "waitTime": "Please wait {time} before trying again",
+      "remainingClicks": "Remaining analysis attempts: {remaining}/{total}",
+      "almostExceeded": "⚠️ About to reach usage limit",
+      "contactAuthor": "lianglongll1990@163.com",
+      "buttonExceeded": "Usage frequency exceeded",
+      "timeFormat": {
+        "hours": "{hours}h {minutes}m",
+        "minutes": "{minutes}m"
+      },
+      "pleaseContactAuthor": "Please try again later or contact the author"
+    },
     "examples": {
       "currentMonthSales": "What are the sales this month?",
       "topProductsByAmount": "Show me the top 5 products by total sales amount",

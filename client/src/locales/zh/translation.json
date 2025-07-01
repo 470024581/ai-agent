@@ -240,6 +240,19 @@
       "qualityValidationDesc": "评分验证输出质量"
     },
     "exampleTitle": "示例查询",
+    "rateLimit": {
+      "exceeded": "使用频次超限",
+      "waitTime": "请等待{time}后重试",
+      "remainingClicks": "剩余分析次数：{remaining}/{total}",
+      "almostExceeded": "⚠️ 即将达到使用限制",
+      "contactAuthor": "lianglongll1990@163.com",
+      "buttonExceeded": "使用频次超限",
+      "timeFormat": {
+        "hours": "{hours}小时{minutes}分钟",
+        "minutes": "{minutes}分钟"
+      },
+      "pleaseContactAuthor": "请稍后再试，或联系作者"
+    },
     "examples": {
       "currentMonthSales": "本月的销售情况如何？",
       "topProductsByAmount": "显示销售额前5名的产品",
