@@ -171,7 +171,7 @@
   "unknownError": "Unknown error",
   "fileProcessingDelayed": "File processing is taking longer than expected. The status will update automatically.",
   "sampleFiles.title": "Sample Sales Data CSV Files",
-  "sampleFiles.description": "Download sample CSV files for testing data source creation (e.g., for 'Formatted Data Table' type).",
+  "sampleFiles.description": "Download sample CSV files for testing data source creation.",
   "sampleFiles.downloadButton": "Sales Data {{year}}",
   "sampleFiles.loadFailed": "Failed to load sample file list.",
   "sampleFiles.networkError": "Network error while loading sample files.",

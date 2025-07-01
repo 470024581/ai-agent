@@ -134,7 +134,7 @@
   "unknownError": "未知错误",
   "fileProcessingDelayed": "文件处理时间超出预期，状态将自动更新。",
   "sampleFiles.title": "样例销售数据CSV文件",
-  "sampleFiles.description": "下载样例CSV文件用于测试数据源创建（例如，'格式化数据表'类型）。",
+  "sampleFiles.description": "下载样例CSV文件用于测试数据源创建。",
   "sampleFiles.downloadButton": "销售数据 {{year}}",
   "sampleFiles.loadFailed": "加载样例文件列表失败。",
   "sampleFiles.networkError": "加载样例文件时发生网络错误。",
