@@ -209,6 +209,8 @@
     "noDataSourceError": "请先激活一个数据源",
     "enterQueryError": "请输入查询内容",
     "networkError": "网络错误，请重试",
+    "noDataSource": "未选择数据源",
+    "selectDataSource": "请选择数据源...",
     "langGraphProcess": "LangGraph 分析流程",
     "exampleQueries": "示例查询",
     "analysisResult": "分析结果",
@@ -324,5 +326,20 @@
         "content": "我有超过10年的软件开发经验，项目涵盖前端，后端，大数据，机器学习等领域。目前在奥克兰大学读IT Master学位。在此期间主要研究AI Agent应用，希望能找到一份相关的工作。"
       }
     }
+  },
+  "dataSource": {
+    "title": "数据源管理",
+    "name": "名称",
+    "description": "描述",
+    "type": "类型",
+    "status": "状态",
+    "actions": "操作",
+    "create": "创建数据源",
+    "delete": "删除",
+    "activate": "激活",
+    "viewFiles": "查看文件",
+    "cannotDeleteActive": "无法删除当前激活的数据源",
+    "deleteConfirm": "确定要删除这个数据源吗？",
+    "cannotDeleteActiveMessage": "无法删除当前激活的数据源，请先停用或删除所有关联的文件和数据。"
   }
 } 

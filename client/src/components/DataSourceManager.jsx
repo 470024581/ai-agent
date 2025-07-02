@@ -130,8 +130,12 @@ function DataSourceManager() {
     }
   };
 
-  const handleDeleteDatasource = (id, name) => {
+  const handleDeleteDatasource = (id, name, isActive) => {
     dismissAlert();
+    if (isActive) {
+      setAlertMessage({ type: 'warning', message: t('dataSource.cannotDeleteActive') });
+      return;
+    }
     setDeleteTarget({ id, name, type: 'datasource' });
     setShowDeleteModal(true);
   };
@@ -448,54 +452,53 @@ function DataSourceManager() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {datasources.length > 0 ? datasources.map(ds => (
-                <TableRow key={ds.id} className="hover:bg-purple-50 transition-colors">
+              {datasources.length > 0 ? datasources.map((datasource) => (
+                <TableRow key={datasource.id} className="hover:bg-purple-50 transition-colors">
                   <TableCell>
                     <div className="flex items-center space-x-2">
-                      <span className="font-medium">{ds.name}</span>
-                      {ds.is_active && <Badge className="bg-green-200 text-green-600">{t('currentActive')}</Badge>}
+                      <span className="font-medium">{datasource.name}</span>
+                      {datasource.is_active && <Badge className="bg-green-200 text-green-600">{t('currentActive')}</Badge>}
                     </div>
                   </TableCell>
-                  <TableCell className="text-gray-600">{ds.description || t('text.empty')}</TableCell>
+                  <TableCell className="text-gray-600">{datasource.description || t('text.empty')}</TableCell>
                   <TableCell>
-                    <Badge className="bg-blue-50 text-blue-600">{getTypeLabel(ds.type)}</Badge>
+                    <Badge className="bg-blue-50 text-blue-600">{getTypeLabel(datasource.type)}</Badge>
                   </TableCell>
-                  <TableCell className="font-medium">{ds.file_count}</TableCell>
+                  <TableCell className="font-medium">{datasource.file_count}</TableCell>
                   <TableCell>
-                    {ds.is_active ? (
+                    {datasource.is_active ? (
                       <Badge className="bg-green-200 text-green-600">{t('active')}</Badge>
                     ) : (
                       <Badge variant="secondary" className="bg-gray-50 text-gray-500">{t('inactive')}</Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-gray-600">{new Date(ds.created_at).toLocaleDateString()}</TableCell>
+                  <TableCell className="text-gray-600">{new Date(datasource.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>
                     <div className="flex space-x-2">
-                      {!ds.is_active && (
+                      {!datasource.is_active && (
                         <Button 
                           variant="outline" 
                           size="sm" 
-                          onClick={() => handleActivateDatasource(ds.id)} 
+                          onClick={() => handleActivateDatasource(datasource.id)} 
                           title={t('activate')}
                           className="border-green-200 text-green-500 hover:bg-green-50"
                         >
                           <FaCheck className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => handleShowFiles(ds)} 
-                        title={t('manageFiles')}
-                        className="border-orange-200 text-orange-500 hover:bg-orange-50"
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleShowFiles(datasource)}
+                        title={t('dataSource.viewFiles')}
                       >
-                        <FaFile className="h-4 w-4" />
+                        <FaFile className="h-4 w-4 text-blue-500" />
                       </Button>
-                      {ds.id !== 1 && (
+                      {!datasource.is_active && (
                         <Button 
                           variant="outline" 
                           size="sm" 
-                          onClick={() => handleDeleteDatasource(ds.id, ds.name)} 
+                          onClick={() => handleDeleteDatasource(datasource.id, datasource.name, datasource.is_active)} 
                           title={t('delete')}
                           className="border-red-200 text-red-500 hover:bg-red-50"
                         >

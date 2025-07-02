@@ -246,6 +246,8 @@
     "noDataSourceError": "Please activate a data source first",
     "enterQueryError": "Please enter query content",
     "networkError": "Network error, please retry",
+    "noDataSource": "No data source selected",
+    "selectDataSource": "Select a data source...",
     "langGraphProcess": "LangGraph Analysis Process",
     "exampleQueries": "Example Queries",
     "analysisResult": "Analysis Result",
@@ -361,5 +363,19 @@
         "content": "I have over 10 years of software development experience, covering projects in frontend, backend, big data, machine learning and other fields. Currently pursuing an IT Master's degree at the University of Auckland. During this period, I mainly research AI Agent applications and hope to find a related job."
       }
     }
+  },
+  "dataSource": {
+    "title": "Data Source Management",
+    "name": "Name",
+    "description": "Description",
+    "type": "Type",
+    "status": "Status",
+    "actions": "Actions",
+    "create": "Create Data Source",
+    "delete": "Delete",
+    "activate": "Activate",
+    "viewFiles": "View Files",
+    "cannotDeleteActive": "Cannot delete active data source",
+    "deleteConfirm": "Are you sure you want to delete this data source?"
   }
 } 

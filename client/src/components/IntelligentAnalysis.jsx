@@ -919,50 +919,17 @@ function IntelligentAnalysis() {
       const response = await fetch('/api/v1/datasources/active');
       if (response.ok) {
         const result = await response.json();
-        // Ensure returned data format is correct
         if (result.success && result.data) {
           setActiveDataSource(result.data);
-          return;
+        } else {
+          setActiveDataSource(null);
         }
+      } else {
+        setActiveDataSource(null);
       }
-      
-      // If no active data source, try to get default data source (ID: 1)
-      console.warn('No active data source found, trying to fetch default data source...');
-      try {
-        const defaultResponse = await fetch('/api/v1/datasources/1');
-        if (defaultResponse.ok) {
-          const defaultResult = await defaultResponse.json();
-          if (defaultResult.success && defaultResult.data) {
-            // Set default data source as active
-            setActiveDataSource(defaultResult.data);
-            console.log('Using default data source:', defaultResult.data.name);
-            return;
-          }
-        }
-      } catch (defaultError) {
-        console.error('Failed to fetch default data source:', defaultError);
-      }
-      
-      // Fallback: create a default data source representation
-      const fallbackDataSource = {
-        id: 1,
-        name: 'Default Data Source',
-        type: 'DEFAULT',
-        description: 'Built-in sales and inventory data'
-      };
-      setActiveDataSource(fallbackDataSource);
-      console.log('Using fallback default data source');
-      
     } catch (error) {
       console.error('Failed to fetch active data source:', error);
-      // Even on error, provide a default data source
-      const fallbackDataSource = {
-        id: 1,
-        name: 'Default Data Source',
-        type: 'DEFAULT',
-        description: 'Built-in sales and inventory data'
-      };
-      setActiveDataSource(fallbackDataSource);
+      setActiveDataSource(null);
     }
   };
 
@@ -971,9 +938,10 @@ function IntelligentAnalysis() {
       const response = await fetch('/api/v1/datasources');
       if (response.ok) {
         const result = await response.json();
-        // Ensure returned data format is correct
         if (result.success && Array.isArray(result.data)) {
-          setAvailableDataSources(result.data);
+          // Filter out default data source
+          const customDataSources = result.data.filter(ds => ds.type !== 'DEFAULT' && ds.id !== 1);
+          setAvailableDataSources(customDataSources);
         } else {
           console.warn('Unexpected data format from datasources API:', result);
           setAvailableDataSources([]);
@@ -1028,41 +996,41 @@ function IntelligentAnalysis() {
             </CardHeader>
             <CardContent className="p-6 space-y-6">
                              {/* Current data source display and switching */}
-               <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-100 dark:border-gray-700">
-                 <Label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 block">
-                   {t('intelligentAnalysis.currentDataSource')}:
-                 </Label>
-                 <div className="space-y-3">
-                   <div className="flex items-center space-x-2">
-                     <FaDatabase className="h-4 w-4 text-blue-500" />
-                     <span className="text-gray-800 dark:text-gray-200 font-medium">
-                       {activeDataSource?.name || 'Default Data Source'}
-                     </span>
-                     <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
-                       Active
-                     </Badge>
-                   </div>
-                   <div className="relative">
-                     <select
-                       value={activeDataSource?.id || ''}
-                       onChange={(e) => e.target.value && handleDataSourceChange(parseInt(e.target.value))}
-                       className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
-                       disabled={loading}
-                     >
-                       {!activeDataSource && <option value="">Select a data source...</option>}
-                       {Array.isArray(availableDataSources) && availableDataSources.length > 0 ? (
-                         availableDataSources.map((ds) => (
-                           <option key={ds.id} value={ds.id}>
-                             {ds.name} ({ds.type || 'Unknown'})
-                           </option>
-                         ))
-                       ) : (
-                         <option disabled>No data sources available</option>
+               {availableDataSources.length > 0 && (
+                 <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-100 dark:border-gray-700">
+                   <Label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 block">
+                     {t('intelligentAnalysis.currentDataSource')}:
+                   </Label>
+                   <div className="space-y-3">
+                     <div className="flex items-center space-x-2">
+                       <FaDatabase className="h-4 w-4 text-blue-500" />
+                       <span className="text-gray-800 dark:text-gray-200 font-medium">
+                         {activeDataSource?.name || t('intelligentAnalysis.noDataSource')}
+                       </span>
+                       {activeDataSource && (
+                         <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
+                           Active
+                         </Badge>
                        )}
-                     </select>
+                     </div>
+                     <div className="relative">
+                       <select
+                         value={activeDataSource?.id || ''}
+                         onChange={(e) => e.target.value && handleDataSourceChange(parseInt(e.target.value))}
+                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                         disabled={loading}
+                       >
+                         <option value="">{t('intelligentAnalysis.selectDataSource')}</option>
+                         {availableDataSources.map((ds) => (
+                           <option key={ds.id} value={ds.id}>
+                             {ds.name} ({ds.type})
+                           </option>
+                         ))}
+                       </select>
+                     </div>
                    </div>
                  </div>
-               </div>
+               )}
 
               {/* Query form */}
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -1082,16 +1050,16 @@ function IntelligentAnalysis() {
                 </div>
 
                 <div className="space-y-2">
-                  <Button
-                    type="submit"
+                <Button
+                  type="submit"
                     disabled={loading || isLimited}
                     className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? (
-                      <>
-                        <Spinner className="mr-2 h-5 w-5" />
-                        {t('intelligentAnalysis.analyzing')}
-                      </>
+                >
+                  {loading ? (
+                    <>
+                      <Spinner className="mr-2 h-5 w-5" />
+                      {t('intelligentAnalysis.analyzing')}
+                    </>
                     ) : isLimited ? (
                       <>
                         <FaClock className="mr-2 h-4 w-4" />
@@ -1102,13 +1070,13 @@ function IntelligentAnalysis() {
                           </span>
                         )}
                       </>
-                    ) : (
-                      <>
-                        <FaPaperPlane className="mr-2 h-4 w-4" />
-                        {t('intelligentAnalysis.startAnalysis')}
-                      </>
-                    )}
-                  </Button>
+                  ) : (
+                    <>
+                      <FaPaperPlane className="mr-2 h-4 w-4" />
+                      {t('intelligentAnalysis.startAnalysis')}
+                    </>
+                  )}
+                </Button>
                   
                   {/* Rate limit status */}
                   <div className="text-sm text-center">
