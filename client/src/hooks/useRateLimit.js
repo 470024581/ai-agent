@@ -40,8 +40,9 @@ const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 60 * 6
       setIsLimited(limited);
       
       // Calculate next reset time (earliest click time + window)
+      let earliestClick = null;
       if (validClicks.length > 0) {
-        const earliestClick = Math.min(...validClicks);
+        earliestClick = Math.min(...validClicks);
         setNextResetTime(earliestClick + windowMs);
       } else {
         setNextResetTime(null);
@@ -51,7 +52,7 @@ const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 60 * 6
         isLimited: limited,
         remainingClicks: remaining,
         totalClicks: validClicks.length,
-        nextResetTime: validClicks.length > 0 ? earliestClick + windowMs : null
+        nextResetTime: earliestClick ? earliestClick + windowMs : null
       };
     } catch (error) {
       console.error('Error checking rate limit status:', error);
