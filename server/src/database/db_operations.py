@@ -396,20 +396,31 @@ async def set_datasource_table_name(datasource_id: int, db_table_name: str) -> b
         conn.close()
 
 async def add_table_to_datasource(datasource_id: int, table_name: str) -> bool:
-    """Add a table to a datasource (for tracking multiple tables per datasource)"""
+    """Add a table to a datasource and set it as the default table if none exists"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        current_time = datetime.now().strftime(DATE_FORMAT)
+        # First, check if this datasource already has a default table
+        cursor.execute('SELECT db_table_name FROM datasources WHERE id = ?', (datasource_id,))
+        row = cursor.fetchone()
+        has_default_table = row['db_table_name'] is not None if row else False
+        
+        # Add the table to datasource_tables
         cursor.execute('''
-            INSERT OR IGNORE INTO datasource_tables (datasource_id, table_name, created_at)
-            VALUES (?, ?, ?)
-        ''', (datasource_id, table_name, current_time))
+            INSERT INTO datasource_tables (datasource_id, table_name)
+            VALUES (?, ?)
+        ''', (datasource_id, table_name))
+        
+        # If this is the first table, set it as the default table
+        if not has_default_table:
+            cursor.execute('''
+                UPDATE datasources 
+                SET db_table_name = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (table_name, datasource_id))
         
         conn.commit()
-        
-        # Return True if a new record was inserted or if the record already existed
         return True
         
     except Exception as e:
