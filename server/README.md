@@ -64,29 +64,60 @@ Smart AI Assistant Backend is a sophisticated Python-based API service that prov
 
 ```
 server/
-├── app/                         # Core application package
-│   ├── main.py                 # FastAPI application entry point
-│   ├── config.py               # Configuration management
-│   ├── routes.py               # API route definitions
-│   ├── models.py               # Pydantic data models
-│   ├── db.py                   # Database operations
-│   ├── websocket_manager.py    # WebSocket connection management
-│   ├── agent.py                # Core AI agent logic
-│   ├── langgraph_flow.py       # LangGraph workflow definitions
-│   ├── real_langgraph_flow.py  # Production workflow implementation
-│   ├── enhanced_flow.py        # Advanced processing workflows
-│   ├── file_processor.py       # File upload and processing
-│   ├── embedding_factory.py    # Embedding model management
-│   ├── llm_factory.py          # LLM provider management
-│   ├── openrouter_models.py    # OpenRouter integration
-│   ├── report.py               # Report generation
-│   └── utils.py                # Utility functions
-├── data/                       # Data storage directory
-├── requirements.txt            # Python dependencies
-├── config.py                   # Global configuration
-├── start.py                    # Application launcher
-├── env.example                 # Environment configuration template
-└── vercel.json                 # Deployment configuration
+├── src/                        # Core application package
+│   ├── agents/                # AI agent implementations
+│   │   ├── __init__.py
+│   │   └── intelligent_agent.py  # Core AI agent with multi-LLM support
+│   ├── api/                   # API endpoints and routes
+│   │   ├── __init__.py
+│   │   └── routes.py          # FastAPI route definitions and handlers
+│   ├── chains/                # LangChain workflow definitions
+│   │   ├── __init__.py
+│   │   ├── enhanced_flow.py           # Enhanced workflow with quality checks
+│   │   ├── enhanced_langgraph_flow.py # Advanced LangGraph implementation
+│   │   ├── langgraph_flow.py         # Base LangGraph workflow
+│   │   └── real_langgraph_flow.py    # Production-ready workflow
+│   ├── components/            # Reusable components
+│   │   └── __init__.py
+│   ├── config/               # Configuration management
+│   │   ├── __init__.py
+│   │   └── config.py         # Environment and application configuration
+│   ├── database/            # Database operations
+│   │   ├── __init__.py
+│   │   └── db_operations.py  # SQLite database operations and queries
+│   ├── document_loaders/    # File processing and loading
+│   │   ├── __init__.py
+│   │   └── file_processor.py # Multi-format file processing (CSV, PDF, etc.)
+│   ├── models/             # Data models and factories
+│   │   ├── __init__.py
+│   │   ├── data_models.py         # Pydantic data models and enums
+│   │   ├── embedding_factory.py   # Embedding model provider factory
+│   │   ├── llm_factory.py        # LLM provider factory (OpenAI, Ollama, etc.)
+│   │   └── openrouter_models.py  # OpenRouter model configurations
+│   ├── prompts/            # LLM prompts and templates
+│   │   └── __init__.py
+│   ├── utils/             # Utility functions
+│   │   ├── __init__.py
+│   │   └── common_utils.py  # Shared utility functions
+│   ├── vectorstores/      # Vector storage implementations
+│   │   └── __init__.py
+│   ├── websocket/         # WebSocket management
+│   │   ├── __init__.py
+│   │   └── websocket_manager.py  # Real-time connection management
+│   ├── __init__.py
+│   └── main.py           # FastAPI application entry point
+├── data/                 # Data storage directory
+│   ├── embeddings_cache/ # Embedding model cache for faster processing
+│   ├── reports/         # Generated analysis reports and exports
+│   ├── resume/          # Resume file storage for processing
+│   ├── sample_sales/    # Sample data for testing and demos
+│   ├── uploads/         # Temporary storage for uploaded files
+│   └── smart.db        # SQLite database for structured data
+├── requirements.txt     # Python package dependencies
+├── start.py            # Application launcher with environment setup
+├── env.example         # Environment configuration template
+├── env.local.example   # Local environment configuration template
+└── vercel.json         # Vercel deployment configuration
 ```
 
 ## 🚀 Quick Start

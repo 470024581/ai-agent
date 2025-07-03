@@ -126,22 +126,33 @@ smart-ai-assistant/
 │   ├── package.json           # Frontend dependencies
 │   └── README.md              # Frontend documentation
 ├── server/                     # FastAPI Backend Application
-│   ├── app/
-│   │   ├── main.py            # FastAPI application entry
-│   │   ├── routes.py          # API route definitions
-│   │   ├── models.py          # Pydantic data models
-│   │   ├── langgraph_flow.py  # LangGraph workflow definitions
-│   │   ├── websocket_manager.py # WebSocket handling
-│   │   ├── llm_factory.py     # Multi-LLM provider management
-│   │   ├── db.py              # Database operations
-│   │   └── file_processor.py  # Document processing
-│   ├── data/                  # Data storage directory
-│   ├── requirements.txt       # Python dependencies
-│   └── README.md              # Backend documentation
-├── docs/                      # Project documentation
-│   └── data/                  # Sample data files
-├── package.json               # Root package configuration
-└── README.md                  # This file
+│   ├── src/                   # Core application package
+│   │   ├── agents/           # AI agent implementations
+│   │   ├── api/              # API endpoints and routes
+│   │   ├── chains/           # LangChain workflow definitions
+│   │   ├── components/       # Reusable components
+│   │   ├── config/          # Configuration management
+│   │   ├── database/        # Database operations
+│   │   ├── document_loaders/ # File processing and loading
+│   │   ├── models/          # Data models and factories
+│   │   ├── prompts/         # LLM prompts and templates
+│   │   ├── utils/           # Utility functions
+│   │   ├── vectorstores/    # Vector storage implementations
+│   │   ├── websocket/       # WebSocket management
+│   │   └── main.py         # FastAPI application entry
+│   ├── data/                # Data storage directory
+│   │   ├── embeddings_cache/ # Embedding model cache
+│   │   ├── reports/        # Generated reports
+│   │   ├── resume/         # Resume storage
+│   │   ├── sample_sales/   # Sample data
+│   │   ├── uploads/        # File uploads
+│   │   └── smart.db       # SQLite database
+│   ├── requirements.txt    # Python dependencies
+│   └── README.md          # Backend documentation
+├── docs/                  # Project documentation
+│   └── data/             # Sample data files
+├── package.json          # Root package configuration
+└── README.md            # This file
 ```
 
 ## 🚀 Quick Start
