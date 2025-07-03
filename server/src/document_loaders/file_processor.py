@@ -4,8 +4,8 @@ import pandas as pd
 import re # For sanitizing column names
 import uuid # For unique table name suffix
 from typing import Optional
-from .db import update_file_processing_status, get_datasource, set_datasource_table_name, get_db_connection, add_table_to_datasource, get_datasource_tables
-from .models import ProcessingStatus, DataSourceType, FileType # Ensure enums are available
+from ..database.db_operations import update_file_processing_status, get_datasource, set_datasource_table_name, get_db_connection, add_table_to_datasource, get_datasource_tables
+from ..models.data_models import ProcessingStatus, DataSourceType, FileType # Ensure enums are available
 import logging
 
 logger = logging.getLogger(__name__)
@@ -297,7 +297,7 @@ async def _find_compatible_table(conn, datasource_id: int, df: pd.DataFrame) -> 
     """Find an existing table with compatible structure for the given DataFrame."""
     try:
         # Get all tables for this datasource
-        from .db import get_datasource_tables
+        from ..database.db_operations import get_datasource_tables
         tables = await get_datasource_tables(datasource_id)
         
         if not tables:

@@ -1,3 +1,10 @@
+"""
+Smart AI Assistant - Main Application Entry Point
+
+This is the main entry point for the LangChain-based intelligent data analysis system.
+Following LangChain best practices for project structure and organization.
+"""
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -6,21 +13,10 @@ from typing import Dict
 import os
 from pathlib import Path
 
-# Import Pydantic models from .models
-from .models import (
-    QueryRequest,
-    QueryResponse
-)
-
-# Import initialization function
-from .agent import initialize_app_state
-
-# Import agent functions (simplified)
-from .agent import (
-    get_answer_from
-)
-
-from . import routes # Import the routes module
+# Import from the restructured modules
+from .models.data_models import QueryRequest, QueryResponse
+from .agents.intelligent_agent import initialize_app_state, get_answer_from
+from .api.routes import router
 
 app = FastAPI(title="Smart AI Assistant API", version="0.5.0")
 
@@ -39,9 +35,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the router from routes.py
-app.include_router(routes.router) # This line registers all routes from routes.py
-
+# Include the router from the restructured API module
+app.include_router(router)
 
 # Configure static files for frontend
 static_dir = Path(__file__).parent.parent.parent / "client" / "dist"
@@ -73,10 +68,9 @@ if static_dir.exists():
         
         return {"message": f"File not found: {path}"}
 
-
 @app.on_event("startup")
 async def startup_event():
-    """Initialize application state (e.g., DB schema, API keys) on startup."""
+    """Initialize application state on startup."""
     print("Application starting up...")
     initialize_app_state()
     
@@ -93,16 +87,12 @@ async def startup_event():
 
 @app.get("/ping", tags=["Health Check"])
 async def ping():
-    """
-    A simple ping endpoint to check if the API is running.
-    """
+    """A simple ping endpoint to check if the API is running."""
     return {"status": "ok", "message": "pong!", "version": "0.5.0"}
 
 @app.get("/health", tags=["Health Check"])
 async def health():
-    """
-    Health check endpoint for Docker and monitoring.
-    """
+    """Health check endpoint for Docker and monitoring."""
     frontend_available = static_dir.exists()
     return {
         "status": "healthy",
@@ -113,8 +103,7 @@ async def health():
         }
     }
 
-# Core API endpoints - Intelligent Q&A only
-
+# Core API endpoints - Intelligent Q&A
 @app.post("/api/v1/query", response_model=QueryResponse, tags=["Intelligent Q&A"])
 async def intelligent_query(request: QueryRequest):
     """
@@ -141,9 +130,7 @@ async def intelligent_query(request: QueryRequest):
 # API information endpoint
 @app.get("/api/v1/info", tags=["System Info"])
 async def api_info():
-    """
-    Get API system information and feature overview.
-    """
+    """Get API system information and feature overview."""
     frontend_available = static_dir.exists()
     return {
         "name": "Smart AI Assistant API",
@@ -170,5 +157,6 @@ async def api_info():
 # Example of how to run directly
 if __name__ == "__main__":
     import uvicorn
-    print("Starting FastAPI server. For production, use: uvicorn main:app --reload")
+    print("Starting FastAPI server with new LangChain structure...")
+    print("For production, use: uvicorn src.main:app --reload")
     uvicorn.run(app, host="0.0.0.0", port=8000) 

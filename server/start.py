@@ -18,12 +18,12 @@ import argparse
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import config, check_environment
-from app.agent import initialize_app_state
+from src.config.config import config, check_environment
+from src.agents.intelligent_agent import initialize_app_state
 
 def run_command(command, description):
     """Run a command and handle errors."""
-    print(f"\n{description}...")
+    print(f"\n🚀 {description}...")
     try:
         # For scripts, ensure we use the python interpreter from sys.executable
         if command[0].endswith(".py"):
@@ -76,6 +76,12 @@ def check_dependencies():
     else:
         print("✓ All required packages are installed (including LangServe)")
         return True
+
+def start_server():
+    """Start the FastAPI server"""
+    print("\n🌟 Starting FastAPI server...")
+    os.environ["PYTHONPATH"] = str(Path(__file__).parent)
+    uvicorn.run("src.main:app", host=config.HOST, port=config.PORT, reload=True)
 
 def main():
     """Main startup function"""
@@ -139,15 +145,7 @@ def main():
         
         print(f"🔧 Python logging configured - Level: {log_level}")
         
-        uvicorn.run(
-            "app.main:app",
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            workers=args.workers if not args.reload else 1,
-            log_level=config.LOG_LEVEL.lower(),
-            access_log=True
-        )
+        start_server()
     except KeyboardInterrupt:
         print("\n👋 Server stopped")
     except Exception as e:

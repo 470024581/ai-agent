@@ -6,8 +6,8 @@ from typing import Optional
 from pathlib import Path
 
 # Get project root directory
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SERVER_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+SERVER_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = SERVER_ROOT / "data"
 
 class Config:

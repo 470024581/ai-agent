@@ -2,10 +2,10 @@
 Embedding Factory - Factory class supporting multiple embedding providers
 """
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from langchain_core.embeddings.embeddings import Embeddings
-from config import config
+from ..config.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class EmbeddingFactory:
     _current_config: Optional[Dict[str, Any]] = None
     
     @classmethod
-    def get_embeddings(cls) -> Embeddings:
+    def get_embeddings(cls, force_local: bool = False) -> Embeddings:
         """Get embeddings instance, create if not exists"""
         embedding_config = config.get_embedding_config()
         
@@ -153,7 +153,7 @@ class EmbeddingFactory:
             local_model = "intfloat/multilingual-e5-small"
             
             # Ensure cache directory exists
-            cache_dir = embedding_config.get("cache_dir", str(Path(__file__).parent.parent / "data" / "embeddings_cache"))
+            cache_dir = embedding_config.get("cache_dir", str(Path(__file__).parent.parent.parent / "data" / "embeddings_cache"))
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
                 
             kwargs = {
@@ -250,7 +250,7 @@ class EmbeddingFactory:
     
     @classmethod
     def reset_embeddings(cls) -> bool:
-        """Reset embeddings instance (force recreation)"""
+        """Reset embeddings instance (force recreate on next call)"""
         try:
             cls._instance = None
             cls._current_config = None
@@ -260,19 +260,19 @@ class EmbeddingFactory:
             logger.error(f"Failed to reset embeddings instance: {e}")
             return False
 
-# Convenience functions for external use
-def get_embeddings() -> Embeddings:
-    """Get embeddings instance"""
-    return EmbeddingFactory.get_embeddings()
+# Convenience functions for global access
+def get_embeddings(force_local: bool = False) -> Embeddings:
+    """Get global embeddings instance"""
+    return EmbeddingFactory.get_embeddings(force_local)
 
 def get_embeddings_status() -> Dict[str, Any]:
-    """Get embeddings status"""
+    """Get global embeddings status"""
     return EmbeddingFactory.get_embeddings_status()
 
 def reset_embeddings() -> bool:
-    """Reset embeddings"""
+    """Reset global embeddings instance"""
     return EmbeddingFactory.reset_embeddings()
 
 def test_embeddings_connection() -> Dict[str, Any]:
-    """Test embeddings connection"""
+    """Test global embeddings connection"""
     return EmbeddingFactory.test_embeddings_connection() 

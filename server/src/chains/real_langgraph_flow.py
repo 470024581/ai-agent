@@ -9,8 +9,8 @@ from typing import Dict, Any, List, Optional, TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
-from .models import WorkflowEvent, WorkflowEventType, NodeStatus
-from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource
+from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus
+from ..agents.intelligent_agent import llm, perform_rag_query, get_answer_from_sqltable_datasource
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,7 @@ async def process_with_real_langgraph(user_input: str, datasource: Dict[str, Any
         execution_id = str(uuid.uuid4())
     
     # Import WebSocket manager
-    from .websocket_manager import websocket_manager
+    from ..websocket.websocket_manager import websocket_manager
     
     # Create tracker
     tracker = LangGraphWorkflowTracker(execution_id, websocket_manager)

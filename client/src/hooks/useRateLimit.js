@@ -21,6 +21,7 @@ const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 60 * 6
 
   // Check current rate limit status
   const checkStatus = useCallback(() => {
+    let earliestClick = null;
     try {
       const storedClicks = localStorage.getItem(key);
       const clicks = storedClicks ? JSON.parse(storedClicks) : [];
@@ -40,7 +41,6 @@ const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 60 * 6
       setIsLimited(limited);
       
       // Calculate next reset time (earliest click time + window)
-      let earliestClick = null;
       if (validClicks.length > 0) {
         earliestClick = Math.min(...validClicks);
         setNextResetTime(earliestClick + windowMs);

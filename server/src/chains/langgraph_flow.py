@@ -10,9 +10,9 @@ from typing import Dict, Any, List, Optional, TypedDict
 import logging
 import requests
 from langgraph.graph import StateGraph
-from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
-from .models import WorkflowEvent, WorkflowEventType, NodeStatus
-from .db import get_active_datasource  # Added to get active datasource
+from ..agents.intelligent_agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
+from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus
+from ..database.db_operations import get_active_datasource  # Added to get active datasource
 
 logger = logging.getLogger(__name__)
 
@@ -1491,7 +1491,8 @@ async def process_intelligent_query(
     Process intelligent analysis query using LangGraph, with WebSocket support.
     """
     
-    from .websocket_manager import websocket_manager
+    # Import WebSocket manager
+    from ..websocket.websocket_manager import websocket_manager
     
     if not datasource:
         return {

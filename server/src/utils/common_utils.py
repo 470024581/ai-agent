@@ -205,9 +205,10 @@ def parse_query_intent(query: str) -> Dict[str, Any]:
         intent['keywords'].extend([kw for kw in inventory_keywords if kw in query_lower])
     
     # Determine time range
-    for time_range, keywords_list in time_keywords.items():
-        if any(keyword in query_lower for keyword in keywords_list):
+    for time_range, keywords in time_keywords.items():
+        if any(keyword in query_lower for keyword in keywords):
             intent['time_range'] = time_range
+            intent['keywords'].extend([kw for kw in keywords if kw in query_lower])
             break
-            
+    
     return intent 

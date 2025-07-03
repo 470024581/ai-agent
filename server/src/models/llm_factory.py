@@ -4,7 +4,7 @@ LLM Factory - Factory class supporting multiple LLM providers (no simulation mod
 import logging
 from typing import Optional, Dict, Any
 from langchain_core.language_models.base import BaseLanguageModel
-from config import config
+from ..config.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +212,6 @@ class LLMFactory:
                     "base_url": ai_config.get("base_url", "default")
                 }
             }
-            
-
             
             return status
             

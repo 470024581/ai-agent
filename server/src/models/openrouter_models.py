@@ -43,7 +43,7 @@ def switch_model(model_id: str, config_path: str = '../config/config.py'): # Adj
         
         if model_id not in all_models:
             print(f"❌ Model '{model_id}' not found in available list")
-            print("💡 Use python app/openrouter_models.py list to view available models") # Adjusted help path
+            print("💡 Use python src/models/openrouter_models.py list to view available models") # Adjusted help path
             return False
         
         # Read current configuration
@@ -69,8 +69,8 @@ def switch_model(model_id: str, config_path: str = '../config/config.py'): # Adj
         print(f"✅ Switched to model: {model_id}")
         print(f"📝 Description: {all_models[model_id]}")
         print("\n🔄 Please restart server for configuration to take effect:")
-        print("   (cd .. && uvicorn app.main:app --reload --port 8001)  # If running from app dir")
-        print("   (uvicorn app.main:app --reload --port 8001)           # If running from root dir")
+        print("   (cd .. && uvicorn src.main:app --reload --port 8001)  # If running from src dir")
+        print("   (uvicorn src.main:app --reload --port 8001)           # If running from root dir")
         
         return True
         
@@ -126,18 +126,18 @@ if __name__ == "__main__":
     import os
 
     # Determine the correct config path based on execution context
-    # This script is now in app/, so config is in ../config/
+    # This script is now in src/models/, so config is in ../config/
     current_dir = os.path.dirname(os.path.abspath(__file__))
     config_file_path = os.path.join(current_dir, '..', 'config', 'config.py')
     
     if len(sys.argv) < 2:
-        print("OpenRouter Model Configuration Tool (in app/ directory)")
+        print("OpenRouter Model Configuration Tool (in src/models/ directory)")
         print("\nUsage (run from project root directory):")
-        print("  python app/openrouter_models.py list                    # List all models")
-        print("  python app/openrouter_models.py switch <model_id>       # Switch model")
-        print("  python app/openrouter_models.py test                    # Test connection")
+        print("  python src/models/openrouter_models.py list                    # List all models")
+        print("  python src/models/openrouter_models.py switch <model_id>       # Switch model")
+        print("  python src/models/openrouter_models.py test                    # Test connection")
         print("\nExample:")
-        print("  python app/openrouter_models.py switch anthropic/claude-3-haiku:beta")
+        print("  python src/models/openrouter_models.py switch anthropic/claude-3-haiku:beta")
     
     elif sys.argv[1] == "list":
         list_models()
@@ -147,4 +147,4 @@ if __name__ == "__main__":
         test_model(config_path=config_file_path)
     else:
         print("❌ Invalid command")
-        print("Use python app/openrouter_models.py for help") 
+        print("Use python src/models/openrouter_models.py for help") 

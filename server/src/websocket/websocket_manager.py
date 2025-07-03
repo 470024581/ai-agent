@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
-from .models import WorkflowEvent, ExecutionState, NodeState, NodeStatus
+from ..models.data_models import WorkflowEvent, ExecutionState, NodeState, NodeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -198,63 +198,48 @@ class WebSocketManager:
             "total_duration": (execution_state.get("end_time") or execution_state.get("start_time")) - execution_state.get("start_time"),
             "nodes": {
                 node_id: {
-                    "id": node.id,
-                    "status": node.status.value,
-                    "start_time": node.start_time,
-                    "end_time": node.end_time,
-                    "duration": node.duration,
-                    "error": node.error,
-                    "data": node.data
+                    "status": node_state.status.value if hasattr(node_state, 'status') else "unknown",
+                    "start_time": getattr(node_state, 'start_time', None),
+                    "end_time": getattr(node_state, 'end_time', None),
+                    "duration": getattr(node_state, 'duration', None),
+                    "error": getattr(node_state, 'error', None)
                 }
-                for node_id, node in execution_state.items() if isinstance(node, NodeState)
-            },
-            "error": execution_state.get("error")
+                for node_id, node_state in execution_state.items()
+                if isinstance(node_state, NodeState)
+            }
         }
     
     def get_active_executions(self) -> List[str]:
         """Get list of active execution IDs"""
-        return [eid for eid, state in self.execution_states.items() 
-                if state.get("status") in [NodeStatus.PENDING, NodeStatus.RUNNING]]
+        return list(self.execution_states.keys())
     
     async def get_execution_summary(self, execution_id: str) -> dict:
-        """Get execution performance summary"""
+        """Get execution summary information"""
         execution_state = self.execution_states.get(execution_id)
         if not execution_state:
             return {"error": "Execution not found"}
         
-        completed_nodes = [node for node in execution_state.values() 
-                          if isinstance(node, NodeState) and node.status == NodeStatus.COMPLETED and node.duration]
-        failed_nodes = [node for node in execution_state.values() 
-                       if isinstance(node, NodeState) and node.status == NodeStatus.ERROR]
-        
-        total_duration = 0
-        if execution_state.get("end_time") and execution_state.get("start_time"):
-            total_duration = execution_state["end_time"] - execution_state["start_time"]
-        
-        avg_node_time = 0
-        if completed_nodes:
-            avg_node_time = sum(node.duration for node in completed_nodes) / len(completed_nodes)
-        
-        slowest_node = None
-        if completed_nodes:
-            slowest_node = max(completed_nodes, key=lambda n: n.duration)
+        completed_nodes = sum(1 for state in execution_state.values() 
+                             if isinstance(state, NodeState) and state.status == NodeStatus.COMPLETED)
+        error_nodes = sum(1 for state in execution_state.values()
+                         if isinstance(state, NodeState) and state.status == NodeStatus.ERROR)
+        total_nodes = sum(1 for state in execution_state.values() if isinstance(state, NodeState))
         
         return {
             "execution_id": execution_id,
-            "total_duration": total_duration,
-            "total_nodes": len(execution_state),
-            "completed_nodes": len(completed_nodes),
-            "failed_nodes": len(failed_nodes),
-            "success_rate": (len(completed_nodes) / len(execution_state)) if len(execution_state) > 0 else 0,
-            "average_node_time": avg_node_time,
-            "slowest_node": {
-                "id": slowest_node.id, 
-                "duration": slowest_node.duration
-            } if slowest_node else None,
-            "execution_path": [node.id for node in sorted(execution_state.values(), 
-                                                         key=lambda n: n.start_time or 0)],
-            "status": execution_state.get("status", NodeStatus.PENDING).value
+            "status": execution_state.get("status", NodeStatus.PENDING).value,
+            "progress": {
+                "completed": completed_nodes,
+                "errors": error_nodes,
+                "total": total_nodes,
+                "percentage": (completed_nodes / total_nodes * 100) if total_nodes > 0 else 0
+            },
+            "timing": {
+                "start_time": execution_state.get("start_time"),
+                "end_time": execution_state.get("end_time"),
+                "duration": (execution_state.get("end_time", 0) - execution_state.get("start_time", 0)) if execution_state.get("start_time") else None
+            }
         }
 
-# Global WebSocket manager instance
+# Create a singleton instance
 websocket_manager = WebSocketManager() 

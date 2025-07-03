@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Dict, Any, List, Optional
 
-from .models import WorkflowEvent, WorkflowEventType, NodeStatus, NodeExecutionDetails, ExecutionSummary
+from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus, NodeExecutionDetails, ExecutionSummary
 from .langgraph_flow import (
     router_node, sql_classifier_node, sql_execution_node,
     chart_config_node, chart_rendering_node, rag_query_node,
@@ -363,7 +363,7 @@ async def process_with_enhanced_tracking(user_input: str, datasource: Dict[str, 
         execution_id = str(uuid.uuid4())
     
     # Import WebSocket manager
-    from .websocket_manager import websocket_manager
+    from ..websocket.websocket_manager import websocket_manager
     
     # Create enhanced tracker
     tracker = EnhancedWorkflowTracker(execution_id, websocket_manager)

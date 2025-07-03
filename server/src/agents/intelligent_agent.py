@@ -9,23 +9,23 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.docstore.document import Document
-from .db import (
+from ..database.db_operations import (
     initialize_database,  # Changed: initialize_app_database -> initialize_database
     get_files_by_datasource, # Added to get files for RAG
     get_active_datasource, # Added to get active datasource
     DATABASE_PATH # Import DATABASE_PATH
 )
-from .models import DataSourceType # Import DataSourceType
+from ..models.data_models import DataSourceType # Import DataSourceType
 from dotenv import load_dotenv
 from pathlib import Path # Added Path
 import logging # Added logging
 import pandas as pd # Added pandas
 import re
 import asyncio
-from config import Config
+from ..config.config import Config
 # Factory imports
-from .llm_factory import get_llm, get_llm_status, reset_llm
-from .embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
+from ..models.llm_factory import get_llm, get_llm_status, reset_llm
+from ..models.embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
 # Imports for file parsing
 import PyPDF2
 from docx import Document as DocxDocument
@@ -43,7 +43,7 @@ load_dotenv()
 
 # Determine the correct upload directory relative to this file (agent.py)
 # Assuming agent.py is in server/app/ and uploads are in server/data/uploads/
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
 DB_URI = f"sqlite:///{DATABASE_PATH}" # Construct DB URI for LangChain
 
 llm = None

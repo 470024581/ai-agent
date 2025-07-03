@@ -5,7 +5,7 @@ import os
 import uuid
 import aiofiles
 from pathlib import Path
-from .models import (
+from ..models.data_models import (
     QueryRequest, QueryResponse, 
     BaseResponse,
     DataSourceCreate, DataSourceUpdate, DataSource, DataSourceResponse, DataSourceListResponse,
@@ -14,13 +14,13 @@ from .models import (
     WorkflowEventType,
     NodeStatus,
 )
-from .agent import (
+from ..agents.intelligent_agent import (
     get_answer_from, 
     initialize_app_state
 )
-from .langgraph_flow import process_intelligent_query
-from .websocket_manager import websocket_manager
-from .db import (
+from ..chains.langgraph_flow import process_intelligent_query
+from ..websocket.websocket_manager import websocket_manager
+from ..database.db_operations import (
     # Data source management functions
     get_datasources, get_datasource, create_datasource, update_datasource,
     delete_datasource, set_active_datasource, get_active_datasource,
@@ -28,10 +28,11 @@ from .db import (
     save_file_info, get_files_by_datasource, update_file_processing_status,
     delete_file_record_and_associated_data
 )
-from .utils import (
+from ..utils.common_utils import (
     create_api_response, parse_query_intent
 )
-from .file_processor import process_uploaded_file
+from ..document_loaders.file_processor import process_uploaded_file
+from ..config.config import DATA_DIR
 import json
 import sqlite3
 from fastapi.responses import FileResponse, StreamingResponse
@@ -45,10 +46,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Smart  API"])
 
 # File upload directory configuration
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
+UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-SAMPLE_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "sample_sales"
+SAMPLE_DATA_DIR = DATA_DIR / "sample_sales"
 # Ensure sample data directory exists (though generator script also does this)
 SAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -543,7 +544,7 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
         # For HYBRID datasources, check if they have any processed files
         if ds_type == DataSourceType.HYBRID.value:
             # Get files for this datasource to check if any are completed
-            from .db import get_files_by_datasource
+            from ..database.db_operations import get_files_by_datasource
             files = await get_files_by_datasource(datasource['id'])
             completed_files = [f for f in files if f['processing_status'] == 'completed']
             
@@ -663,12 +664,12 @@ async def download_resume():
     """Download the author's resume file (PDF preferred, fallback to other formats)."""
     try:
         # Look for resume file in server/data/resume/ directory
-        resume_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'resume')
+        resume_dir = DATA_DIR / "resume"
         
         if not os.path.exists(resume_dir):
             logger.error(f"Resume directory not found: {resume_dir}")
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail="Resume directory not found"
             )
         
@@ -685,7 +686,7 @@ async def download_resume():
         if not resume_file:
             logger.error(f"No resume files found in directory: {resume_dir}")
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail="Resume file not found. Please contact the author directly."
             )
         
@@ -694,7 +695,7 @@ async def download_resume():
         if not os.path.exists(resume_path):
             logger.error(f"Resume file not found at path: {resume_path}")
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail="Resume file not found"
             )
         
