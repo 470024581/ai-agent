@@ -144,7 +144,7 @@ function IntelligentAnalysis() {
       console.log('Setting result from completed execution:', executionResult);
       console.log('Result keys:', Object.keys(executionResult));
       setResult(executionResult);
-      setLoading(false);
+      setLoading(false); // Reset loading state when we get a result
     }
     // Don't reset result when executionResult becomes null
     // This allows the result to persist after execution completes
@@ -192,6 +192,10 @@ function IntelligentAnalysis() {
       setError('WebSocket连接未建立，请等待连接后重试');
       return;
     }
+
+    // Set loading state at the start
+    setLoading(true);
+    setError('');
 
     try {
       const response = await fetch('/api/v1/intelligent-analysis', {
