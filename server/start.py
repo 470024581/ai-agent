@@ -77,11 +77,11 @@ def check_dependencies():
         print("✓ All required packages are installed (including LangServe)")
         return True
 
-def start_server():
+def start_server(reload=True):
     """Start the FastAPI server"""
     print("\n🌟 Starting FastAPI server...")
     os.environ["PYTHONPATH"] = str(Path(__file__).parent)
-    uvicorn.run("src.main:app", host=config.HOST, port=config.PORT, reload=True)
+    uvicorn.run("src.main:app", host=config.HOST, port=config.PORT, reload=reload)
 
 def main():
     """Main startup function"""
@@ -145,7 +145,7 @@ def main():
         
         print(f"🔧 Python logging configured - Level: {log_level}")
         
-        start_server()
+        start_server(reload=args.reload)
     except KeyboardInterrupt:
         print("\n👋 Server stopped")
     except Exception as e:
