@@ -101,13 +101,30 @@ async def download_sample_data_file(filename: str):
 async def get_datasources_list():
     """Get a list of all data sources"""
     try:
-        datasources = await get_datasources()
+        datasources_dicts = await get_datasources()
+        
+        # Convert dictionary objects to DataSource models
+        datasources = []
+        for ds_dict in datasources_dicts:
+            try:
+                # Ensure the type is properly converted to DataSourceType enum
+                ds_dict['type'] = DataSourceType(ds_dict['type'])
+                datasource = DataSource(**ds_dict)
+                datasources.append(datasource)
+            except ValueError as ve:
+                logger.error(f"Invalid data source type '{ds_dict.get('type')}' for datasource ID {ds_dict.get('id')}: {ve}")
+                continue  # Skip invalid datasources
+            except Exception as pe:
+                logger.error(f"Error creating DataSource model for ID {ds_dict.get('id')}: {pe}")
+                continue  # Skip invalid datasources
+        
         return DataSourceListResponse(
             success=True,
             data=datasources,
             message=f"Retrieved {len(datasources)} data sources"
         )
     except Exception as e:
+        logger.error(f"Error in get_datasources_list: {e}")
         return DataSourceListResponse(
             success=False,
             error=f"Failed to retrieve data source list: {str(e)}",
@@ -495,10 +512,48 @@ async def query_endpoint(request: QueryRequest):
 async def process_query(query: str, datasource_id: int, execution_id: str) -> Dict[str, Any]:
     """Process an intelligent analysis query."""
     try:
-        # Get the datasource
-        datasource = await get_datasource(datasource_id)
+        # Get the active datasource
+        datasource = await get_active_datasource()
         if not datasource:
-            raise HTTPException(status_code=404, detail="Data source not found.")
+            raise HTTPException(status_code=404, detail="No active data source found. Please select or create a data source first.")
+        
+        # Check if the active datasource is properly configured for queries
+        ds_type = datasource.get('type')
+        ds_name = datasource.get('name', 'Unknown')
+        
+        # If it's a DEFAULT datasource without proper configuration, provide guidance
+        if ds_type == DataSourceType.DEFAULT.value:
+            # Default datasources should not be used for SQL queries anymore
+            error_msg = (
+                f"The active data source '{ds_name}' is a default data source that doesn't support queries. "
+                "Please create a new data source by uploading CSV/Excel files for SQL queries or "
+                "TXT/PDF/Word documents for knowledge-based queries, then activate it."
+            )
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # For SQL_TABLE_FROM_FILE datasources, check if they have a proper table
+        if ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value and not datasource.get('db_table_name'):
+            error_msg = (
+                f"The active data source '{ds_name}' is configured for SQL queries but doesn't have "
+                "an associated database table. Please upload a CSV or Excel file to this data source "
+                "and wait for processing to complete."
+            )
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # For HYBRID datasources, check if they have any processed files
+        if ds_type == DataSourceType.HYBRID.value:
+            # Get files for this datasource to check if any are completed
+            from .db import get_files_by_datasource
+            files = await get_files_by_datasource(datasource['id'])
+            completed_files = [f for f in files if f['processing_status'] == 'completed']
+            
+            if not completed_files:
+                error_msg = (
+                    f"The active data source '{ds_name}' is a hybrid data source but doesn't have "
+                    "any processed files. Please upload CSV/Excel files for SQL queries or "
+                    "TXT/PDF/Word documents for knowledge-based queries, and wait for processing to complete."
+                )
+                raise HTTPException(status_code=400, detail=error_msg)
             
         # Run the analysis
         result = await process_intelligent_query(
@@ -509,6 +564,8 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
         
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -5,12 +5,14 @@ import json
 import time
 import uuid
 import asyncio
+import re
 from typing import Dict, Any, List, Optional, TypedDict
 import logging
 import requests
 from langgraph.graph import StateGraph
 from .agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
 from .models import WorkflowEvent, WorkflowEventType, NodeStatus
+from .db import get_active_datasource  # Added to get active datasource
 
 logger = logging.getLogger(__name__)
 
@@ -29,37 +31,40 @@ class GraphState(TypedDict):
     error: Optional[str]
 
 def router_node(state: GraphState) -> GraphState:
-    """Router node: use LLM to determine if it's SQL or RAG requirement"""
+    """Router node: determine whether to use SQL or RAG based on user input"""
     user_input = state["user_input"]
     
     if not llm:
         logger.warning("LLM not available, using fallback rule-based routing")
-        # Fallback to rule-based judgment
-        sql_keywords = ["query", "statistics", "data", "chart", "sales", "inventory", "report", "analysis", "trends", "dashboard", "metrics", "numbers"]
-        rag_keywords = ["document", "knowledge", "explain", "what is", "how", "why", "tell me", "describe", "information", "content"]
+        # Fallback to simple rule-based routing
+        sql_keywords = [
+            "sales", "count", "sum", "average", "total", "report", "data", "table", 
+            "chart", "graph", "visualization", "trend", "statistics", "analysis",
+            "product", "inventory", "amount", "quantity", "value", "calculate",
+            "show me", "how many", "how much", "what is the"
+        ]
         
         if any(keyword in user_input.lower() for keyword in sql_keywords):
             query_type = "sql"
-        elif any(keyword in user_input.lower() for keyword in rag_keywords):
-            query_type = "rag"
         else:
-            query_type = "sql"  # Default
+            query_type = "rag"
     else:
-        # Use LLM for semantic routing
+        # Use LLM for semantic understanding
         try:
             prompt = f"""
-            Analyze the following user query and determine whether it should be handled by:
-            1. SQL - for data queries, statistics, reports, charts, sales analysis, inventory checks
-            2. RAG - for document-based questions, knowledge base queries, explanations
+            Analyze the following user query and determine the most appropriate processing method:
+            1. sql - Data analysis, statistics, calculations, reports, charts (requires structured data from database)
+            2. rag - Knowledge search, document questions, explanations (requires document search)
             
             User query: "{user_input}"
             
-            Respond with only "sql" or "rag" (lowercase, no explanation).
+            Based on the query content, should this be processed with 'sql' or 'rag'?
+            Only answer 'sql' or 'rag' (lowercase, no explanation needed).
             """
             
             response = llm.invoke(prompt)
             
-            # Handle different response types (Ollama returns string, OpenAI returns object)
+            # Handle different response types
             if hasattr(response, 'content'):
                 query_type = response.content.strip().lower()
             elif isinstance(response, str):
@@ -75,7 +80,13 @@ def router_node(state: GraphState) -> GraphState:
         except Exception as e:
             logger.error(f"Error in LLM routing: {e}, falling back to rule-based")
             # Fallback to rule-based
-            sql_keywords = ["query", "statistics", "data", "chart", "sales", "inventory", "report", "analysis", "trends", "dashboard", "metrics", "numbers"]
+            sql_keywords = [
+                "sales", "count", "sum", "average", "total", "report", "data", "table", 
+                "chart", "graph", "visualization", "trend", "statistics", "analysis",
+                "product", "inventory", "amount", "quantity", "value", "calculate",
+                "show me", "how many", "how much", "what is the"
+            ]
+            
             if any(keyword in user_input.lower() for keyword in sql_keywords):
                 query_type = "sql"
             else:
@@ -83,7 +94,7 @@ def router_node(state: GraphState) -> GraphState:
     
     logger.info(f"Router decision result: {query_type} for input: {user_input}")
     
-    return {"query_type": query_type}
+    return {**state, "query_type": query_type}
 
 def sql_classifier_node(state: GraphState) -> GraphState:
     """SQL classification node: use LLM to determine if it's data query or chart building"""
@@ -145,13 +156,30 @@ def sql_classifier_node(state: GraphState) -> GraphState:
     
     logger.info(f"SQL task type: {sql_task_type} for input: {user_input}")
     
-    return {"sql_task_type": sql_task_type}
+    # Return updated state while preserving existing state
+    return {**state, "sql_task_type": sql_task_type}
 
 async def sql_query_node(state: GraphState) -> GraphState:
     """SQL query node: execute SQL query and return results"""
     try:
         user_input = state["user_input"]
-        datasource = state["datasource"]
+        datasource = state.get("datasource")  # Get datasource from state
+        
+        if not datasource:
+            error_msg = "No data source found in state. Please select or create a data source first."
+            logger.error(error_msg)
+            return {
+                **state,
+                "error": error_msg,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "sql_query": {
+                        "status": "error",
+                        "timestamp": time.time(),
+                        "error": "No datasource in state"
+                    }
+                }
+            }
         
         # Call SQL query logic with improved error handling
         result = await get_query_from_sqltable_datasource(
@@ -165,8 +193,11 @@ async def sql_query_node(state: GraphState) -> GraphState:
             
             # Validate the result structure
             if not structured_data:
+                error_msg = "No structured data returned from query"
+                logger.error(error_msg)
                 return {
-                    "error": "No structured data returned from query",
+                    **state,
+                    "error": error_msg,
                     "node_outputs": {
                         **state.get("node_outputs", {}),
                         "sql_query": {
@@ -180,6 +211,7 @@ async def sql_query_node(state: GraphState) -> GraphState:
             logger.info(f"SQL query successful, data: {structured_data}")
             
             return {
+                **state,
                 "structured_data": structured_data,
                 "answer": result["answer"],
                 "node_outputs": {
@@ -200,6 +232,7 @@ async def sql_query_node(state: GraphState) -> GraphState:
             logger.error(f"SQL query failed: {error_msg}")
             
             return {
+                **state,
                 "error": error_msg,
                 "node_outputs": {
                     **state.get("node_outputs", {}),
@@ -214,6 +247,7 @@ async def sql_query_node(state: GraphState) -> GraphState:
         error_msg = f"Unexpected error in SQL query node: {str(e)}"
         logger.exception(error_msg)
         return {
+            **state,
             "error": error_msg,
             "node_outputs": {
                 **state.get("node_outputs", {}),
@@ -240,6 +274,7 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             # Ensure we have the required data for charting
             if not structured_data.get("rows"):
                 return {
+                    **state,
                     "error": "No data returned for chart generation",
                     "node_outputs": {
                         **state.get("node_outputs", {}),
@@ -255,6 +290,7 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             
             # Update state with chart data
             return {
+                **state,
                 "structured_data": structured_data,
                 "answer": result["answer"],
                 "node_outputs": {
@@ -274,6 +310,7 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             error_msg = result.get("error", "SQL chart data query failed")
             logger.error(f"SQL chart query failed: {error_msg}")
             return {
+                **state,
                 "error": error_msg,
                 "node_outputs": {
                     **state.get("node_outputs", {}),
@@ -288,6 +325,7 @@ async def sql_chart_node(state: GraphState) -> GraphState:
         error_msg = f"SQL chart node error: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return {
+            **state,
             "error": error_msg,
             "node_outputs": {
                 **state.get("node_outputs", {}),
@@ -308,10 +346,10 @@ def chart_config_node(state: GraphState) -> GraphState:
         # Generate chart configuration based on data and user requirements
         chart_config = generate_chart_config(structured_data, user_input)
         
-        return {"chart_config": chart_config}
+        return {**state, "chart_config": chart_config}
     except Exception as e:
         logger.error(f"Chart config node error: {e}")
-        return {"error": str(e)}
+        return {**state, "error": str(e)}
 
 async def rag_query_node(state: GraphState) -> GraphState:
     """RAG query node"""
@@ -319,81 +357,222 @@ async def rag_query_node(state: GraphState) -> GraphState:
         user_input = state["user_input"]
         datasource = state["datasource"]
         
+        # Call RAG query logic
         result = await perform_rag_query(user_input, datasource)
         
         if result["success"]:
             return {
+                **state,
                 "answer": result["answer"],
-                "structured_data": result.get("data", {})
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "rag_query": {
+                        "status": "completed",
+                        "timestamp": time.time(),
+                        "data": result.get("data", {})
+                    }
+                }
             }
         else:
-            return {"error": result.get("error", "RAG query failed")}
+            return {**state, "error": result.get("error", "RAG query failed")}
     except Exception as e:
         logger.error(f"RAG query node error: {e}")
-        return {"error": str(e)}
+        return {**state, "error": str(e)}
 
 def chart_rendering_node(state: GraphState) -> GraphState:
-    """Chart rendering node: call MCP service"""
+    """Chart rendering node: render chart from configuration"""
     try:
         chart_config = state.get("chart_config")
         if not chart_config:
-            return {"error": "Missing chart configuration"}
+            return {**state, "error": "Missing chart configuration"}
         
-        # Call QuickChart API to generate chart
+        # Generate chart image
         chart_image = generate_chart_image(chart_config)
         
-        return {"chart_image": chart_image}
+        return {**state, "chart_image": chart_image}
     except Exception as e:
-        logger.error(f"Chart rendering node error: {e}")
-        return {"error": str(e)}
+        logger.error(f"Chart rendering error: {e}")
+        return {**state, "error": str(e)}
 
 def llm_processing_node(state: GraphState) -> GraphState:
-    """Large model invocation node"""
+    """LLM processing node: process results with LLM for natural language response"""
     try:
-        if not llm:
-            logger.warning("LLM not available, returning original answer")
-            return state
-        
         user_input = state["user_input"]
-        # Consolidate all available information for the LLM
-        context_data = {
-            "user_query": user_input,
-            "structured_data": state.get("structured_data"),
-            "current_answer": state.get("answer"),
-            "chart_image_url": state.get("chart_image")
-        }
+        structured_data = state.get("structured_data")
+        chart_image = state.get("chart_image")
+        existing_answer = state.get("answer", "")
+        error = state.get("error")
         
-        # Use LLM to optimize the answer
-        prompt = f"""
-        You are an expert data analyst. Your task is to provide a comprehensive and insightful answer based on the user's query and the data provided.
-
-        User's question: \"{user_input}\"
+        # Debug logging
+        logger.info(f"LLM Processing Node - Input: {user_input}")
+        logger.info(f"LLM Processing Node - Has structured_data: {bool(structured_data)}")
+        logger.info(f"LLM Processing Node - Has chart_image: {bool(chart_image)}")
+        logger.info(f"LLM Processing Node - Existing answer: '{existing_answer}'")
+        logger.info(f"LLM Processing Node - Error: {error}")
         
-        Available context and data (some fields may be empty):
-        {json.dumps(context_data, ensure_ascii=False, indent=2)}
+        if structured_data:
+            logger.info(f"LLM Processing Node - Structured data keys: {list(structured_data.keys())}")
+            rows = structured_data.get("rows", [])
+            logger.info(f"LLM Processing Node - Number of rows: {len(rows)}")
+            if rows:
+                logger.info(f"LLM Processing Node - First row: {rows[0]}")
         
-        Please synthesize all the information to generate a final, natural language answer.
-        Requirements:
-        1. If a chart image URL is present, mention the chart in your answer (e.g., \"As shown in the chart above...\" or \"I have generated a chart for your reference.\").
-        2. Provide key insights, trends, or summaries based on the structured data.
-        3. If there's an existing answer, refine it; otherwise, generate a new one.
-        4. The final answer must be clear, concise, and directly address the user's question.
-        """
+        # If there's an error, provide a helpful response
+        if error:
+            final_answer = f"I encountered an issue while processing your request: {error}. Please try rephrasing your question or check if the data source is properly configured."
+            logger.info(f"LLM Processing Node - Returning error response: {final_answer}")
+            return {**state, "answer": final_answer}
         
-        response = llm.invoke(prompt)
+        # If there's already an answer from RAG, use it
+        if existing_answer and not structured_data and not chart_image:
+            logger.info(f"LLM Processing Node - Using existing RAG answer: {existing_answer}")
+            return {**state, "answer": existing_answer}
         
-        # Handle different response types
-        if hasattr(response, 'content'):
-            final_answer = response.content
-        elif isinstance(response, str):
-            final_answer = response
+        # For SQL results, generate a natural language response
+        if structured_data:
+            if chart_image:
+                final_answer = f"I've generated a chart to visualize the results for your query: '{user_input}'. The chart shows the data from your analysis."
+                logger.info(f"LLM Processing Node - Chart response: {final_answer}")
+            else:
+                # Generate intelligent text-based answer from structured data
+                rows = structured_data.get("rows", [])
+                columns = structured_data.get("columns", [])
+                executed_sql = structured_data.get("executed_sql", "")
+                
+                logger.info(f"LLM Processing Node - Processing SQL results: rows={len(rows)}, columns={columns}")
+                
+                if rows:
+                    logger.info("LLM Processing Node - Calling _generate_intelligent_sql_response")
+                    final_answer = _generate_intelligent_sql_response(user_input, rows, columns, executed_sql)
+                    logger.info(f"LLM Processing Node - Generated intelligent response: {final_answer[:200]}...")
+                else:
+                    final_answer = f"No data was found matching your query '{user_input}'. Please try a different question or check if the data exists."
+                    logger.info(f"LLM Processing Node - No rows response: {final_answer}")
         else:
-            final_answer = str(response)
-            
-        return {"answer": final_answer}
+            final_answer = existing_answer or f"I've processed your query '{user_input}' but couldn't generate specific results. Please try rephrasing your question."
+            logger.info(f"LLM Processing Node - Fallback response: {final_answer}")
+        
+        logger.info(f"LLM Processing Node - Final answer: {final_answer[:100]}...")
+        return {**state, "answer": final_answer}
     except Exception as e:
-        logger.error(f"LLM processing node error: {e}")
-        return {"error": f"LLM processing failed: {e}"}
+        logger.error(f"LLM processing error: {e}")
+        import traceback
+        logger.error(f"LLM processing traceback: {traceback.format_exc()}")
+        return {**state, "error": f"LLM processing failed: {e}"}
+
+def _generate_intelligent_sql_response(user_input: str, rows: list, columns: list, executed_sql: str = "") -> str:
+    """Generate intelligent natural language response from SQL results"""
+    try:
+        logger.info(f"_generate_intelligent_sql_response called with {len(rows)} rows, columns: {columns}")
+        
+        if not rows:
+            logger.info("No rows found, returning no results message")
+            return f"No results were found for your query: '{user_input}'"
+        
+        # Analyze the query type and data structure
+        query_lower = user_input.lower()
+        row_count = len(rows)
+        
+        logger.info(f"Query analysis: row_count={row_count}, query_lower='{query_lower}'")
+        
+        # Single value result
+        if row_count == 1 and len(rows[0]) == 1:
+            logger.info("Processing single value result")
+            value = list(rows[0].values())[0]
+            if isinstance(value, (int, float)):
+                formatted_value = f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
+            else:
+                formatted_value = str(value)
+            result = f"Based on your query '{user_input}', the result is: {formatted_value}"
+            logger.info(f"Single value result: {result}")
+            return result
+        
+        # Category-value pairs (like our average price case)
+        if row_count > 1 and len(columns) == 2:
+            logger.info("Processing category-value pairs")
+            # Check if this looks like category-value data
+            first_row = rows[0]
+            logger.info(f"First row structure: {first_row}")
+            
+            if 'category' in first_row and 'value' in first_row:
+                logger.info("Detected category-value structure, processing intelligent response")
+                # Sort by value for better presentation
+                sorted_rows = sorted(rows, key=lambda x: x.get('value', 0), reverse=True)
+                logger.info(f"Sorted rows: {sorted_rows}")
+                
+                response_lines = [f"Here are the results for '{user_input}':"]
+                
+                for i, row in enumerate(sorted_rows):
+                    category = row.get('category', 'Unknown')
+                    value = row.get('value', 0)
+                    
+                    # Format value based on the query context
+                    if 'price' in query_lower or 'cost' in query_lower or 'amount' in query_lower:
+                        formatted_value = f"${value:.2f}"
+                    elif 'percentage' in query_lower or 'percent' in query_lower:
+                        formatted_value = f"{value:.1f}%"
+                    elif isinstance(value, float):
+                        formatted_value = f"{value:.2f}"
+                    else:
+                        formatted_value = f"{value:,}"
+                    
+                    response_lines.append(f"• {category}: {formatted_value}")
+                
+                # Add insights for average/price queries
+                if 'average' in query_lower and 'price' in query_lower:
+                    logger.info("Adding price insights")
+                    highest = sorted_rows[0]
+                    lowest = sorted_rows[-1]
+                    response_lines.append(f"\nKey insights:")
+                    response_lines.append(f"• Highest average price: {highest['category']} (${highest['value']:.2f})")
+                    response_lines.append(f"• Lowest average price: {lowest['category']} (${lowest['value']:.2f})")
+                    
+                    price_diff = highest['value'] - lowest['value']
+                    response_lines.append(f"• Price range: ${price_diff:.2f}")
+                
+                result = "\n".join(response_lines)
+                logger.info(f"Category-value response generated: {result[:200]}...")
+                return result
+        
+        logger.info("Processing as generic structured data")
+        # Generic structured data response
+        if row_count <= 10:
+            # For small result sets, show details
+            response_lines = [f"Found {row_count} results for '{user_input}':"]
+            
+            for i, row in enumerate(rows):
+                if len(row) == 1:
+                    value = list(row.values())[0]
+                    response_lines.append(f"{i+1}. {value}")
+                else:
+                    # Multi-column row
+                    row_parts = []
+                    for key, value in row.items():
+                        if isinstance(value, (int, float)) and key.lower() in ['price', 'cost', 'amount', 'total']:
+                            formatted_value = f"${value:.2f}" if isinstance(value, float) else f"${value:,}"
+                        elif isinstance(value, float):
+                            formatted_value = f"{value:.2f}"
+                        elif isinstance(value, int):
+                            formatted_value = f"{value:,}"
+                        else:
+                            formatted_value = str(value)
+                        row_parts.append(f"{key}: {formatted_value}")
+                    response_lines.append(f"{i+1}. {', '.join(row_parts)}")
+            
+            result = "\n".join(response_lines)
+            logger.info(f"Generic detailed response: {result[:200]}...")
+            return result
+        else:
+            # For large result sets, provide summary
+            result = f"Found {row_count} results for '{user_input}'. The data contains {len(columns)} columns: {', '.join(columns)}. Use filters or more specific queries to narrow down the results."
+            logger.info(f"Large dataset summary: {result}")
+            return result
+    
+    except Exception as e:
+        logger.error(f"Error generating intelligent SQL response: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return f"I found {len(rows)} results for your query '{user_input}', but had trouble formatting the response. The data is available but the presentation failed."
 
 def validation_node(state: GraphState) -> GraphState:
     """Output validation node - Enhanced with LLM-based quality assessment"""
@@ -768,6 +947,7 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         values = []
         
         if not isinstance(data, dict) or "rows" not in data or not data["rows"]:
+            logger.error("No valid data found in extract_chart_data_with_llm_guidance")
             return labels, values
         
         rows = data["rows"]
@@ -777,6 +957,95 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         
         # Smart field detection based on data structure
         sample_row = rows[0] if rows else {}
+        logger.info(f"Processing sample row: {sample_row}, type: {type(sample_row)}")
+        
+        # Handle dictionary format with category/value keys (from parsed string results)
+        if isinstance(sample_row, dict) and "category" in sample_row and "value" in sample_row:
+            logger.info(f"Processing {len(rows)} rows of category-value data")
+            
+            # Use LLM to intelligently analyze the data and user intent
+            if llm:
+                try:
+                    # Prepare comprehensive data context for LLM
+                    sample_data = rows[:5]  # Use first 5 rows as sample
+                    sample_categories = [str(row.get("category", "")) for row in sample_data]
+                    sample_values = [row.get("value", 0) for row in sample_data]
+                    
+                    # Let LLM freely analyze without constraints
+                    analysis_prompt = f"""
+                    You are an expert data analyst. Analyze the following user request and data to determine the best processing strategy.
+                    
+                    USER REQUEST: "{user_input}"
+                    
+                    DATA CONTEXT:
+                    - Total records: {len(rows)}
+                    - Sample categories: {sample_categories}
+                    - Sample values: {sample_values}
+                    - First few records: {sample_data}
+                    
+                    Based on your expertise, provide a comprehensive analysis plan in JSON format. You have complete freedom to design the response structure. Consider:
+                    
+                    1. What type of data is this? (time series, categorical, hierarchical, etc.)
+                    2. What does the user want to achieve?
+                    3. How should the data be filtered, sorted, and limited?
+                    4. What would be the most meaningful way to present this data?
+                    
+                    Design your own JSON structure that best captures your analysis. Be creative and thorough.
+                    
+                    Return only valid JSON, no other text.
+                    """
+                    
+                    response = llm.invoke(analysis_prompt)
+                    
+                    # Parse LLM response
+                    if hasattr(response, 'content'):
+                        analysis_text = response.content
+                    elif isinstance(response, str):
+                        analysis_text = response
+                    else:
+                        analysis_text = str(response)
+                    
+                    # Extract JSON
+                    import json
+                    json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
+                    if json_match:
+                        intelligent_analysis = json.loads(json_match.group())
+                        logger.info(f"LLM dynamic analysis result: {intelligent_analysis}")
+                        
+                        # Apply LLM's custom analysis strategy
+                        processed_rows = _apply_dynamic_analysis_strategy(rows, intelligent_analysis, user_input)
+                        
+                    else:
+                        raise ValueError("No valid JSON found in LLM response")
+                        
+                except Exception as e:
+                    logger.warning(f"LLM dynamic analysis failed: {e}, using fallback detection")
+                    # Fallback to simple pattern detection
+                    intelligent_analysis = _fallback_data_analysis(sample_row, user_input, len(rows))
+                    processed_rows = _apply_standard_analysis_strategy(rows, intelligent_analysis)
+            else:
+                # No LLM available, use fallback
+                intelligent_analysis = _fallback_data_analysis(sample_row, user_input, len(rows))
+                processed_rows = _apply_standard_analysis_strategy(rows, intelligent_analysis)
+            
+            # Extract final labels and values
+            for row in processed_rows:
+                try:
+                    label = str(row["category"]) if row["category"] else f"Item{len(labels)+1}"
+                    value = float(row["value"]) if isinstance(row["value"], (int, float)) else 0
+                    
+                    labels.append(label)
+                    values.append(value)
+                    logger.info(f"Added data point: {label} -> {value}")
+                    
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(f"Error processing row: {e}")
+                    continue
+            
+            logger.info(f"Successfully extracted {len(labels)} data points using dynamic analysis")
+            return labels, values
+        
+        # Handle original logic for other data formats
         num_cols = len(sample_row) if isinstance(sample_row, (list, tuple)) else len(sample_row.keys()) if isinstance(sample_row, dict) else 0
         
         # For time series queries, intelligently detect time and value fields
@@ -1018,6 +1287,8 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         
     except Exception as e:
         logger.error(f"Error extracting chart data with LLM guidance: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return [], []
 
 def _detect_year_labels(labels: list) -> bool:
@@ -1222,6 +1493,13 @@ async def process_intelligent_query(
     
     from .websocket_manager import websocket_manager
     
+    if not datasource:
+        return {
+            "success": False,
+            "error": "No active data source found. Please select or create a data source first.",
+            "user_input": user_input
+        }
+    
     # Define workflow graph
     workflow = StateGraph(GraphState)
     
@@ -1300,9 +1578,15 @@ async def process_intelligent_query(
     initial_state = {
         "user_input": user_input,
         "datasource": datasource,
+        "query_type": "",  # Will be set by router_node
+        "sql_task_type": "",  # Will be set by sql_classifier_node
+        "structured_data": None,
+        "chart_config": None,
+        "chart_image": None,
+        "answer": "",
+        "quality_score": 10,
         "retry_count": 0,
-        "error": None,
-        "answer": ""
+        "error": None
     }
     
     config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}
@@ -1395,4 +1679,308 @@ async def process_intelligent_query(
         }
     finally:
         # Final cleanup - let routes.py handle this after sending completion event
-        logger.info(f"Execution {execution_id} finished or was terminated.") 
+        logger.info(f"Execution {execution_id} finished or was terminated.")
+
+def _fallback_data_analysis(sample_row: Dict[str, Any], user_input: str, total_rows: int) -> Dict[str, Any]:
+    """Fallback data analysis when LLM is not available or fails"""
+    try:
+        sample_category = str(sample_row.get("category", ""))
+        user_lower = user_input.lower()
+        
+        # Detect if it's time series data
+        is_date_format = bool(re.match(r'^\d{4}(-\d{2})?(-\d{2})?$', sample_category))
+        has_time_keywords = any(keyword in user_lower for keyword in [
+            'trend', 'monthly', 'weekly', 'yearly', 'over time', 'time series', 'quarterly'
+        ])
+        
+        is_time_series = is_date_format and has_time_keywords
+        
+        # Determine year filter
+        year_filter = None
+        if '2025' in user_input and '2024' not in user_input:
+            year_filter = "2025"
+        elif '2024' in user_input and '2025' not in user_input:
+            year_filter = "2024"
+        
+        # Determine sort strategy
+        if is_time_series:
+            sort_strategy = "chronological"
+        elif any(keyword in user_lower for keyword in ['top', 'highest', 'best', 'largest']):
+            sort_strategy = "value_desc"
+        elif any(keyword in user_lower for keyword in ['lowest', 'smallest', 'worst']):
+            sort_strategy = "value_asc"
+        else:
+            sort_strategy = "value_desc"  # Default
+        
+        # Determine data limit
+        if is_time_series:
+            data_limit = None  # No limit for time series
+        else:
+            data_limit = 10  # Limit for category data
+        
+        # Determine chart type
+        chart_type = "line" if is_time_series else "bar"
+        
+        return {
+            "is_time_series": is_time_series,
+            "data_type": "time_series" if is_time_series else "category_ranking",
+            "time_period_format": "YYYY-MM" if is_date_format else None,
+            "filter_criteria": {
+                "year_filter": year_filter,
+                "time_range": None
+            },
+            "sort_strategy": sort_strategy,
+            "data_limit": data_limit,
+            "chart_type_suggestion": chart_type
+        }
+    except Exception as e:
+        logger.error(f"Fallback analysis failed: {e}")
+        # Ultimate fallback
+        return {
+            "is_time_series": False,
+            "data_type": "general",
+            "time_period_format": None,
+            "filter_criteria": {"year_filter": None, "time_range": None},
+            "sort_strategy": "value_desc",
+            "data_limit": 10,
+            "chart_type_suggestion": "bar"
+        }
+
+def _apply_dynamic_analysis_strategy(rows: List[Dict], analysis: Dict[str, Any], user_input: str) -> List[Dict]:
+    """Apply LLM's custom analysis strategy with complete flexibility"""
+    try:
+        processed_rows = rows.copy()
+        logger.info(f"Applying dynamic strategy with analysis: {analysis}")
+        
+        # Let LLM's analysis guide the processing - be completely flexible
+        # The analysis can contain any structure the LLM designed
+        
+        # Generic filtering logic that adapts to any filter structure
+        if "filter" in analysis or "filtering" in analysis or "filters" in analysis:
+            filter_config = analysis.get("filter") or analysis.get("filtering") or analysis.get("filters")
+            processed_rows = _apply_flexible_filters(processed_rows, filter_config, user_input)
+        
+        # Generic sorting logic that adapts to any sort instruction
+        if "sort" in analysis or "sorting" in analysis or "order" in analysis:
+            sort_config = analysis.get("sort") or analysis.get("sorting") or analysis.get("order")
+            processed_rows = _apply_flexible_sorting(processed_rows, sort_config, user_input)
+        
+        # Generic limiting logic that adapts to any limit instruction
+        if "limit" in analysis or "top" in analysis or "max" in analysis or "count" in analysis:
+            limit_config = analysis.get("limit") or analysis.get("top") or analysis.get("max") or analysis.get("count")
+            processed_rows = _apply_flexible_limiting(processed_rows, limit_config, user_input)
+        
+        # Generic transformation logic for any custom processing
+        if "transform" in analysis or "processing" in analysis or "format" in analysis:
+            transform_config = analysis.get("transform") or analysis.get("processing") or analysis.get("format")
+            processed_rows = _apply_flexible_transformations(processed_rows, transform_config, user_input)
+        
+        logger.info(f"Dynamic strategy applied, {len(processed_rows)} rows after processing")
+        return processed_rows
+        
+    except Exception as e:
+        logger.error(f"Error applying dynamic strategy: {e}")
+        return rows  # Return original rows if processing fails
+
+
+def _apply_standard_analysis_strategy(rows: List[Dict], analysis: Dict[str, Any]) -> List[Dict]:
+    """Apply standard analysis strategy based on fallback detection"""
+    processed_rows = rows.copy()
+    
+    # Apply filtering based on analysis
+    filter_criteria = analysis.get("filter_criteria", {})
+    year_filter = filter_criteria.get("year_filter")
+    time_range = filter_criteria.get("time_range")
+    
+    if year_filter:
+        processed_rows = [row for row in processed_rows 
+                        if str(row.get("category", "")).startswith(year_filter)]
+        logger.info(f"Applied year filter '{year_filter}': {len(processed_rows)} rows remaining")
+    
+    if time_range and analysis.get("is_time_series"):
+        start_period = time_range.get("start")
+        end_period = time_range.get("end")
+        if start_period and end_period:
+            processed_rows = [row for row in processed_rows 
+                            if start_period <= str(row.get("category", "")) <= end_period]
+            logger.info(f"Applied time range filter {start_period} to {end_period}: {len(processed_rows)} rows remaining")
+    
+    # Apply sorting based on analysis
+    sort_strategy = analysis.get("sort_strategy", "value_desc")
+    
+    if sort_strategy == "chronological":
+        def sort_time_key(row):
+            category = str(row.get("category", ""))
+            try:
+                if re.match(r'^\d{4}-\d{2}$', category):  # YYYY-MM
+                    year, month = category.split('-')
+                    return int(year) * 100 + int(month)
+                elif re.match(r'^\d{4}-\d{2}-\d{2}$', category):  # YYYY-MM-DD
+                    return category  # String comparison works for ISO dates
+                elif re.match(r'^\d{4}$', category):  # YYYY
+                    return int(category)
+                else:
+                    return category
+            except:
+                return category
+                
+        processed_rows = sorted(processed_rows, key=sort_time_key)
+        logger.info("Applied chronological sorting")
+        
+    elif sort_strategy == "value_desc":
+        processed_rows = sorted(processed_rows, key=lambda x: x.get('value', 0), reverse=True)
+        logger.info("Applied value descending sorting")
+        
+    elif sort_strategy == "value_asc":
+        processed_rows = sorted(processed_rows, key=lambda x: x.get('value', 0))
+        logger.info("Applied value ascending sorting")
+        
+    elif sort_strategy == "alphabetical":
+        processed_rows = sorted(processed_rows, key=lambda x: str(x.get('category', '')))
+        logger.info("Applied alphabetical sorting")
+    
+    # Apply data limiting based on analysis
+    data_limit = analysis.get("data_limit")
+    if data_limit and len(processed_rows) > data_limit:
+        processed_rows = processed_rows[:data_limit]
+        logger.info(f"Limited data to {data_limit} points")
+    
+    return processed_rows
+
+
+def _apply_flexible_filters(rows: List[Dict], filter_config: Any, user_input: str) -> List[Dict]:
+    """Apply flexible filtering based on LLM's filter configuration"""
+    if not filter_config:
+        return rows
+    
+    try:
+        # Handle different filter config structures
+        if isinstance(filter_config, dict):
+            for filter_key, filter_value in filter_config.items():
+                if filter_key.lower() in ['year', 'year_filter']:
+                    rows = [row for row in rows if str(filter_value) in str(row.get("category", ""))]
+                    logger.info(f"Applied flexible year filter '{filter_value}': {len(rows)} rows remaining")
+                elif filter_key.lower() in ['range', 'time_range']:
+                    if isinstance(filter_value, dict) and 'start' in filter_value and 'end' in filter_value:
+                        start, end = filter_value['start'], filter_value['end']
+                        rows = [row for row in rows if start <= str(row.get("category", "")) <= end]
+                        logger.info(f"Applied flexible range filter {start}-{end}: {len(rows)} rows remaining")
+        elif isinstance(filter_config, str):
+            # Handle string-based filter instructions
+            if any(year in filter_config for year in ['2025', '2024', '2023']):
+                for year in ['2025', '2024', '2023']:
+                    if year in filter_config:
+                        rows = [row for row in rows if year in str(row.get("category", ""))]
+                        logger.info(f"Applied string-based year filter '{year}': {len(rows)} rows remaining")
+                        break
+        
+        return rows
+        
+    except Exception as e:
+        logger.warning(f"Error applying flexible filters: {e}")
+        return rows
+
+
+def _apply_flexible_sorting(rows: List[Dict], sort_config: Any, user_input: str) -> List[Dict]:
+    """Apply flexible sorting based on LLM's sort configuration"""
+    if not sort_config:
+        return rows
+    
+    try:
+        if isinstance(sort_config, str):
+            sort_config = sort_config.lower()
+            if 'time' in sort_config or 'chronolog' in sort_config or 'date' in sort_config:
+                # Apply chronological sorting
+                def sort_time_key(row):
+                    category = str(row.get("category", ""))
+                    try:
+                        if re.match(r'^\d{4}-\d{2}$', category):
+                            year, month = category.split('-')
+                            return int(year) * 100 + int(month)
+                        elif re.match(r'^\d{4}$', category):
+                            return int(category)
+                        else:
+                            return category
+                    except:
+                        return category
+                rows = sorted(rows, key=sort_time_key)
+                logger.info("Applied flexible chronological sorting")
+            elif 'desc' in sort_config or 'high' in sort_config or 'large' in sort_config:
+                rows = sorted(rows, key=lambda x: x.get('value', 0), reverse=True)
+                logger.info("Applied flexible descending value sorting")
+            elif 'asc' in sort_config or 'low' in sort_config or 'small' in sort_config:
+                rows = sorted(rows, key=lambda x: x.get('value', 0))
+                logger.info("Applied flexible ascending value sorting")
+            elif 'alpha' in sort_config or 'name' in sort_config:
+                rows = sorted(rows, key=lambda x: str(x.get('category', '')))
+                logger.info("Applied flexible alphabetical sorting")
+        
+        elif isinstance(sort_config, dict):
+            # Handle dict-based sort config
+            if sort_config.get('by') == 'value' and sort_config.get('order') == 'desc':
+                rows = sorted(rows, key=lambda x: x.get('value', 0), reverse=True)
+            elif sort_config.get('by') == 'value' and sort_config.get('order') == 'asc':
+                rows = sorted(rows, key=lambda x: x.get('value', 0))
+            elif sort_config.get('by') == 'time' or sort_config.get('by') == 'chronological':
+                def sort_time_key(row):
+                    category = str(row.get("category", ""))
+                    try:
+                        if re.match(r'^\d{4}-\d{2}$', category):
+                            year, month = category.split('-')
+                            return int(year) * 100 + int(month)
+                        elif re.match(r'^\d{4}$', category):
+                            return int(category)
+                        else:
+                            return category
+                    except:
+                        return category
+                rows = sorted(rows, key=sort_time_key)
+        
+        return rows
+        
+    except Exception as e:
+        logger.warning(f"Error applying flexible sorting: {e}")
+        return rows
+
+
+def _apply_flexible_limiting(rows: List[Dict], limit_config: Any, user_input: str) -> List[Dict]:
+    """Apply flexible limiting based on LLM's limit configuration"""
+    if not limit_config:
+        return rows
+    
+    try:
+        if isinstance(limit_config, int):
+            return rows[:limit_config]
+        elif isinstance(limit_config, str):
+            # Extract number from string
+            numbers = re.findall(r'\d+', limit_config)
+            if numbers:
+                limit = int(numbers[0])
+                logger.info(f"Applied flexible limit: {limit}")
+                return rows[:limit]
+        elif isinstance(limit_config, dict):
+            if 'count' in limit_config:
+                limit = int(limit_config['count'])
+                return rows[:limit]
+        
+        return rows
+        
+    except Exception as e:
+        logger.warning(f"Error applying flexible limiting: {e}")
+        return rows
+
+
+def _apply_flexible_transformations(rows: List[Dict], transform_config: Any, user_input: str) -> List[Dict]:
+    """Apply flexible transformations based on LLM's transformation configuration"""
+    if not transform_config:
+        return rows
+    
+    try:
+        # This can be extended to handle any custom transformations the LLM suggests
+        # For now, just log and return as-is
+        logger.info(f"Transformation config received: {transform_config}")
+        return rows
+        
+    except Exception as e:
+        logger.warning(f"Error applying flexible transformations: {e}")
+        return rows 
