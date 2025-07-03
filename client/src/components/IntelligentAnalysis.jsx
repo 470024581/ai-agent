@@ -193,36 +193,28 @@ function IntelligentAnalysis() {
       return;
     }
 
-    setLoading(true);
-    setError('');
-    // Only reset result when starting a new query
-    setResult(null);
-    
     try {
-      const response = await fetch('/api/v1/intelligent-analysis', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: query.trim(),
-          datasource_id: activeDataSource.id,
-          client_id: getClientId(),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      setLoading(true);
+      setError('');
+      // Only reset result when starting a new query
+      setResult(null);
       
-      const data = await response.json();
-      if (data.error) {
-        setError(data.error);
-        setLoading(false);
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      setError(error.message);
+      // Get WebSocket client ID
+      const clientId = getClientId();
+      
+      // Start workflow execution
+      const executionData = await dispatch(startExecution({ 
+        query,
+        clientId,
+        dataSourceId: activeDataSource?.id
+      })).unwrap();
+      
+      // Store execution ID
+      setExecutionId(executionData.executionId);
+      
+    } catch (err) {
+      console.error('Query execution error:', err);
+      setError(err.message || t('intelligentAnalysis.queryError'));
       setLoading(false);
     }
   };

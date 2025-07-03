@@ -511,15 +511,15 @@ async def save_file_info(filename: str, original_filename: str, file_type: str,
         conn.close()
 
 async def get_files_by_datasource(datasource_id: int) -> List[Dict[str, Any]]:
-    """Get all files for a specific datasource"""
+    """Fetch all files associated with a specific data source"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         cursor.execute('''
-            SELECT id, filename, original_filename, file_type, file_size,
-                   processing_status, processed_chunks, error_message,
-                   uploaded_at, processed_at
+            SELECT id, filename, original_filename, file_type, file_size, 
+                   datasource_id, processing_status, processed_chunks, 
+                   error_message, uploaded_at, processed_at
             FROM files 
             WHERE datasource_id = ?
             ORDER BY uploaded_at DESC
@@ -534,6 +534,7 @@ async def get_files_by_datasource(datasource_id: int) -> List[Dict[str, Any]]:
                 'original_filename': row['original_filename'],
                 'file_type': row['file_type'],
                 'file_size': row['file_size'],
+                'datasource_id': row['datasource_id'],
                 'processing_status': row['processing_status'],
                 'processed_chunks': row['processed_chunks'],
                 'error_message': row['error_message'],
