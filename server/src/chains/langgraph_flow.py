@@ -643,8 +643,14 @@ def validation_node(state: GraphState) -> GraphState:
         # Call LLM for evaluation
         try:
             evaluation_result = llm.invoke(evaluation_prompt)
-            # Parse the JSON response
-            evaluation_data = json.loads(evaluation_result)
+            # Handle different response formats and parse the JSON response
+            if hasattr(evaluation_result, 'content'):
+                evaluation_text = evaluation_result.content
+            elif isinstance(evaluation_result, str):
+                evaluation_text = evaluation_result
+            else:
+                evaluation_text = str(evaluation_result)
+            evaluation_data = json.loads(evaluation_text)
             scores = evaluation_data["scores"]
             feedback = evaluation_data["feedback"]
         except Exception as e:

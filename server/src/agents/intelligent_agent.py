@@ -460,12 +460,20 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         try:
             # Execute query with timeout from config
             sql_response = await asyncio.wait_for(
-                llm.agenerate([sql_generation_prompt]),
+                llm.ainvoke(sql_generation_prompt),
                 timeout=Config.LLM_TIMEOUT
             )
             
-            # Extract SQL from response
-            sql = sql_response.generations[0][0].text.strip()
+            # Extract SQL from response - handle different LLM response formats
+            if hasattr(sql_response, 'content'):
+                # OpenAI/OpenRouter format
+                sql = sql_response.content.strip()
+            elif hasattr(sql_response, 'text'):
+                # Some LLM formats
+                sql = sql_response.text.strip()
+            else:
+                # Fallback - treat as string
+                sql = str(sql_response).strip()
             
             # Clean and validate SQL
             clean_sql = _clean_sql_statement(sql)
@@ -828,12 +836,20 @@ async def get_query_from_sqltable_datasource(
         try:
             # Execute query with timeout from config
             sql_response = await asyncio.wait_for(
-                llm.agenerate([sql_generation_prompt]),
+                llm.ainvoke(sql_generation_prompt),
                 timeout=Config.LLM_TIMEOUT
             )
             
-            # Extract SQL from response
-            sql = sql_response.generations[0][0].text.strip()
+            # Extract SQL from response - handle different LLM response formats
+            if hasattr(sql_response, 'content'):
+                # OpenAI/OpenRouter format
+                sql = sql_response.content.strip()
+            elif hasattr(sql_response, 'text'):
+                # Some LLM formats
+                sql = sql_response.text.strip()
+            else:
+                # Fallback - treat as string
+                sql = str(sql_response).strip()
             
             # Clean and validate SQL
             clean_sql = _clean_sql_statement(sql)

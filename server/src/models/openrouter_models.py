@@ -109,9 +109,15 @@ def test_model(config_path: str = '../config/config.py'): # Adjusted path
         # Test simple query
         response = llm.invoke("Hello! Please respond with 'OpenRouter connection successful.'")
         
+        # Handle different response formats
+        if hasattr(response, 'content'):
+            response_text = response.content
+        else:
+            response_text = str(response)
+        
         print("✅ Connection successful!")
         print(f"📝 Model: {config_module.OPENAI_MODEL}")
-        print(f"💬 Response: {response.content}")
+        print(f"💬 Response: {response_text}")
         
     except FileNotFoundError:
         print(f"❌ Configuration file not found: {config_path}")
