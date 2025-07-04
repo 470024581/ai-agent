@@ -10,7 +10,7 @@ function App() {
       <Header />
       <main className="container mx-auto p-6">
         <Routes>
-          <Route path="/" element={<Navigate replace to="/query" />} />
+          <Route path="/" element={<Navigate replace to="/intelligent-analysis" />} />
           <Route path="/query" element={<QueryForm />} />
           <Route path="/intelligent-analysis" element={<IntelligentAnalysis />} />
           <Route path="/datasources" element={<DataSourceManager />} />
