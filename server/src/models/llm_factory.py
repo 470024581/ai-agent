@@ -47,6 +47,8 @@ class LLMFactory:
                 llm = cls._create_openrouter_llm(ai_config)
             elif provider == "ollama":
                 llm = cls._create_ollama_llm(ai_config)
+            elif provider == "dify":
+                llm = cls._create_dify_llm(ai_config)
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
             
@@ -140,9 +142,104 @@ class LLMFactory:
             raise
     
     @classmethod
+    def _create_dify_llm(cls, ai_config: Dict[str, Any]) -> BaseLanguageModel:
+        """Create Dify.ai LLM instance"""
+        try:
+            from langchain_community.llms import LlamaCpp
+            from langchain_core.language_models.llms import LLM
+            from langchain_core.callbacks.manager import CallbackManagerForLLMRun
+            from typing import Optional, List, Any
+            import requests
+            import json
+            
+            class DifyLLM(LLM):
+                """Custom Dify.ai LLM wrapper"""
+                
+                api_key: str
+                base_url: str
+                user: Optional[str] = None
+                model: str = "gpt-3.5-turbo"
+                temperature: float = 0.0
+                max_tokens: int = 2048
+                timeout: int = 30
+                
+                class Config:
+                    """Pydantic configuration"""
+                    arbitrary_types_allowed = True
+                
+                @property
+                def _llm_type(self) -> str:
+                    return "dify"
+                
+                def _call(
+                    self,
+                    prompt: str,
+                    stop: Optional[List[str]] = None,
+                    run_manager: Optional[CallbackManagerForLLMRun] = None,
+                    **kwargs: Any,
+                ) -> str:
+                    """Call Dify.ai API"""
+                    headers = {
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    if self.user:
+                        headers["User"] = self.user
+                    
+                    # Dify.ai API endpoint for chat completions
+                    url = f"{self.base_url.rstrip('/')}/chat-messages"
+                    
+                    data = {
+                        "inputs": {},
+                        "query": prompt,
+                        "response_mode": "blocking",
+                        "user": self.user or "default-user"
+                    }
+                    
+                    try:
+                        response = requests.post(
+                            url,
+                            headers=headers,
+                            json=data,
+                            timeout=self.timeout
+                        )
+                        response.raise_for_status()
+                        
+                        result = response.json()
+                        return result.get("answer", "")
+                        
+                    except Exception as e:
+                        logger.error(f"Dify.ai API call failed: {e}")
+                        raise
+            
+            # Create Dify LLM instance
+            llm = DifyLLM(
+                api_key=ai_config["api_key"],
+                base_url=ai_config["base_url"],
+                user=ai_config.get("user"),
+                model=ai_config["model"],
+                temperature=ai_config.get("temperature", 0.0),
+                max_tokens=ai_config.get("max_tokens", 2048),
+                timeout=ai_config.get("timeout", 30)
+            )
+            
+            logger.info(f"Dify.ai LLM initialized successfully - Model: {ai_config['model']}, Base URL: {ai_config['base_url']}")
+            return llm
+            
+        except Exception as e:
+            logger.error(f"Dify.ai LLM initialization failed: {e}")
+            raise
+    
+    @classmethod
     def _verify_llm_connection(cls, llm: BaseLanguageModel, provider: str) -> bool:
         """Verify LLM connection"""
         try:
+            # For Dify, skip connection verification as it requires specific app configuration
+            if provider == "dify":
+                logger.info(f"Dify LLM connection verification skipped (requires app-specific configuration)")
+                return True
+            
             # Send simple test message
             test_prompt = "Hello"
             response = llm.invoke(test_prompt)

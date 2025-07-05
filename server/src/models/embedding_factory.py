@@ -50,6 +50,8 @@ class EmbeddingFactory:
                 embeddings = cls._create_huggingface_embeddings(embedding_config)
             elif provider == "ollama":
                 embeddings = cls._create_ollama_embeddings(embedding_config)
+            elif provider == "dify":
+                embeddings = cls._create_dify_embeddings(embedding_config)
             else:
                 raise ValueError(f"Unsupported embedding provider: {provider}")
             
@@ -170,6 +172,31 @@ class EmbeddingFactory:
             raise
         except Exception as e:
             logger.error(f"Ollama embeddings initialization failed: {e}")
+            raise
+    
+    @classmethod
+    def _create_dify_embeddings(cls, embedding_config: Dict[str, Any]) -> Embeddings:
+        """Create Dify.ai embeddings instance"""
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            
+            # Dify.ai uses OpenAI-compatible API for embeddings
+            kwargs = {
+                "model": embedding_config["model"],
+                "openai_api_key": embedding_config["api_key"],
+                "openai_api_base": embedding_config["base_url"],
+            }
+            
+            # Add custom headers for Dify if user is provided
+            if embedding_config.get("user"):
+                kwargs["default_headers"] = {"User": embedding_config["user"]}
+            
+            embeddings = OpenAIEmbeddings(**kwargs)
+            logger.info(f"Dify.ai embeddings initialized successfully - Model: {embedding_config['model']}, Base URL: {embedding_config['base_url']}")
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"Dify.ai embeddings initialization failed: {e}")
             raise
     
     @classmethod

@@ -24,14 +24,14 @@ class Config:
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
     # LLM configuration - Multi-provider support
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai, openrouter, ollama
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai, openrouter, ollama, dify
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Unified model control
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
     
     # Embedding configuration
-    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface, dify
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "512"))
     EMBEDDING_CACHE_DIR: Path = DATA_DIR / "embeddings_cache"
@@ -48,6 +48,16 @@ class Config:
     # Ollama configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+    
+    # Dify.ai configuration
+    DIFY_API_KEY: Optional[str] = os.getenv("DIFY_API_KEY")
+    DIFY_BASE_URL: Optional[str] = os.getenv("DIFY_BASE_URL")
+    DIFY_USER: Optional[str] = os.getenv("DIFY_USER")
+    # Dify embedding use openai api key and base url
+    DIFY_EMBEDDING_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    DIFY_EMBEDDING_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
+    DIFY_EMBEDDING_USER: Optional[str] = os.getenv("DIFY_EMBEDDING_USER")
+    DIFY_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     
     # CORS configuration
     CORS_ORIGINS: list[str] = [
@@ -127,8 +137,23 @@ class Config:
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT
             }
+        elif provider == "dify":
+            if not cls.DIFY_API_KEY:
+                raise ValueError("LLM_PROVIDER is set to dify, but DIFY_API_KEY is not configured")
+            if not cls.DIFY_BASE_URL:
+                raise ValueError("LLM_PROVIDER is set to dify, but DIFY_BASE_URL is not configured")
+            return {
+                "provider": "dify",
+                "api_key": cls.DIFY_API_KEY,
+                "base_url": cls.DIFY_BASE_URL,
+                "user": cls.DIFY_USER,
+                "model": cls.LLM_MODEL,
+                "temperature": cls.LLM_TEMPERATURE,
+                "max_tokens": cls.LLM_MAX_TOKENS,
+                "timeout": cls.LLM_TIMEOUT
+            }
         else:
-            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama")
+            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama, dify")
     
     @classmethod
     def get_embedding_config(cls) -> dict:
@@ -167,8 +192,21 @@ class Config:
                 "dimension": cls.EMBEDDING_DIMENSION,
                 "cache_dir": cls.EMBEDDING_CACHE_DIR
             }
+        elif provider == "dify":
+            if not cls.DIFY_EMBEDDING_API_KEY:
+                raise ValueError("EMBEDDING_PROVIDER is set to dify, but DIFY_EMBEDDING_API_KEY is not configured")
+            if not cls.DIFY_EMBEDDING_BASE_URL:
+                raise ValueError("EMBEDDING_PROVIDER is set to dify, but DIFY_EMBEDDING_BASE_URL is not configured")
+            return {
+                "provider": "dify",
+                "api_key": cls.DIFY_EMBEDDING_API_KEY,
+                "base_url": cls.DIFY_EMBEDDING_BASE_URL,
+                "user": cls.DIFY_EMBEDDING_USER,
+                "model": cls.DIFY_EMBEDDING_MODEL,
+                "dimension": cls.EMBEDDING_DIMENSION
+            }
         else:
-            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama")
+            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama, dify")
     
     @classmethod
     def is_development(cls) -> bool:
