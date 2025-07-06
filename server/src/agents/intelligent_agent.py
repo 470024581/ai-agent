@@ -419,6 +419,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         Available tables: {available_tables}
         Table schema: {schema_info}
 
+        NOTE: Ignore any year in the table name; data may span multiple years. Always filter using the date column to satisfy the query.\n        
         **CRITICAL ANALYSIS**: This query appears to be a {'TIME SERIES/TREND' if is_trend_query else 'STANDARD'} query.
 
         Please generate a SQLite query to answer the user's question. The query should:
@@ -795,6 +796,7 @@ async def get_query_from_sqltable_datasource(
         Available tables: {available_tables}
         Table schema: {schema_info}
 
+        NOTE: Ignore any year in the table name; data may span multiple years. Always filter using the date column to satisfy the query.\n        
         **CRITICAL ANALYSIS**: This query appears to be a {'TIME SERIES/TREND' if is_trend_query else 'STANDARD'} query.
 
         Please generate a SQLite query to answer the user's question. The query should:
