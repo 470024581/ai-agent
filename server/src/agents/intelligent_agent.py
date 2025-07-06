@@ -260,7 +260,7 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
                     "content_preview": doc_source.page_content[:200] + "..." # Preview of content
                 })
 
-        logger.info(f"RAG query successful. Answer: {answer[:100]}... Sources: {len(source_documents_data)}")
+        logger.info(f"RAG query successful. Answer: {answer[:200]}... Sources: {len(source_documents_data)}")
         return {
             "query": query,
             "query_type": "rag",
