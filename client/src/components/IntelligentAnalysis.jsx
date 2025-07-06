@@ -193,9 +193,13 @@ function IntelligentAnalysis() {
       return;
     }
 
-    // Set loading state at the start
+    // Clear previous results and set loading state at the start
+    setResult(null);
     setLoading(true);
     setError('');
+    
+    // Reset Redux execution state
+    dispatch(resetCurrentExecution());
 
     try {
       const response = await fetch('/api/v1/intelligent-analysis', {
@@ -228,6 +232,11 @@ function IntelligentAnalysis() {
 
   const handleExampleClick = (exampleQuery) => {
     setQuery(exampleQuery);
+    // Clear previous results when selecting a new example
+    setResult(null);
+    setError('');
+    // Also reset Redux execution state
+    dispatch(resetCurrentExecution());
   };
 
   // Data formatting utilities for node details
