@@ -232,11 +232,6 @@ function IntelligentAnalysis() {
 
   const handleExampleClick = (exampleQuery) => {
     setQuery(exampleQuery);
-    // Clear previous results when selecting a new example
-    setResult(null);
-    setError('');
-    // Also reset Redux execution state
-    dispatch(resetCurrentExecution());
   };
 
   // Data formatting utilities for node details
