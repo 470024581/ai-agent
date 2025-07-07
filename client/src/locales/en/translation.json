@@ -348,7 +348,7 @@
       },
       "links": {
         "github": "GitHub Project",
-        "youtube": "YouTube Demo (Coming Soon)"
+        "youtube": "YouTube Demo"
       }
     },
     "author": {
@@ -360,7 +360,7 @@
       "downloadResume": "Download Resume",
       "introduction": {
         "title": "Personal Introduction",
-        "content": "I have over 10 years of software development experience, covering projects in frontend, backend, big data, machine learning and other fields. Currently pursuing an IT Master's degree at the University of Auckland. During this period, I mainly research AI Agent applications and hope to find a related job."
+        "content": "I have over 10 years of software development experience, covering projects in frontend, backend, big data, machine learning, and other domains. I am currently pursuing a Master's degree in Information Technology at the University of Auckland, and expect to graduate in November 2025. During my postgraduate studies, I have been primarily focused on full-stack development for AI Agent applications, and I am actively seeking a related position in this field."
       }
     }
   },

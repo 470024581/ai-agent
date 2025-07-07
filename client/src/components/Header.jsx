@@ -219,9 +219,11 @@ function Header() {
                       <FaGithub className="h-4 w-4" />
                       <span>{t('about.projectInfo.links.github')}</span>
                     </a>
-                    <a 
-                      href="#" 
-                      className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors cursor-not-allowed opacity-50"
+                    <a
+                      href="https://youtu.be/J6N-f-0Z4jE"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors"
                     >
                       <FaYoutube className="h-4 w-4" />
                       <span>{t('about.projectInfo.links.youtube')}</span>
