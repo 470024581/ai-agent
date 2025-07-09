@@ -772,28 +772,7 @@ function IntelligentAnalysis() {
             );
           })}
           
-          {/* Legend */}
-          <div className="absolute bottom-2 right-2 bg-white dark:bg-gray-800 rounded-lg p-2 border shadow-sm z-20">
-            <h6 className="text-xs font-medium mb-1">Legend</h6>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-1"></div>
-                <span>Start/End</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-orange-500 rounded-full mr-1"></div>
-                <span>Decision</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-purple-500 rounded-full mr-1"></div>
-                <span>Validation</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-2 h-2 bg-red-500 rounded-full mr-1"></div>
-                <span>Retry</span>
-              </div>
-            </div>
-          </div>
+          {/* Legend removed as per user request */}
         </div>
       </div>
     );

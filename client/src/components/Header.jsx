@@ -220,7 +220,7 @@ function Header() {
                       <span>{t('about.projectInfo.links.github')}</span>
                     </a>
                     <a
-                      href="https://youtu.be/J6N-f-0Z4jE"
+                      href="https://youtu.be/0t3gfS5ls8U"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors"
