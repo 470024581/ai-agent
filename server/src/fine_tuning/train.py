@@ -10,9 +10,10 @@ from transformers import (
 from peft import LoraConfig, get_peft_model
 
 from .data import load_finetune_dataset, build_tokenize_fn
+import torch
 
 
-DEFAULT_MODEL = "EleutherAI/gpt-neo-125M"
+DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "fine_tuning")
 OUTPUT_DIR = DATA_DIR  # Save weights to server/data/fine_tuning
 
@@ -31,28 +32,53 @@ def finetune_lora(
     lora_r: int = 8,  # Increase LoRA rank
     lora_alpha: int = 32,  # Increase alpha
     lora_dropout: float = 0.1,  # Increase dropout
+    quantize: str = "none",  # none | bnb_int8 | bnb_int4 (requires CUDA)
 ) -> str:
     """Run LoRA fine-tuning and return weights output directory."""
     os.makedirs(output_dir, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # GPT-Neo may need pad_token; use eos_token as pad if missing
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, trust_remote_code=True)
+    # Ensure pad_token exists; use eos_token as pad if missing
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    # Optional quantization-aware loading (QLoRA) if CUDA is available
+    model = None
+    if quantize in ("bnb_int8", "bnb_int4") and torch.cuda.is_available():
+        try:
+            from transformers import BitsAndBytesConfig
+            if quantize == "bnb_int8":
+                bnb_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
+            else:
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+        except Exception:
+            # Fallback to regular FP32 on failure
+            model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True)
 
     # Dataset
     train_ds = load_finetune_dataset(data_dir)
     tokenize_fn = build_tokenize_fn(tokenizer, max_length=max_length)
     tokenized_train = train_ds.map(tokenize_fn, batched=True, remove_columns=train_ds.column_names)
 
-    # LoRA config
-    # GPT-Neo does not have "query_key_value"; use proj names instead
+    # LoRA config (Mistral attention projections)
     lora_config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
-        target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         lora_dropout=lora_dropout,
         bias="none",
         task_type="CAUSAL_LM",
@@ -105,6 +131,7 @@ def run_cli():
     parser.add_argument("--lora_r", type=int, default=4)
     parser.add_argument("--lora_alpha", type=int, default=16)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--quantize", type=str, default="none", choices=["none", "bnb_int8", "bnb_int4"], help="Model loading quantization (CUDA only for bnb)")
 
     args = parser.parse_args()
 
@@ -122,6 +149,7 @@ def run_cli():
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        quantize=args.quantize,
     )
 
     print(f"LoRA weights saved to: {weights_dir}")
