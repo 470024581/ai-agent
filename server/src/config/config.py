@@ -10,6 +10,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SERVER_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = SERVER_ROOT / "data"
 
+# Load environment variables from .env files if present (CLI runs may not preload them)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    for _candidate in [
+        PROJECT_ROOT / ".env",
+        SERVER_ROOT / ".env",
+        PROJECT_ROOT / ".env.local",
+        SERVER_ROOT / ".env.local",
+    ]:
+        if _candidate.exists():
+            load_dotenv(dotenv_path=_candidate, override=False)
+except Exception:
+    # dotenv is optional; if missing, rely on process env
+    pass
+
 class Config:
     """Application configuration class"""
     
@@ -24,7 +39,7 @@ class Config:
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
     # LLM configuration - Multi-provider support
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # openai, openrouter, ollama, dify
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # openrouter, openai, ollama, dify
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Unified model control
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
