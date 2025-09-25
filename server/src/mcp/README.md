@@ -1,272 +1,87 @@
-# Weather MCP Service
+# MCP Services (Math + Weather) with Multi Transports
 
-A WebSocket-based Model Context Protocol (MCP) service for weather information retrieval.
+This folder contains three MCP services and a unified client:
 
-## Overview
+- Math MCP (stdio): `server/src/mcp/math_server.py`
+- Weather MCP (streamable-http, port 8001): `server/src/mcp/weather_service.py`
+- Weather MCP (SSE, port 8002): `server/src/mcp/weather_service_sse.py`
+- Unified Client (dynamic tool calling via system LLM): `server/src/mcp/client.py`
 
-This MCP service provides weather data through a WebSocket connection using the JSON-RPC 2.0 protocol. It simulates weather information for various cities and supports real-time data queries.
+## Key Features
 
-## Features
+- Multi transport MCP services: stdio, streamable-http, SSE
+- Dynamic tool selection via system LLM (OpenRouter/OpenAI/Ollama/Dify)
+- Weather tools with clear descriptions for better LLM routing
+- SSE continuous streaming demo (`/count`) pushing 0,1,2... every second
 
-- **Current Weather**: Get real-time weather data for any city
-- **Weather Forecast**: Get multi-day weather forecasts
-- **City List**: Get list of available cities
-- **WebSocket Protocol**: Real-time communication using WebSocket
-- **JSON-RPC 2.0**: Standardized request/response format
-- **Mock Data**: Simulated weather data for testing
-
-## Architecture
-
-```
-┌─────────────────┐    WebSocket     ┌─────────────────┐
-│   MCP Client    │◄────────────────►│  Weather MCP    │
-│                 │   JSON-RPC 2.0   │    Service      │
-└─────────────────┘                  └─────────────────┘
-```
-
-## Installation
-
-The service requires the following Python packages:
+## Install
 
 ```bash
-pip install websockets
+pip install mcp langchain langchain-mcp-adapters httpx
 ```
 
-## Usage
+## Start Services
 
-### Starting the Service
-
-```python
-from server.src.mcp.weather_service import run_weather_service
-
-# Run the service
-asyncio.run(run_weather_service(host="localhost", port=8765))
-```
-
-Or run directly:
-
+- Weather (HTTP, 8001):
 ```bash
-python -m server.src.mcp.weather_service
+python -m src.mcp.weather_service
 ```
 
-### Using the Client
-
-```python
-from server.src.mcp.client import WeatherMCPClient
-
-async def example():
-    client = WeatherMCPClient("localhost", 8765)
-    
-    # Connect to service
-    await client.connect()
-    
-    # Get current weather
-    weather = await client.get_current_weather("Beijing")
-    print(weather)
-    
-    # Get forecast
-    forecast = await client.get_weather_forecast("Shanghai", days=5)
-    print(forecast)
-    
-    # Disconnect
-    await client.disconnect()
-```
-
-### Quick Functions
-
-```python
-from server.src.mcp.client import get_weather, get_forecast
-
-# Quick weather query
-weather = await get_weather("Beijing")
-forecast = await get_forecast("Shanghai", days=3)
-```
-
-## API Reference
-
-### Methods
-
-#### `weather/get_current`
-Get current weather for a city.
-
-**Parameters:**
-- `city` (string): City name (default: "Beijing")
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "weather": {
-      "city": "Beijing",
-      "temperature": 25.5,
-      "humidity": 65,
-      "condition": "sunny",
-      "wind_speed": 12.3,
-      "pressure": 1013.2,
-      "timestamp": "2024-01-15T10:30:00",
-      "description": "Clear skies with bright sunshine"
-    },
-    "status": "success"
-  }
-}
-```
-
-#### `weather/get_forecast`
-Get weather forecast for a city.
-
-**Parameters:**
-- `city` (string): City name (default: "Beijing")
-- `days` (integer): Number of forecast days (default: 3)
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "result": {
-    "forecast": [
-      {
-        "city": "Beijing",
-        "temperature": 25.5,
-        "humidity": 65,
-        "condition": "sunny",
-        "wind_speed": 12.3,
-        "pressure": 1013.2,
-        "timestamp": "2024-01-15T10:30:00",
-        "description": "Clear skies with bright sunshine"
-      }
-    ],
-    "status": "success"
-  }
-}
-```
-
-#### `weather/get_cities`
-Get list of available cities.
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "cities": ["beijing", "shanghai", "guangzhou", "shenzhen"],
-    "status": "success"
-  }
-}
-```
-
-### Error Handling
-
-The service returns standard JSON-RPC 2.0 error responses:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32601,
-    "message": "Method not found"
-  }
-}
-```
-
-**Error Codes:**
-- `-32700`: Parse error
-- `-32600`: Invalid Request
-- `-32601`: Method not found
-- `-32602`: Invalid params
-- `-32603`: Internal error
-
-## Configuration
-
-### Service Configuration
-
-```python
-service = WeatherMCPService(
-    host="localhost",    # Server host
-    port=8765           # Server port
-)
-```
-
-### Client Configuration
-
-```python
-client = WeatherMCPClient(
-    host="localhost",    # Server host
-    port=8765           # Server port
-)
-```
-
-## Mock Data
-
-The service generates realistic mock weather data for the following cities:
-
-- **Beijing**: Cold winters, hot summers, various conditions
-- **Shanghai**: Humid subtropical climate
-- **Guangzhou**: Tropical climate with high humidity
-- **Shenzhen**: Similar to Guangzhou, coastal city
-
-For unknown cities, default weather patterns are used.
-
-## Integration with Main Application
-
-To integrate the Weather MCP Service with the main application:
-
-1. **Add to main.py**:
-```python
-from server.src.mcp.weather_service import WeatherMCPService
-
-# Start weather service in background
-weather_service = WeatherMCPService()
-asyncio.create_task(weather_service.start_server())
-```
-
-2. **Use in agents**:
-```python
-from server.src.mcp.client import get_weather
-
-# In your agent code
-weather_data = await get_weather("Beijing")
-```
-
-## Testing
-
-Run the service:
+- Weather (SSE, 8002):
 ```bash
-python -m server.src.mcp.weather_service
+python -m src.mcp.weather_service_sse
 ```
 
-Test with client:
+Math (stdio) will be spawned automatically by the client.
+
+## Client (Dynamic Tool Use)
+
 ```bash
 python -m server.src.mcp.client
 ```
 
-## WebSocket Connection
+What it does:
+- Loads tools from math(stdio), weather(http:8001), weather(sse:8002)
+- Prints all loaded tools (names + descriptions)
+- Builds a ReAct-style agent with system LLM and bound tools
+- Runs sample queries
+- Explicitly calls SSE tools (get_weather/get_forecast) and prints results
+- Raw SSE demo: subscribes to `/count` and prints streaming numbers
 
-The service uses WebSocket for real-time communication:
+## Weather Tools
 
-- **URL**: `ws://localhost:8765`
-- **Protocol**: JSON-RPC 2.0 over WebSocket
-- **Ping Interval**: 20 seconds
-- **Ping Timeout**: 10 seconds
+The weather services expose the same tool names; SSE descriptions include "(SSE server)" to distinguish.
 
-## Logging
+- `get_weather(location: str)`
+  - Description: Get current weather information for a given location (city name).
+- `get_forecast(location: str, days: int)`
+  - Description: Get a N-day weather forecast (1-7 days) for a location.
+- `list_cities()`
+  - Description: List supported city identifiers this server can simulate.
 
-The service uses Python's standard logging module. Configure logging level:
+## SSE Continuous Streaming Demo
+
+SSE service also exposes a custom route:
+
+- `GET http://127.0.0.1:8002/count`
+  - Streams `data: 0`, `data: 1`, ... once per second
+
+The client subscribes to it and prints numbers until you Ctrl+C.
+
+## MultiServerMCPClient Configuration (internal)
+
+`load_tools_combined()` constructs a single client mapping:
 
 ```python
-import logging
-logging.basicConfig(level=logging.INFO)
+{
+  "math": {"command": "python", "args": [math_server.py], "transport": "stdio"},
+  "weather": {"url": "http://127.0.0.1:8001/mcp", "transport": "streamable_http"},
+  "weather_sse": {"url": "http://127.0.0.1:8002/sse", "transport": "sse"}
+}
 ```
 
-## Future Enhancements
+## Notes
 
-- Real weather API integration
-- Historical weather data
-- Weather alerts and notifications
-- Multiple language support
-- Caching and persistence
-- Authentication and authorization
+- Ensure your `.env` provides valid LLM credentials if using OpenRouter/OpenAI.
+- HTTP and SSE run on different ports (8001, 8002) to avoid conflicts with FastAPI.
+
