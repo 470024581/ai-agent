@@ -1,11 +1,15 @@
 """
-Weather MCP Service (FastMCP streamable-http)
+Weather MCP Service over SSE (Server-Sent Events)
 
 Run with:
-  python -m src.mcp.weather_service
+  python -m src.mcp.weather_service_sse
 
-It serves on http://127.0.0.1:8000/mcp by default (FastMCP default).
-Compatible with MultiServerMCPClient(transport="streamable_http").
+SSE endpoints (defaults from FastMCP):
+  - Connect stream:  GET  http://127.0.0.1:8000/sse
+  - Post message:    POST http://127.0.0.1:8000/messages/
+
+Note: MultiServerMCPClient currently uses streamable_http for HTTP transport.
+This SSE server is provided as a reference/example for SSE-based MCP transport.
 """
 
 import logging
@@ -14,10 +18,13 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import StreamingResponse, Response
+import anyio
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("Weather", port=8001)
+mcp = FastMCP("Weather-SSE", port=8002)
 
 _CITY_CONFIG: Dict[str, Dict[str, Any]] = {
     "beijing": {
@@ -34,21 +41,8 @@ _CITY_CONFIG: Dict[str, Dict[str, Any]] = {
         "wind_speed_range": (3, 20),
         "pressure_range": (1005, 1025),
     },
-    "guangzhou": {
-        "temperature_range": (10, 40),
-        "humidity_range": (50, 95),
-        "conditions": ["sunny", "cloudy", "rainy", "thunderstorm"],
-        "wind_speed_range": (5, 30),
-        "pressure_range": (1000, 1020),
-    },
-    "shenzhen": {
-        "temperature_range": (12, 38),
-        "humidity_range": (45, 90),
-        "conditions": ["sunny", "cloudy", "rainy", "thunderstorm"],
-        "wind_speed_range": (5, 25),
-        "pressure_range": (1000, 1020),
-    },
 }
+
 
 def _generate_mock_weather(city: str) -> Dict[str, Any]:
     city_lower = city.lower()
@@ -72,7 +66,6 @@ def _generate_mock_weather(city: str) -> Dict[str, Any]:
         "rainy": "Light to moderate rainfall expected",
         "snowy": "Snowfall with cold temperatures",
         "foggy": "Dense fog reducing visibility",
-        "thunderstorm": "Thunderstorms with heavy rain",
     }
 
     return {
@@ -87,18 +80,13 @@ def _generate_mock_weather(city: str) -> Dict[str, Any]:
     }
 
 
-@mcp.tool(description="Get current weather information for a given location (city name).")
+@mcp.tool(description="Get current weather information for a given location (SSE server).")
 async def get_weather(location: str = "Beijing") -> Dict[str, Any]:
-    """Return current weather data for the provided location (city)."""
     return {"weather": _generate_mock_weather(location), "status": "success"}
 
 
-@mcp.tool(description="Get a N-day weather forecast (1-7 days) for a location.")
+@mcp.tool(description="Get a N-day weather forecast (1-7 days) for a location (SSE server).")
 async def get_forecast(location: str = "Beijing", days: int = 3) -> Dict[str, Any]:
-    """Return a simple multi-day forecast for the given location.
-
-    days must be between 1 and 7.
-    """
     days = max(1, min(7, int(days)))
     forecast: List[Dict[str, Any]] = []
     for i in range(days):
@@ -110,17 +98,32 @@ async def get_forecast(location: str = "Beijing", days: int = 3) -> Dict[str, An
     return {"forecast": forecast, "status": "success"}
 
 
-@mcp.tool(description="List supported city identifiers this server can simulate.")
+@mcp.tool(description="List supported city identifiers (SSE server).")
 async def list_cities() -> Dict[str, Any]:
-    """Return the list of available simulated cities."""
     return {"cities": list(_CITY_CONFIG.keys()), "status": "success"}
+
+
+@mcp.custom_route("/count", methods=["GET"], name="count_stream")
+async def count_stream(request: Request) -> Response:
+    """SSE demo: stream numbers starting from 0, increment every second."""
+    async def gen():
+        i = 0
+        while True:
+            # SSE event format
+            yield f"data: {i}\n\n"
+            i += 1
+            await anyio.sleep(1)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    # FastMCP.run manages its own event loop; do not call inside asyncio.run
-    mcp.run(transport="streamable-http")
+    # SSE transport will mount at /sse and /messages/ by default
+    mcp.run(transport="sse")
 
 
 if __name__ == "__main__":
     main()
+
+
