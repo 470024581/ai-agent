@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 from typing import Dict, Any, List, Tuple
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -33,6 +34,8 @@ async def load_tools_combined(
     weather_url: str = "http://127.0.0.1:8001/mcp",
     math_path: str | None = None,
     sse_base: str | None = "http://127.0.0.1:8002/sse",
+    git_command: str = "mcp-server-git",
+    git_args: List[str] | None = None,
 ) -> Tuple[MultiServerMCPClient, List[Any]]:
     global _CLIENT, _TOOLS
     if _CLIENT is not None and _TOOLS is not None:
@@ -55,6 +58,13 @@ async def load_tools_combined(
             "transport": "sse",
         },
     }
+    # Conditionally add git MCP if binary is available
+    if git_command and shutil.which(git_command):
+        servers["git"] = {
+            "command": git_command,
+            "args": git_args or [],
+            "transport": "stdio",
+        }
     client = MultiServerMCPClient(servers)
     tools = await client.get_tools()
     _CLIENT, _TOOLS = client, tools
@@ -135,6 +145,22 @@ async def main():
     except StopIteration:
         print("[SSE] get_forecast tool not found (ensure SSE server on 8002 is running)")
 
+    # Optional: minimal git MCP example (if mcp-server-git is available and tools loaded)
+    git_tools = [
+        t for t in tools
+        if "git" in (getattr(t, "name", "") or "").lower()
+        or "git" in (getattr(t, "description", "") or "").lower()
+    ]
+    if git_tools:
+        print("\n[git] tools detected:")
+        for t in git_tools[:3]:
+            print(" -", getattr(t, "name", ""), "|", getattr(t, "description", ""))
+        try:
+            res = await git_tools[0].ainvoke({"repo_path": r"D:\Workspaces\ReactWorkspace\ai-agent"})  # type: ignore[attr-defined]
+            print("[git] example call result:", json.dumps(res, indent=2) if not isinstance(res, str) else res)
+        except Exception as e:
+            print("[git] example call failed:", e)
+
     # Raw SSE streaming demo: subscribe to continuous counter at /count
     # You should see increasing numbers printed once per second
     import httpx
@@ -145,7 +171,8 @@ async def main():
                 async for line in r.aiter_lines():
                     if line.startswith("data: "):
                         print(line[6:])
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Graceful shutdown without traceback when user stops the stream
         print("[Raw SSE] stopped by user")
 
 

@@ -34,6 +34,8 @@ python -m src.mcp.weather_service_sse
 
 Math (stdio) will be spawned automatically by the client.
 
+- Optional Git MCP (stdio): the client will auto-start it if `mcp-server-git` exists in PATH (no manual server start required).
+
 ## Client (Dynamic Tool Use)
 
 ```bash
@@ -47,6 +49,7 @@ What it does:
 - Runs sample queries
 - Explicitly calls SSE tools (get_weather/get_forecast) and prints results
 - Raw SSE demo: subscribes to `/count` and prints streaming numbers
+ - If `mcp-server-git` is present, prints available git tools and attempts a minimal example call
 
 ## Weather Tools
 
@@ -68,6 +71,29 @@ SSE service also exposes a custom route:
 
 The client subscribes to it and prints numbers until you Ctrl+C.
 
+## Git MCP (optional)
+
+If you installed `mcp-server-git` (e.g. `pip install mcp-server-git`) and it is available in PATH, the client will add a `git` server with stdio transport automatically.
+
+- You will see tools like `git_status`, `git_diff_unstaged`, etc. Most require a `repo_path` argument.
+
+Example direct call snippet (replace with your repo path):
+
+```python
+import asyncio
+from server.src.mcp.client import load_tools_combined
+
+async def demo_git():
+    _, tools = await load_tools_combined()
+    git_status = next(t for t in tools if getattr(t, "name", "") == "git_status")
+    res = await git_status.ainvoke({"repo_path": r"D:\\Workspaces\\ReactWorkspace\\ai-agent"})
+    print(res)
+
+asyncio.run(demo_git())
+```
+
+If you see an error like `'repo_path'`, it means the tool requires this argument.
+
 ## MultiServerMCPClient Configuration (internal)
 
 `load_tools_combined()` constructs a single client mapping:
@@ -84,4 +110,5 @@ The client subscribes to it and prints numbers until you Ctrl+C.
 
 - Ensure your `.env` provides valid LLM credentials if using OpenRouter/OpenAI.
 - HTTP and SSE run on different ports (8001, 8002) to avoid conflicts with FastAPI.
+- The client handles Ctrl+C gracefully during raw SSE count streaming.
 
