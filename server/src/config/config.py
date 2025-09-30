@@ -39,14 +39,14 @@ class Config:
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
     # LLM configuration - Multi-provider support
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # openrouter, openai, ollama, dify
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # openrouter, openai, ollama, dify, bedrock
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Unified model control
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
     
     # Embedding configuration
-    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface, dify
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface, dify, bedrock
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "512"))
     EMBEDDING_CACHE_DIR: Path = DATA_DIR / "embeddings_cache"
@@ -73,6 +73,28 @@ class Config:
     DIFY_EMBEDDING_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
     DIFY_EMBEDDING_USER: Optional[str] = os.getenv("DIFY_EMBEDDING_USER")
     DIFY_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    
+    # AWS Bedrock configuration
+    AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+    AWS_PROFILE: Optional[str] = os.getenv("AWS_PROFILE")
+    AWS_ACCESS_KEY_ID: Optional[str] = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    DEPLOYMENT_ENV: str = os.getenv("DEPLOYMENT_ENV", "local")  # local, ecs, ec2
+    
+    # Bedrock model configuration
+    BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "mistral.mixtral-8x7b-instruct-v0:1")
+    BEDROCK_FAST_MODEL: str = os.getenv("BEDROCK_FAST_MODEL", "mistral.mistral-7b-instruct-v0:2")
+    BEDROCK_COMPLEX_MODEL: str = os.getenv("BEDROCK_COMPLEX_MODEL", "mistral.mixtral-8x7b-instruct-v0:1")
+    BEDROCK_EMBEDDING_MODEL: str = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
+    BEDROCK_EMBEDDING_DIMENSION: int = int(os.getenv("BEDROCK_EMBEDDING_DIMENSION", "1024"))
+    
+    # Bedrock advanced features
+    ENABLE_MODEL_ROUTING: bool = os.getenv("ENABLE_MODEL_ROUTING", "false").lower() == "true"
+    ROUTING_CONFIDENCE_THRESHOLD: float = float(os.getenv("ROUTING_CONFIDENCE_THRESHOLD", "0.7"))
+    ENABLE_KV_CACHE: bool = os.getenv("ENABLE_KV_CACHE", "false").lower() == "true"
+    ENABLE_PROMPT_CACHE: bool = os.getenv("ENABLE_PROMPT_CACHE", "false").lower() == "true"
+    MAX_PROMPT_CACHE_SIZE: int = int(os.getenv("MAX_PROMPT_CACHE_SIZE", "100"))
+    PROMPT_CACHE_TTL_HOURS: int = int(os.getenv("PROMPT_CACHE_TTL_HOURS", "24"))
     
     # CORS configuration
     CORS_ORIGINS: list[str] = [
@@ -167,8 +189,29 @@ class Config:
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT
             }
+        elif provider == "bedrock":
+            return {
+                "provider": "bedrock",
+                "region": cls.AWS_REGION,
+                "profile": cls.AWS_PROFILE,
+                "access_key_id": cls.AWS_ACCESS_KEY_ID,
+                "secret_access_key": cls.AWS_SECRET_ACCESS_KEY,
+                "deployment_env": cls.DEPLOYMENT_ENV,
+                "model": cls.LLM_MODEL or cls.BEDROCK_MODEL_ID,
+                "fast_model": cls.BEDROCK_FAST_MODEL,
+                "complex_model": cls.BEDROCK_COMPLEX_MODEL,
+                "temperature": cls.LLM_TEMPERATURE,
+                "max_tokens": cls.LLM_MAX_TOKENS,
+                "timeout": cls.LLM_TIMEOUT,
+                "enable_model_routing": cls.ENABLE_MODEL_ROUTING,
+                "routing_confidence_threshold": cls.ROUTING_CONFIDENCE_THRESHOLD,
+                "enable_kv_cache": cls.ENABLE_KV_CACHE,
+                "enable_prompt_cache": cls.ENABLE_PROMPT_CACHE,
+                "max_prompt_cache_size": cls.MAX_PROMPT_CACHE_SIZE,
+                "cache_ttl_hours": cls.PROMPT_CACHE_TTL_HOURS
+            }
         else:
-            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama, dify")
+            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama, dify, bedrock")
     
     @classmethod
     def get_embedding_config(cls) -> dict:
@@ -220,8 +263,19 @@ class Config:
                 "model": cls.DIFY_EMBEDDING_MODEL,
                 "dimension": cls.EMBEDDING_DIMENSION
             }
+        elif provider == "bedrock":
+            return {
+                "provider": "bedrock",
+                "region": cls.AWS_REGION,
+                "profile": cls.AWS_PROFILE,
+                "access_key_id": cls.AWS_ACCESS_KEY_ID,
+                "secret_access_key": cls.AWS_SECRET_ACCESS_KEY,
+                "deployment_env": cls.DEPLOYMENT_ENV,
+                "model": cls.BEDROCK_EMBEDDING_MODEL,
+                "dimension": cls.BEDROCK_EMBEDDING_DIMENSION
+            }
         else:
-            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama, dify")
+            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama, dify, bedrock")
     
     @classmethod
     def is_development(cls) -> bool:

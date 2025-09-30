@@ -66,16 +66,39 @@ def router_node(state: GraphState) -> GraphState:
             
             # Handle different response types
             if hasattr(response, 'content'):
-                query_type = response.content.strip().lower()
+                raw_response = response.content.strip().lower()
             elif isinstance(response, str):
-                query_type = response.strip().lower()
+                raw_response = response.strip().lower()
             else:
-                query_type = str(response).strip().lower()
+                raw_response = str(response).strip().lower()
+            
+            # Extract the first word/line (Bedrock may add explanations)
+            # Try to extract just 'sql' or 'rag' from the response
+            query_type = None
+            
+            # Check if response contains 'sql' or 'rag' in the first line
+            first_line = raw_response.split('\n')[0].strip()
+            
+            # Try exact match on first line/word
+            if first_line in ["sql", "rag"]:
+                query_type = first_line
+            # Try to find sql or rag in first line
+            elif "sql" in first_line and "rag" not in first_line:
+                query_type = "sql"
+            elif "rag" in first_line and "sql" not in first_line:
+                query_type = "rag"
+            # Try to find in full response
+            elif "rag" in raw_response and "sql" not in raw_response[:20]:  # Check first 20 chars
+                query_type = "rag"
+            elif "sql" in raw_response and "rag" not in raw_response[:20]:
+                query_type = "sql"
             
             # Validate response
-            if query_type not in ["sql", "rag"]:
-                logger.warning(f"Invalid LLM routing response: {query_type}, defaulting to sql")
+            if not query_type or query_type not in ["sql", "rag"]:
+                logger.warning(f"Invalid LLM routing response: {raw_response[:200]}, defaulting to sql")
                 query_type = "sql"
+            else:
+                logger.info(f"Router extracted '{query_type}' from response: {raw_response[:100]}")
                 
         except Exception as e:
             logger.error(f"Error in LLM routing: {e}, falling back to rule-based")

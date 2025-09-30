@@ -49,6 +49,8 @@ class LLMFactory:
                 llm = cls._create_ollama_llm(ai_config)
             elif provider == "dify":
                 llm = cls._create_dify_llm(ai_config)
+            elif provider == "bedrock":
+                llm = cls._create_bedrock_llm(ai_config)
             else:
                 raise ValueError(f"Unsupported LLM provider: {provider}")
             
@@ -139,6 +141,98 @@ class LLMFactory:
             raise
         except Exception as e:
             logger.error(f"Ollama LLM initialization failed: {e}")
+            raise
+    
+    @classmethod
+    def _create_bedrock_llm(cls, ai_config: Dict[str, Any]) -> BaseLanguageModel:
+        """Create AWS Bedrock LLM instance"""
+        try:
+            import boto3
+            from langchain_aws import ChatBedrock
+            
+            # Build boto3 session kwargs
+            session_kwargs = {"region_name": ai_config["region"]}
+            
+            # Authentication based on deployment environment
+            deployment_env = ai_config.get("deployment_env", "local")
+            
+            if deployment_env in ["ecs", "ec2"]:
+                # ECS/EC2: Use IAM role credentials (no explicit keys needed)
+                logger.info(f"Using IAM role credentials for {deployment_env} environment")
+            elif ai_config.get("access_key_id") and ai_config.get("secret_access_key"):
+                # Local: Use explicit credentials
+                session_kwargs.update({
+                    "aws_access_key_id": ai_config["access_key_id"],
+                    "aws_secret_access_key": ai_config["secret_access_key"],
+                })
+                logger.info("Using explicit AWS credentials")
+            elif ai_config.get("profile"):
+                # Use AWS Profile (SSO or named profile)
+                session_kwargs["profile_name"] = ai_config["profile"]
+                logger.info(f"Using AWS profile: {ai_config['profile']}")
+            else:
+                # Try default credential chain
+                logger.info("Using default AWS credential chain")
+            
+            # Create boto3 session
+            session = boto3.Session(**session_kwargs)
+            
+            # Verify credentials
+            try:
+                sts_client = session.client("sts", region_name=ai_config["region"])
+                identity = sts_client.get_caller_identity()
+                logger.info(f"AWS identity verified - Account: {identity['Account']}, ARN: {identity['Arn']}")
+            except Exception as e:
+                logger.error(f"AWS credential verification failed: {e}")
+                if "expired" in str(e).lower():
+                    raise RuntimeError(
+                        f"AWS credentials expired. Please refresh your session.\n"
+                        f"For SSO: aws sso login --profile {ai_config.get('profile', 'default')}"
+                    )
+                raise
+            
+            # Check model availability (optional)
+            try:
+                bedrock_control_client = session.client("bedrock", region_name=ai_config["region"])
+                available_models = bedrock_control_client.list_foundation_models()
+                target_model = ai_config["model"]
+                model_found = any(
+                    model.get("modelId") == target_model
+                    for model in available_models.get("modelSummaries", [])
+                )
+                if model_found:
+                    logger.info(f"Target model {target_model} is available in Bedrock")
+                else:
+                    logger.warning(f"Target model {target_model} not found in available models list")
+            except Exception as e:
+                logger.warning(f"Could not verify model availability: {e}")
+            
+            # Create Bedrock runtime client
+            bedrock_client = session.client("bedrock-runtime", region_name=ai_config["region"])
+            
+            # Initialize ChatBedrock with LangChain
+            kwargs = {
+                "model_id": ai_config["model"],
+                "client": bedrock_client,
+                "model_kwargs": {
+                    "temperature": ai_config.get("temperature", 0.0),
+                    "max_tokens": ai_config.get("max_tokens", 2048),
+                },
+            }
+            
+            llm = ChatBedrock(**kwargs)
+            logger.info(
+                f"Bedrock LLM initialized successfully - Model: {ai_config['model']}, "
+                f"Region: {ai_config['region']}, Env: {deployment_env}"
+            )
+            return llm
+            
+        except ImportError as e:
+            logger.error(f"Bedrock dependencies not installed: {e}")
+            logger.error("Please run: pip install boto3 langchain-aws")
+            raise
+        except Exception as e:
+            logger.error(f"Bedrock LLM initialization failed: {e}")
             raise
     
     @classmethod
