@@ -1018,7 +1018,7 @@ function IntelligentAnalysis() {
                     disabled={loading || isLimited}
                     className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {loading ? (
+                  {loading && !currentExecutionData?.isStreaming ? (
                     <>
                       {t('intelligentAnalysis.analyzing')}
                     </>
@@ -1120,7 +1120,7 @@ function IntelligentAnalysis() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-6 space-y-6">
-              {loading && !result && !currentExecutionData?.result && (
+              {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
                 <div className="flex items-center justify-center h-40">
                   <Spinner className="h-8 w-8" />
                   <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
