@@ -124,8 +124,33 @@ try:
         logger.info(f"Using API endpoint: {llm_status.get('base_url')}")
 except Exception as e:
     logger.error(f"LLM initialization failed: {e}")
-    logger.error("Please check your LLM configuration in .env file")
-    llm = None
+    
+    # Check if it's a Bedrock SSO issue and try to refresh
+    if "bedrock" in str(e).lower() and "sso" in str(e).lower():
+        logger.warning("Detected Bedrock SSO issue, attempting automatic refresh...")
+        try:
+            from ..models.llm_factory import refresh_sso_token
+            from ..config.config import Config
+            
+            if Config.ENABLE_AUTO_SSO_REFRESH:
+                profile = Config.AWS_PROFILE or "DevOpsPermissionSet-412381743093"
+                if refresh_sso_token(profile):
+                    logger.info("SSO refreshed, retrying LLM initialization...")
+                    llm = get_llm()
+                    llm_status = get_llm_status()
+                    logger.info(f"LLM initialized successfully after SSO refresh - Provider: {llm_status.get('provider')}, Model: {llm_status.get('model')}")
+                else:
+                    logger.error("SSO refresh failed, LLM initialization aborted")
+                    llm = None
+            else:
+                logger.error("Auto-SSO refresh is disabled")
+                llm = None
+        except Exception as sso_error:
+            logger.error(f"SSO refresh attempt failed: {sso_error}")
+            llm = None
+    else:
+        logger.error("Please check your LLM configuration in .env file")
+        llm = None
 
 # Initialize Embeddings using factory
 try:
@@ -135,7 +160,32 @@ try:
     logger.info(f"Embedding model initialized successfully - Provider: {embedding_status.get('provider')}, Model: {embedding_status.get('model')}")
 except Exception as e:
     logger.error(f"Embedding model initialization failed: {e}", exc_info=True)
-    embeddings = None
+    
+    # Check if it's a Bedrock SSO issue and try to refresh
+    if "bedrock" in str(e).lower() and "sso" in str(e).lower():
+        logger.warning("Detected Bedrock SSO issue for embeddings, attempting automatic refresh...")
+        try:
+            from ..models.llm_factory import refresh_sso_token
+            from ..config.config import Config
+            
+            if Config.ENABLE_AUTO_SSO_REFRESH:
+                profile = Config.AWS_PROFILE or "DevOpsPermissionSet-412381743093"
+                if refresh_sso_token(profile):
+                    logger.info("SSO refreshed, retrying embedding initialization...")
+                    embeddings = get_embeddings()
+                    embedding_status = get_embeddings_status()
+                    logger.info(f"Embedding model initialized successfully after SSO refresh - Provider: {embedding_status.get('provider')}, Model: {embedding_status.get('model')}")
+                else:
+                    logger.error("SSO refresh failed, embedding initialization aborted")
+                    embeddings = None
+            else:
+                logger.error("Auto-SSO refresh is disabled")
+                embeddings = None
+        except Exception as sso_error:
+            logger.error(f"SSO refresh attempt failed: {sso_error}")
+            embeddings = None
+    else:
+        embeddings = None
 
 async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str, Any]:
     """

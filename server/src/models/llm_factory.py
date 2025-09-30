@@ -4,9 +4,63 @@ LLM Factory - Factory class supporting multiple LLM providers (no simulation mod
 import logging
 from typing import Optional, Dict, Any
 from langchain_core.language_models.base import BaseLanguageModel
-from ..config.config import config
+from ..config.config import config, Config
 
 logger = logging.getLogger(__name__)
+
+def refresh_sso_token(profile: str = "DevOpsPermissionSet-412381743093") -> bool:
+    """
+    Refresh SSO token by opening browser and running aws sso login
+    
+    Args:
+        profile: AWS profile name
+        
+    Returns:
+        bool: True if SSO refresh was successful, False otherwise
+    """
+    logger.warning("Attempting SSO token refresh...")
+    logger.info("Please complete SSO login in the browser window that will open...")
+    
+    try:
+        import subprocess
+        import sys
+        import webbrowser
+        
+        # First, try to get the SSO URL
+        try:
+            config_result = subprocess.run([
+                "aws", "configure", "get", "sso_start_url", 
+                "--profile", profile
+            ], capture_output=True, text=True, timeout=10)
+            
+            if config_result.returncode == 0 and config_result.stdout.strip():
+                sso_url = config_result.stdout.strip()
+                logger.info(f"Opening SSO URL: {sso_url}")
+                webbrowser.open(sso_url)
+            else:
+                logger.warning("Could not get SSO start URL, proceeding with login command...")
+        except Exception as url_error:
+            logger.warning(f"Could not open SSO URL: {url_error}")
+        
+        # Use interactive mode to allow browser opening
+        result = subprocess.run([
+            "aws", "sso", "login", 
+            "--profile", profile
+        ], stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, timeout=300)  # 5 minutes timeout
+        
+        if result.returncode == 0:
+            logger.info("SSO token refreshed successfully!")
+            return True
+        else:
+            logger.error(f"SSO refresh failed with return code: {result.returncode}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error("SSO refresh timed out after 5 minutes")
+        return False
+    except Exception as sso_error:
+        logger.error(f"SSO refresh failed: {str(sso_error)}")
+        return False
 
 class LLMFactory:
     """LLM Factory class - Manages creation and management of different LLM providers (strict configuration mode)"""
@@ -62,6 +116,18 @@ class LLMFactory:
                 
         except Exception as e:
             logger.error(f"Failed to create LLM ({provider}): {e}")
+            
+            # Auto-SSO refresh logic for Bedrock
+            if provider == "bedrock" and Config.ENABLE_AUTO_SSO_REFRESH:
+                profile = ai_config.get("profile", "DevOpsPermissionSet-412381743093")
+                if refresh_sso_token(profile):
+                    logger.info("SSO token refreshed successfully, retrying Bedrock initialization...")
+                    # Retry Bedrock initialization
+                    retry_llm = cls._create_bedrock_llm(ai_config)
+                    if retry_llm and cls._verify_llm_connection(retry_llm, "bedrock"):
+                        logger.info("Successfully initialized Bedrock LLM after SSO refresh")
+                        return retry_llm
+            
             raise
     
     @classmethod

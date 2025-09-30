@@ -509,6 +509,15 @@ async def rag_query_node(state: GraphState) -> GraphState:
     try:
         user_input = state["user_input"]
         datasource = state["datasource"]
+        # Guards: avoid duplicate RAG execution in the same run
+        # 1) Upstream may have produced an answer
+        if state.get("answer"):
+            logger.info("RAG query skipped: answer already present in state (preventing duplicate execution)")
+            return {**state}
+        # 2) This node already executed before (e.g., re-entry in graph)
+        if state.get("rag_executed"):
+            logger.info("RAG query skipped: rag_executed flag present (preventing duplicate execution)")
+            return {**state}
         
         # Call RAG query logic
         result = await perform_rag_query(user_input, datasource)
@@ -517,6 +526,7 @@ async def rag_query_node(state: GraphState) -> GraphState:
             return {
                 **state,
                 "answer": result["answer"],
+                "rag_executed": True,
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "rag_query": {
@@ -527,7 +537,7 @@ async def rag_query_node(state: GraphState) -> GraphState:
                 }
             }
         else:
-            return {**state, "error": result.get("error", "RAG query failed")}
+            return {**state, "rag_executed": True, "error": result.get("error", "RAG query failed")}
     except Exception as e:
         logger.error(f"RAG query node error: {e}")
         return {**state, "error": str(e)}
@@ -743,157 +753,7 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
         logger.error(f"Traceback: {traceback.format_exc()}")
         return f"I found {len(rows)} results for your query '{user_input}', but had trouble formatting the response. The data is available but the presentation failed."
 
-def validation_node(state: GraphState) -> GraphState:
-    """Output validation node - Enhanced with LLM-based quality assessment"""
-    try:
-        answer = state.get("answer", "")
-        user_input = state.get("user_input", "")
-        structured_data = state.get("structured_data", {})
-        error = state.get("error")
-        chart_image = state.get("chart_image")
-        
-        # Initialize scores for different dimensions
-        scores = {
-            "relevance": 0,  # How well the answer addresses the user's question
-            "completeness": 0,  # Whether all aspects of the question are addressed
-            "accuracy": 0,  # Accuracy of the information provided
-            "clarity": 0,  # How clear and well-structured the answer is
-            "data_support": 0  # Whether the answer is supported by data
-        }
-        
-        # If there's an error, return low quality score
-        if error:
-            return {
-                "quality_score": 0,
-                "validation_details": {
-                    "error": error,
-                    "scores": scores,
-                    "feedback": "Failed due to error"
-                }
-            }
-
-        # Prepare prompt for LLM evaluation
-        evaluation_prompt = """
-        Please evaluate the following answer for a data analysis question. 
-        Rate each aspect on a scale of 0-10, where:
-        - 7-8: Meets expectations (The answer is good and useful)
-        - 9-10: Exceeds expectations (The answer is excellent)
-        - 5-6: Needs minor improvements
-        - 0-4: Needs major improvements
-
-        Focus on whether the answer is useful and practical rather than perfect.
-        A score of 7 means the answer is good enough for practical use.
-
-        User Question: {question}
-        Generated Answer: {answer}
-        Data Available: {data}
-        Chart Generated: {chart}
-
-        Evaluate the following aspects:
-        1. Relevance (0-10): Does the answer directly address the main point of the user's question?
-        2. Completeness (0-10): Are the key aspects of the question addressed?
-        3. Accuracy (0-10): Is the information factually correct based on the data?
-        4. Clarity (0-10): Is the answer easy to understand?
-        5. Data Support (0-10): Is the answer backed by data or visualizations?
-
-        Provide your evaluation in JSON format:
-        {{
-            "scores": {{
-                "relevance": [score],
-                "completeness": [score],
-                "accuracy": [score],
-                "clarity": [score],
-                "data_support": [score]
-            }},
-            "feedback": "[specific feedback about strengths and areas for improvement]"
-        }}
-        """.format(
-            question=user_input,
-            answer=answer,
-            data=json.dumps(structured_data) if structured_data else 'No structured data',
-            chart='Yes' if chart_image else 'No'
-        )
-
-        # Call LLM for evaluation
-        try:
-            evaluation_result = llm.invoke(evaluation_prompt)
-            if hasattr(evaluation_result, 'content'):
-                evaluation_text = evaluation_result.content
-            elif isinstance(evaluation_result, str):
-                evaluation_text = evaluation_result
-            else:
-                evaluation_text = str(evaluation_result)
-            evaluation_data = json.loads(evaluation_text)
-            scores = evaluation_data["scores"]
-            feedback = evaluation_data["feedback"]
-        except Exception as e:
-            logger.error(f"LLM evaluation failed: {e}")
-            # Fallback to basic scoring if LLM fails
-            scores = {
-                "relevance": 8 if len(answer) > 50 else 5,  # 提高基础分
-                "completeness": 8 if structured_data else 5,
-                "accuracy": 8 if not error else 4,
-                "clarity": 8 if len(answer.split()) > 20 else 5,
-                "data_support": 8 if structured_data or chart_image else 4
-            }
-            feedback = "Fallback scoring used due to LLM evaluation failure"
-
-        # Calculate final quality score (weighted average)
-        weights = {
-            "relevance": 0.35,  # 增加相关性权重
-            "completeness": 0.25,  # 增加完整性权重
-            "accuracy": 0.20,  # 保持不变
-            "clarity": 0.10,  # 降低权重
-            "data_support": 0.10  # 降低权重
-        }
-        
-        final_score = sum(scores[k] * weights[k] for k in weights)
-        final_score = round(final_score)  # Round to nearest integer
-        
-        # Ensure score is within bounds
-        final_score = max(0, min(10, final_score))
-        
-        # Force a higher score if we've retried too many times
-        retry_count = state.get("retry_count", 0)
-        if retry_count >= 1:  # 保持最大重试次数为1
-            final_score = 7
-            feedback += " (Score adjusted to prevent excessive retries)"
-        
-        return {
-            "quality_score": final_score,
-            "validation_details": {
-                "scores": scores,
-                "feedback": feedback,
-                "final_score": final_score,
-                "weights_used": weights
-            }
-        }
-    except Exception as e:
-        logger.error(f"Validation node error: {e}")
-        # Return a passing score to prevent infinite retries
-        return {
-            "quality_score": 7,
-            "validation_details": {
-                "error": str(e),
-                "scores": scores,
-                "feedback": "Validation failed, defaulting to passing score to prevent retries"
-            }
-        }
-
-def retry_node(state: GraphState) -> GraphState:
-    """Retry node"""
-    retry_count = state.get("retry_count", 0)
-    
-    if retry_count >= 1:  # Maximum 1 retry
-        return {
-            "answer": "Sorry, after multiple attempts, we still cannot generate satisfactory results. Please try to rephrase your question.",
-            "quality_score": 10  # Set high score to end the process
-        }
-    
-    return {
-        "retry_count": retry_count + 1,
-        "error": None  # Clear error for retry
-    }
+# Validation and retry nodes removed - processing goes directly to end node
 
 def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, Any]:
     """Use LLM to generate chart configuration based on data and user requirements for semantic analysis"""
@@ -1693,8 +1553,6 @@ async def process_intelligent_query(
     workflow.add_node("chart_config_node", chart_config_node)
     workflow.add_node("chart_rendering_node", chart_rendering_node)
     workflow.add_node("llm_processing_node", llm_processing_node)
-    workflow.add_node("validation_node", validation_node)
-    workflow.add_node("retry_node", retry_node)
     workflow.add_node("end_node", lambda state: {"success": True})
 
     # Set entry point
@@ -1733,20 +1591,9 @@ async def process_intelligent_query(
     workflow.add_edge("chart_config_node", "chart_rendering_node")
     workflow.add_edge("chart_rendering_node", "llm_processing_node")
     workflow.add_edge("rag_query_node", "llm_processing_node")
-    workflow.add_edge("llm_processing_node", "validation_node")
-
-    # Add conditional edges for validation
-    workflow.add_conditional_edges(
-        "validation_node",
-        lambda state: "retry" if state["quality_score"] < 7 else "end",
-        {
-            "retry": "retry_node",
-            "end": "end_node"
-        }
-    )
-
-    # Connect retry node back to LLM processing
-    workflow.add_edge("retry_node", "llm_processing_node")
+    
+    # LLM processing goes directly to end node (validation & retry removed)
+    workflow.add_edge("llm_processing_node", "end_node")
 
     # Set finish point
     workflow.set_finish_point("end_node")

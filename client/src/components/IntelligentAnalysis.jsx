@@ -50,6 +50,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collap
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from './ui/select';
 import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, FileText, AlertCircle } from 'lucide-react';
+import { AnimatedWorkflowDiagram } from './AnimatedWorkflowDiagram';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
@@ -87,37 +88,45 @@ function IntelligentAnalysis() {
     getClientId,
   } = useWorkflowWebSocket();
   
-  // LangGraph nodes and edges definition - complete flow with start and end nodes
+  // LangGraph nodes and edges definition - optimized layout for better visual flow
   const langGraphNodes = [
-    { id: 'start_node', name: 'Start', type: 'start', position: { x: 200, y: 20 }, description: 'Begin analysis process' },
-    { id: 'router_node', name: 'Router', type: 'decision', position: { x: 300, y: 100 }, description: 'Determine SQL or RAG path' },
-    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', position: { x: 150, y: 180 }, description: 'Classify as query or chart' },
-    { id: 'rag_query_node', name: 'RAG Query', type: 'process', position: { x: 450, y: 180 }, description: 'Vector search & retrieval' },
-    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', position: { x: 50, y: 270 }, description: 'Execute chart data query' },
-    { id: 'sql_query_node', name: 'SQL Query', type: 'process', position: { x: 300, y: 270 }, description: 'Execute database query' },
-    { id: 'chart_config_node', name: 'Chart Config', type: 'process', position: { x: 50, y: 400 }, description: 'Generate chart configuration' },
-    { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', position: { x: 190, y: 400 }, description: 'Call QuickChart API' },
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 300, y: 400 }, description: 'Generate natural language response' },
-    { id: 'validation_node', name: 'Validation', type: 'validation', position: { x: 300, y: 520 }, description: 'Quality score validation' },
-    { id: 'retry_node', name: 'Retry', type: 'retry', position: { x: 150, y: 520 }, description: 'Retry with improvements' },
-    { id: 'end_node', name: 'End', type: 'end', position: { x: 200, y: 680 }, description: 'Process completed' }
+    // Layer 1: Start
+    { id: 'start_node', name: 'Start', type: 'start', position: { x: 400, y: 60 }, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
+    
+    // Layer 2: Router
+    { id: 'router_node', name: 'Router', type: 'decision', position: { x: 400, y: 180 }, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
+    
+    // Layer 3: Path Split
+    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', position: { x: 250, y: 300 }, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
+    { id: 'rag_query_node', name: 'RAG Query', type: 'process', position: { x: 550, y: 300 }, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
+    
+    // Layer 4: SQL Execution
+    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', position: { x: 150, y: 430 }, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
+    { id: 'sql_query_node', name: 'SQL Query', type: 'process', position: { x: 350, y: 430 }, description: 'Execute database query', icon: FaDatabase, color: 'green' },
+    
+    // Layer 5: Chart Processing
+    { id: 'chart_config_node', name: 'Chart Config', type: 'process', position: { x: 150, y: 560 }, description: 'Generate chart configuration', icon: FaCogs, color: 'amber' },
+    { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', position: { x: 250, y: 690 }, description: 'Call QuickChart API', icon: FaChartLine, color: 'orange' },
+    
+    // Layer 6: LLM Convergence
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 400, y: 690 }, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
+    
+    // Layer 7: End
+    { id: 'end_node', name: 'Complete', type: 'end', position: { x: 400, y: 810 }, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
   ];
 
   const langGraphEdges = [
-    { from: 'start_node', to: 'router_node', condition: 'Start Process', color: '#22c55e' },
-    { from: 'router_node', to: 'sql_classifier_node', condition: 'SQL Path', color: '#3b82f6' },
-    { from: 'router_node', to: 'rag_query_node', condition: 'RAG Path', color: '#8b5cf6' },
-    { from: 'sql_classifier_node', to: 'sql_chart_node', condition: 'Chart Type', color: '#f59e0b' },
-    { from: 'sql_classifier_node', to: 'sql_query_node', condition: 'Query Type', color: '#10b981' },
-    { from: 'sql_chart_node', to: 'chart_config_node', condition: 'Chart Data', color: '#f59e0b' },
-    { from: 'sql_query_node', to: 'llm_processing_node', condition: 'Query Result', color: '#10b981' },
-    { from: 'chart_config_node', to: 'chart_rendering_node', condition: 'Chart Config', color: '#f59e0b' },
-    { from: 'chart_rendering_node', to: 'llm_processing_node', condition: 'Chart URL', color: '#f59e0b' },
-    { from: 'rag_query_node', to: 'llm_processing_node', condition: 'RAG Result', color: '#8b5cf6' },
-    { from: 'llm_processing_node', to: 'validation_node', condition: 'Generated Response', color: '#6b7280' },
-    { from: 'validation_node', to: 'retry_node', condition: 'Score < 8', color: '#ef4444' },
-    { from: 'retry_node', to: 'llm_processing_node', condition: 'Retry Attempt', color: '#ef4444' },
-    { from: 'validation_node', to: 'end_node', condition: 'Score >= 8', color: '#22c55e' }
+    { from: 'start_node', to: 'router_node', label: 'Initialize', color: 'emerald' },
+    { from: 'router_node', to: 'sql_classifier_node', label: 'SQL Path', color: 'blue' },
+    { from: 'router_node', to: 'rag_query_node', label: 'RAG Path', color: 'purple' },
+    { from: 'sql_classifier_node', to: 'sql_chart_node', label: 'Chart', color: 'orange' },
+    { from: 'sql_classifier_node', to: 'sql_query_node', label: 'Query', color: 'green' },
+    { from: 'sql_chart_node', to: 'chart_config_node', label: 'Config', color: 'amber' },
+    { from: 'sql_query_node', to: 'llm_processing_node', label: 'Result', color: 'green' },
+    { from: 'chart_config_node', to: 'chart_rendering_node', label: 'Render', color: 'orange' },
+    { from: 'chart_rendering_node', to: 'llm_processing_node', label: 'Image', color: 'orange' },
+    { from: 'rag_query_node', to: 'llm_processing_node', label: 'Documents', color: 'purple' },
+    { from: 'llm_processing_node', to: 'end_node', label: 'Response', color: 'emerald' }
   ];
 
   // Legacy state for backward compatibility (will be removed)
@@ -523,6 +532,18 @@ function IntelligentAnalysis() {
   };
 
   const renderLangGraphDiagram = () => {
+    return (
+      <AnimatedWorkflowDiagram
+        nodes={langGraphNodes}
+        edges={langGraphEdges}
+        currentNode={currentNode}
+        activeEdges={activeEdges || []}
+      />
+    );
+  };
+
+  // Legacy diagram rendering (unused)
+  const renderLangGraphDiagramOld = () => {
     const nodeStates = reduxNodeStates || localNodeStates;
     const currentActiveNode = currentNode || null;
     const currentActiveEdges = activeEdges || [];
@@ -825,29 +846,27 @@ function IntelligentAnalysis() {
     ];
     
     return (
-      <div className="space-y-3">
-        <Label className="text-sm font-medium text-blue-500 flex items-center gap-2">
-          <Lightbulb size={18} />
-          {t('intelligentAnalysis.exampleTitle')}
-        </Label>
-        
-        <Select onValueChange={handleExampleSelect} disabled={loading}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} />
-          </SelectTrigger>
-          <SelectContent>
+        <div className="space-y-2">
+          <Select onValueChange={handleExampleSelect} disabled={loading}>
+            <SelectTrigger className="w-full h-10 bg-white/70 dark:bg-slate-800/70 backdrop-blur border border-blue-200 dark:border-slate-700 rounded-lg shadow-sm hover:shadow transition focus:ring-2 focus:ring-blue-400">
+              <div className="flex items-center w-full text-gray-700 dark:text-gray-200">
+                <Lightbulb size={16} className="text-amber-500 mr-2" />
+                <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} />
+              </div>
+            </SelectTrigger>
+            <SelectContent className="bg-white/80 dark:bg-slate-800/90 backdrop-blur-md border border-blue-100 dark:border-slate-700 shadow-lg rounded-lg">
             {exampleQueries.map((category, index) => (
               <SelectGroup key={index}>
-                <SelectLabel className={`text-${category.color}-600 font-semibold`}>
+                  <SelectLabel className={`text-${category.color}-600 font-semibold px-2 py-1`}>
                   {category.category}
                 </SelectLabel>
                 {category.examples.map((example, exampleIndex) => (
                   <SelectItem 
                     key={`${index}-${exampleIndex}`} 
                     value={example}
-                    className="cursor-pointer"
+                      className="cursor-pointer px-2 py-1 hover:bg-blue-50 dark:hover:bg-slate-700 rounded"
                   >
-                    <span className="text-sm">
+                      <span className="text-sm text-gray-700 dark:text-gray-200">
                       {category.category} - {example}
                     </span>
                   </SelectItem>
@@ -927,20 +946,15 @@ function IntelligentAnalysis() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
-      <div className="w-full px-6 py-6 space-y-8">
+    <div className="h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
+      <div className="w-full h-full px-3 py-0 overflow-y-auto">
         {/* Main content area */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 w-full">
         {/* Left side: Query form */}
-        <div className="space-y-6 h-full flex flex-col">
+        <div className="space-y-2 h-full flex flex-col">
           <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
-            <CardHeader className="bg-gradient-to-r from-blue-200 to-purple-200 text-gray-700 rounded-t-lg">
-              <CardTitle className="flex items-center text-xl">
-                <FaRobot className="mr-3 h-7 w-7" />
-                {t('intelligentAnalysis.intelligentQuery')}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-6 space-y-6">
+            {/* Header removed per request */}
+            <CardContent className="p-2 space-y-2">
                              {/* Current data source display and switching */}
                {availableDataSources.length > 0 && (
                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-100 dark:border-gray-700">
@@ -978,8 +992,11 @@ function IntelligentAnalysis() {
                  </div>
                )}
 
+              {/* Example dropdown between datasource and query input */}
+              {renderExampleQueries()}
+
               {/* Query form */}
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-2">
                 <div>
                   <Label htmlFor="query" className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
                     {t('intelligentAnalysis.inputLabel')}
@@ -989,13 +1006,13 @@ function IntelligentAnalysis() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={t('intelligentAnalysis.inputPlaceholder')}
-                    rows={4}
-                    className="w-full border-blue-200 focus:border-blue-300 focus:ring-blue-300 rounded-lg"
+                    rows={2}
+                    className="w-full border-blue-200 focus:border-blue-300 focus:ring-blue-300 rounded-lg bg-white/70 dark:bg-slate-800/70"
                     disabled={loading}
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                 <Button
                   type="submit"
                     disabled={loading || isLimited}
@@ -1003,7 +1020,6 @@ function IntelligentAnalysis() {
                 >
                   {loading ? (
                     <>
-                      <Spinner className="mr-2 h-5 w-5" />
                       {t('intelligentAnalysis.analyzing')}
                     </>
                     ) : isLimited ? (
@@ -1072,17 +1088,15 @@ function IntelligentAnalysis() {
             </CardContent>
           </Card>
 
-          {/* Example queries */}
-          <div className="flex-1">
-            {renderExampleQueries()}
-          </div>
+          {/* Example queries (removed at bottom per request) */}
+          <div className="flex-1"></div>
         </div>
 
         {/* Center: LangGraph flow */}
-        <div className="space-y-6">
+        <div className="space-y-2">
           {/* Flow chart */}
-          <Card className="shadow-xl border-0">
-            <CardContent className="p-6">
+          <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
+            <CardContent className="p-2">
               {renderLangGraphDiagram()}
             </CardContent>
           </Card>

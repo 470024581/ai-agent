@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from langchain_core.embeddings.embeddings import Embeddings
-from ..config.config import config
+from ..config.config import config, Config
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,19 @@ class EmbeddingFactory:
                 
         except Exception as e:
             logger.error(f"Failed to create embeddings ({provider}): {e}")
+            
+            # Auto-SSO refresh logic for Bedrock
+            if provider == "bedrock" and Config.ENABLE_AUTO_SSO_REFRESH:
+                from .llm_factory import refresh_sso_token
+                profile = embedding_config.get("profile", "DevOpsPermissionSet-412381743093")
+                if refresh_sso_token(profile):
+                    logger.info("SSO token refreshed successfully, retrying Bedrock embeddings initialization...")
+                    # Retry Bedrock embeddings initialization
+                    retry_embeddings = cls._create_bedrock_embeddings(embedding_config)
+                    if retry_embeddings and cls._verify_embeddings_connection(retry_embeddings, "bedrock"):
+                        logger.info("Successfully initialized Bedrock embeddings after SSO refresh")
+                        return retry_embeddings
+            
             raise
     
     @classmethod

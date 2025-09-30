@@ -96,6 +96,9 @@ class Config:
     MAX_PROMPT_CACHE_SIZE: int = int(os.getenv("MAX_PROMPT_CACHE_SIZE", "100"))
     PROMPT_CACHE_TTL_HOURS: int = int(os.getenv("PROMPT_CACHE_TTL_HOURS", "24"))
     
+    # Auto-SSO refresh configuration
+    ENABLE_AUTO_SSO_REFRESH: bool = os.getenv("ENABLE_AUTO_SSO_REFRESH", "true").lower() == "true"
+    
     # CORS configuration
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
