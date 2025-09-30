@@ -196,6 +196,7 @@ class WorkflowEventType(str, Enum):
     EDGE_ACTIVATED = "edge_activated"
     EXECUTION_COMPLETED = "execution_completed"
     EXECUTION_ERROR = "execution_error"
+    TOKEN_STREAM = "token_stream"  # NEW: Token-level streaming
 
 class WorkflowEvent(BaseModel):
     """Workflow event message"""
@@ -211,6 +212,8 @@ class WorkflowEvent(BaseModel):
     data: Optional[Dict[str, Any]] = None
     retry_count: Optional[int] = None
     quality_score: Optional[int] = None
+    token: Optional[str] = None  # NEW: For TOKEN_STREAM events, contains the token text
+    stream_complete: Optional[bool] = None  # NEW: Indicates if streaming is complete
 
 class NodeExecutionDetails(BaseModel):
     """Detailed node execution information"""

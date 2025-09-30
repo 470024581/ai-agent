@@ -119,6 +119,36 @@ const workflowSlice = createSlice({
             node.output = output;
         }
     },
+    streamToken: (state, action) => {
+        const { executionId, token, nodeId, stream_complete } = action.payload;
+        if (state.executions[executionId]) {
+            const execution = state.executions[executionId];
+            
+            // Initialize streaming state if not exists
+            if (!execution.streamingAnswer) {
+                execution.streamingAnswer = "";
+            }
+            
+            // Append token to streaming answer
+            if (token) {
+                execution.streamingAnswer += token;
+            }
+            
+            // Update streaming status
+            execution.isStreaming = !stream_complete;
+            
+            // When streaming completes, set final answer
+            if (stream_complete) {
+                execution.finalAnswer = execution.streamingAnswer;
+                execution.isStreaming = false;
+            }
+            
+            // Update node state if node is streaming
+            if (nodeId && execution.nodes[nodeId]) {
+                execution.nodes[nodeId].isStreaming = !stream_complete;
+            }
+        }
+    },
     errorNode: (state, action) => {
         const { executionId, nodeId, error } = action.payload;
         if (state.executions[executionId]?.nodes[nodeId]) {
@@ -174,6 +204,7 @@ export const {
   errorExecution,
   startNode,
   completeNode,
+  streamToken,
   errorNode,
   activateEdge,
   clearActiveEdges,

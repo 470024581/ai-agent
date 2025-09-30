@@ -16,6 +16,135 @@ from ..database.db_operations import get_active_datasource  # Added to get activ
 
 logger = logging.getLogger(__name__)
 
+# ==================== Streaming LLM Utility ====================
+
+async def stream_llm_response(prompt: str, execution_id: str, node_id: str = "llm_processing_node") -> str:
+    """Stream LLM response token by token via WebSocket.
+    
+    Args:
+        prompt: The prompt to send to LLM
+        execution_id: Execution ID for WebSocket routing
+        node_id: Node ID generating the stream (default: llm_processing_node)
+        
+    Returns:
+        Complete response text
+    """
+    from ..websocket.websocket_manager import websocket_manager
+    
+    if not llm:
+        logger.warning("LLM not available for streaming")
+        return "LLM not initialized. Cannot generate streaming response."
+    
+    try:
+        full_response = ""
+        
+        # Check if LLM supports streaming
+        if hasattr(llm, 'astream'):
+            logger.info(f"Starting LLM token streaming for execution {execution_id}")
+            
+            # Stream tokens
+            async for chunk in llm.astream(prompt):
+                # Extract token from chunk
+                token = ""
+                if hasattr(chunk, 'content'):
+                    token = chunk.content
+                elif isinstance(chunk, str):
+                    token = chunk
+                else:
+                    token = str(chunk)
+                
+                if token:
+                    full_response += token
+                    # Send token via WebSocket
+                    await websocket_manager.stream_token(
+                        execution_id=execution_id,
+                        token=token,
+                        node_id=node_id,
+                        stream_complete=False
+                    )
+            
+            # Send stream complete signal
+            await websocket_manager.stream_token(
+                execution_id=execution_id,
+                token="",
+                node_id=node_id,
+                stream_complete=True
+            )
+            
+            logger.info(f"LLM streaming completed for execution {execution_id}. Total length: {len(full_response)}")
+            
+        else:
+            # Fallback to non-streaming
+            logger.warning("LLM does not support streaming, falling back to invoke()")
+            response = llm.invoke(prompt)
+            
+            if hasattr(response, 'content'):
+                full_response = response.content
+            elif isinstance(response, str):
+                full_response = response
+            else:
+                full_response = str(response)
+        
+        return full_response
+        
+    except Exception as e:
+        logger.error(f"Error in LLM streaming: {e}", exc_info=True)
+        # Send error signal
+        await websocket_manager.stream_token(
+            execution_id=execution_id,
+            token=f"[Error: {str(e)}]",
+            node_id=node_id,
+            stream_complete=True
+        )
+        return f"Error generating response: {str(e)}"
+
+async def _stream_text_as_tokens(text: str, execution_id: str, node_id: str = "llm_processing_node", chunk_size: int = 5):
+    """Simulate token streaming by splitting text into chunks and sending via WebSocket.
+    
+    Args:
+        text: Complete text to stream
+        execution_id: Execution ID for WebSocket routing
+        node_id: Node ID generating the stream
+        chunk_size: Number of characters per chunk (default: 5 for word-like chunks)
+    """
+    from ..websocket.websocket_manager import websocket_manager
+    import asyncio
+    
+    if not text or not execution_id:
+        return
+    
+    logger.info(f"Starting simulated token streaming for execution {execution_id}, text length: {len(text)}")
+    
+    # Split text into chunks (simulate tokens)
+    words = text.split()
+    current_chunk = ""
+    
+    for word in words:
+        current_chunk = word + " "
+        
+        # Send chunk as token
+        await websocket_manager.stream_token(
+            execution_id=execution_id,
+            token=current_chunk,
+            node_id=node_id,
+            stream_complete=False
+        )
+        
+        # Small delay to simulate real-time generation (10ms per word)
+        await asyncio.sleep(0.01)
+    
+    # Send stream complete signal
+    await websocket_manager.stream_token(
+        execution_id=execution_id,
+        token="",
+        node_id=node_id,
+        stream_complete=True
+    )
+    
+    logger.info(f"Completed simulated token streaming for execution {execution_id}")
+
+# ==================== Graph State Definition ====================
+
 class GraphState(TypedDict):
     """Define graph state"""
     user_input: str
@@ -29,6 +158,7 @@ class GraphState(TypedDict):
     retry_count: int
     datasource: Dict[str, Any]
     error: Optional[str]
+    execution_id: str  # NEW: For WebSocket routing and token streaming
 
 def router_node(state: GraphState) -> GraphState:
     """Router node: determine whether to use SQL or RAG based on user input"""
@@ -417,14 +547,15 @@ def chart_rendering_node(state: GraphState) -> GraphState:
         logger.error(f"Chart rendering error: {e}")
         return {**state, "error": str(e)}
 
-def llm_processing_node(state: GraphState) -> GraphState:
-    """LLM processing node: process results with LLM for natural language response"""
+async def llm_processing_node(state: GraphState) -> GraphState:
+    """LLM processing node: process results with LLM for natural language response (with token streaming)"""
     try:
         user_input = state["user_input"]
         structured_data = state.get("structured_data")
         chart_image = state.get("chart_image")
         existing_answer = state.get("answer", "")
         error = state.get("error")
+        execution_id = state.get("execution_id")
         
         # Debug logging
         logger.info(f"LLM Processing Node - Input: {user_input}")
@@ -440,22 +571,31 @@ def llm_processing_node(state: GraphState) -> GraphState:
             if rows:
                 logger.info(f"LLM Processing Node - First row: {rows[0]}")
         
-        # If there's an error, provide a helpful response
+        # If there's an error, provide a helpful response (no streaming for errors)
         if error:
             final_answer = f"I encountered an issue while processing your request: {error}. Please try rephrasing your question or check if the data source is properly configured."
             logger.info(f"LLM Processing Node - Returning error response: {final_answer}")
             return {**state, "answer": final_answer}
         
-        # If there's already an answer from RAG, use it
+        # If there's already an answer from RAG, stream it token by token for better UX
         if existing_answer and not structured_data and not chart_image:
-            logger.info(f"LLM Processing Node - Using existing RAG answer: {existing_answer}")
+            logger.info(f"LLM Processing Node - Streaming existing RAG answer: {existing_answer[:100]}...")
+            await _stream_text_as_tokens(existing_answer, execution_id)
             return {**state, "answer": existing_answer}
         
         # For SQL results, generate a natural language response
         if structured_data:
             if chart_image:
-                final_answer = f"I've generated a chart to visualize the results for your query: '{user_input}'. The chart shows the data from your analysis."
-                logger.info(f"LLM Processing Node - Chart response: {final_answer}")
+                # For chart results, create a descriptive prompt and stream LLM response
+                chart_prompt = f"""
+                The user asked: "{user_input}"
+                
+                I've generated a visualization chart for this query. Please provide a brief, natural description
+                of what the chart shows and what insights the user can gain from it.
+                Keep the response concise (2-3 sentences) and friendly.
+                """
+                logger.info(f"LLM Processing Node - Streaming chart description via LLM")
+                final_answer = await stream_llm_response(chart_prompt, execution_id, "llm_processing_node")
             else:
                 # Generate intelligent text-based answer from structured data
                 rows = structured_data.get("rows", [])
@@ -465,15 +605,21 @@ def llm_processing_node(state: GraphState) -> GraphState:
                 logger.info(f"LLM Processing Node - Processing SQL results: rows={len(rows)}, columns={columns}")
                 
                 if rows:
-                    logger.info("LLM Processing Node - Calling _generate_intelligent_sql_response")
-                    final_answer = _generate_intelligent_sql_response(user_input, rows, columns, executed_sql)
-                    logger.info(f"LLM Processing Node - Generated intelligent response: {final_answer[:200]}...")
+                    logger.info("LLM Processing Node - Generating and streaming SQL response")
+                    # Generate structured answer first
+                    structured_answer = _generate_intelligent_sql_response(user_input, rows, columns, executed_sql)
+                    # Stream it token by token for better UX
+                    await _stream_text_as_tokens(structured_answer, execution_id)
+                    final_answer = structured_answer
+                    logger.info(f"LLM Processing Node - Streamed intelligent response: {final_answer[:200]}...")
                 else:
                     final_answer = f"No data was found matching your query '{user_input}'. Please try a different question or check if the data exists."
                     logger.info(f"LLM Processing Node - No rows response: {final_answer}")
+                    await _stream_text_as_tokens(final_answer, execution_id)
         else:
             final_answer = existing_answer or f"I've processed your query '{user_input}' but couldn't generate specific results. Please try rephrasing your question."
             logger.info(f"LLM Processing Node - Fallback response: {final_answer}")
+            await _stream_text_as_tokens(final_answer, execution_id)
         
         logger.info(f"LLM Processing Node - Final answer: {final_answer[:200]}...")
         return {**state, "answer": final_answer}
@@ -1620,7 +1766,8 @@ async def process_intelligent_query(
         "answer": "",
         "quality_score": 10,
         "retry_count": 0,
-        "error": None
+        "error": None,
+        "execution_id": execution_id  # NEW: For token streaming
     }
     
     config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}

@@ -1149,21 +1149,42 @@ function IntelligentAnalysis() {
                 </div>
               )}
               
-              {(result || currentExecutionData?.result) && (() => {
+              {(result || currentExecutionData?.result || currentExecutionData?.streamingAnswer) && (() => {
                 const actualResult = result || currentExecutionData?.result;
                 // Safely extract chart image and answer from the workflow result
                 console.log('Extracting data from actualResult:', actualResult);
-                const chartImage = actualResult.chart_rendering_node?.chart_image || actualResult.chart_image;
-                const answer = actualResult.llm_processing_node?.answer || actualResult.sql_execution_node?.answer || actualResult.answer;
+                const chartImage = actualResult?.chart_rendering_node?.chart_image || actualResult?.chart_image;
+                
+                // Priority: streaming answer > final answer > static answer
+                const streamingAnswer = currentExecutionData?.streamingAnswer;
+                const finalAnswer = currentExecutionData?.finalAnswer || actualResult?.llm_processing_node?.answer || actualResult?.sql_execution_node?.answer || actualResult?.answer;
+                const isStreaming = currentExecutionData?.isStreaming || false;
+                const displayAnswer = streamingAnswer || finalAnswer;
+                
                 console.log('Extracted chartImage:', chartImage);
-                console.log('Extracted answer:', answer);
+                console.log('Streaming answer:', streamingAnswer?.substring(0, 100));
+                console.log('Final answer:', finalAnswer?.substring(0, 100));
+                console.log('Is streaming:', isStreaming);
 
                 return (
                   <div className="flex flex-col gap-6">
-                    {/* Answer Text */}
-                    {answer && (
-                      <div className="prose max-w-none text-gray-700">
-                        <p className="whitespace-pre-wrap">{answer}</p>
+                    {/* Streaming Indicator */}
+                    {isStreaming && (
+                      <div className="flex items-center gap-2 text-blue-600 animate-pulse">
+                        <FaSpinner className="animate-spin" />
+                        <span className="text-sm font-medium">{t('intelligentAnalysis.generatingAnswer') || 'Generating answer...'}</span>
+                      </div>
+                    )}
+                    
+                    {/* Answer Text with Streaming Support */}
+                    {displayAnswer && (
+                      <div className="prose max-w-none text-gray-700 relative">
+                        <p className="whitespace-pre-wrap">
+                          {displayAnswer}
+                          {isStreaming && (
+                            <span className="inline-block w-2 h-5 ml-1 bg-blue-600 animate-pulse">|</span>
+                          )}
+                        </p>
                       </div>
                     )}
 

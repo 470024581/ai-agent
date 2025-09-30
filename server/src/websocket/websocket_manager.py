@@ -108,6 +108,51 @@ class WebSocketManager:
         for websocket, client_id in disconnected_clients:
             self.disconnect(websocket, client_id)
     
+    async def stream_token(self, execution_id: str, token: str, node_id: str = "llm_processing_node", stream_complete: bool = False):
+        """Stream a single token to all connections for an execution.
+        
+        Args:
+            execution_id: Execution ID
+            token: Token text to stream
+            node_id: Node ID generating the token (default: llm_processing_node)
+            stream_complete: Whether this is the last token in the stream
+        """
+        from ..models.data_models import WorkflowEvent, WorkflowEventType
+        import time
+        
+        if execution_id not in self.execution_to_client:
+            logger.warning(f"No active WebSocket connections for execution {execution_id} to stream token.")
+            return
+        
+        # Create token stream event
+        event = WorkflowEvent(
+            type=WorkflowEventType.TOKEN_STREAM,
+            execution_id=execution_id,
+            timestamp=time.time(),
+            node_id=node_id,
+            token=token,
+            stream_complete=stream_complete
+        )
+        
+        # Prepare message
+        message = event.dict()
+        
+        # Send to all connected clients for this execution
+        disconnected_clients = []
+        for cid, websocket in self.active_connections.items():
+            if self.execution_to_client.get(execution_id) == cid:
+                try:
+                    await self.send_to_websocket(websocket, message)
+                except WebSocketDisconnect:
+                    disconnected_clients.append((websocket, cid))
+                except Exception as e:
+                    logger.error(f"Error streaming token to WebSocket: {e}")
+                    disconnected_clients.append((websocket, cid))
+        
+        # Clean up disconnected WebSockets
+        for websocket, client_id in disconnected_clients:
+            self.disconnect(websocket, client_id)
+    
     def update_execution_state(self, execution_id: str, event: WorkflowEvent):
         """Update execution state based on event"""
         if execution_id not in self.execution_states:

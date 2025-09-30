@@ -10,6 +10,7 @@ import {
   errorExecution,
   startNode,
   completeNode,
+  streamToken,
   errorNode,
   activateEdge,
 } from '../store/workflowSlice';
@@ -64,6 +65,16 @@ const useWorkflowWebSocket = () => {
             nodeId: data.node_id,
             timestamp: data.timestamp,
             output: data.data?.output
+          }));
+          break;
+
+        case 'token_stream':
+          // Handle token-level streaming
+          dispatch(streamToken({
+            executionId: data.execution_id,
+            token: data.token,
+            nodeId: data.node_id,
+            stream_complete: data.stream_complete
           }));
           break;
 
