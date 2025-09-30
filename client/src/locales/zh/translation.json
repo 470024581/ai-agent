@@ -243,6 +243,7 @@
       "qualityValidationDesc": "评分验证输出质量"
     },
     "exampleTitle": "示例查询",
+    "selectExample": "选择一个示例查询...",
     "rateLimit": {
       "exceeded": "使用频次超限",
       "waitTime": "请等待{time}后重试",

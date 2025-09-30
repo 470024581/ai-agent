@@ -250,6 +250,8 @@
     "selectDataSource": "Select a data source...",
     "langGraphProcess": "LangGraph Analysis Process",
     "exampleQueries": "Example Queries",
+    "exampleTitle": "Example Queries",
+    "selectExample": "Select an example query...",
     "analysisResult": "Analysis Result",
     "qualityScore": "Quality Score",
     "connectionStatus": {

@@ -48,6 +48,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Spinner } from './ui/spinner';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from './ui/select';
 import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, FileText, AlertCircle } from 'lucide-react';
 
 function IntelligentAnalysis() {
@@ -230,8 +231,43 @@ function IntelligentAnalysis() {
     }
   };
 
+  // Example queries data structure
+  const exampleQueries = [
+    {
+      category: 'SQL Chart',
+      color: 'blue',
+      examples: [
+        'Generate a monthly sales trend chart for 2025.',
+        'The pie chart shows the sales proportion of each product.'
+      ]
+    },
+    {
+      category: 'SQL Query',
+      color: 'green',
+      examples: [
+        "What's the average price of each product category?",
+        'What are the sales this month?'
+      ]
+    },
+    {
+      category: 'RAG Query',
+      color: 'purple',
+      examples: [
+        'Do you know any software developers?',
+        'Who is Longliang?'
+      ]
+    }
+  ];
+
   const handleExampleClick = (exampleQuery) => {
     setQuery(exampleQuery);
+  };
+
+  // Handle example select change
+  const handleExampleSelect = (value) => {
+    if (value && value !== 'placeholder') {
+      setQuery(value);
+    }
   };
 
   // Data formatting utilities for node details
@@ -789,109 +825,37 @@ function IntelligentAnalysis() {
     ];
     
     return (
-      <div className="space-y-4">
-        <h6 className="text-sm font-medium text-blue-500 flex items-center gap-2">
+      <div className="space-y-3">
+        <Label className="text-sm font-medium text-blue-500 flex items-center gap-2">
           <Lightbulb size={18} />
           {t('intelligentAnalysis.exampleTitle')}
-        </h6>
-        {/* SQL Chart Section */}
-        <div className="space-y-3">
-          <div className="flex items-center">
-            <div className="px-3 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-medium border border-blue-200">
-              SQL Chart
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("Generate a monthly sales trend chart for 2025.")}
-              disabled={loading}
-              className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                Generate a monthly sales trend chart for 2025.
-              </span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("The pie chart shows the sales proportion of each product.")}
-              disabled={loading}
-              className="text-left justify-start border-blue-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                The pie chart shows the sales proportion of each product.
-              </span>
-            </Button>
-          </div>
-        </div>
-
-        {/* SQL Query Section */}
-        <div className="space-y-3">
-          <div className="flex items-center">
-            <div className="px-3 py-1.5 bg-green-50 text-green-600 rounded-full text-sm font-medium border border-green-200">
-              SQL Query
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("What's the average price of each product category?")}
-              disabled={loading}
-              className="text-left justify-start border-green-200 hover:border-green-300 hover:text-green-500 hover:bg-green-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                What's the average price of each product category?
-              </span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("What are the sales this month?")}
-              disabled={loading}
-              className="text-left justify-start border-green-200 hover:border-green-300 hover:text-green-500 hover:bg-green-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                What are the sales this month?
-              </span>
-            </Button>
-          </div>
-        </div>
-
-        {/* RAG Query Section */}
-        <div className="space-y-3">
-          <div className="flex items-center">
-            <div className="px-3 py-1.5 bg-purple-50 text-purple-600 rounded-full text-sm font-medium border border-purple-200">
-              RAG Query
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("Do you know any software developers?")}
-              disabled={loading}
-              className="text-left justify-start border-purple-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                Do you know any software developers?
-              </span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleExampleClick("Who is Longliang?")}
-              disabled={loading}
-              className="text-left justify-start border-purple-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50 transition-all duration-200 rounded-lg h-auto py-3 px-4 text-sm whitespace-normal break-words min-h-[3rem]"
-            >
-              <span className="block w-full text-left leading-relaxed">
-                Who is Longliang?
-              </span>
-            </Button>
-          </div>
-        </div>
+        </Label>
+        
+        <Select onValueChange={handleExampleSelect} disabled={loading}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} />
+          </SelectTrigger>
+          <SelectContent>
+            {exampleQueries.map((category, index) => (
+              <SelectGroup key={index}>
+                <SelectLabel className={`text-${category.color}-600 font-semibold`}>
+                  {category.category}
+                </SelectLabel>
+                {category.examples.map((example, exampleIndex) => (
+                  <SelectItem 
+                    key={`${index}-${exampleIndex}`} 
+                    value={example}
+                    className="cursor-pointer"
+                  >
+                    <span className="text-sm">
+                      {category.category} - {example}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     );
   };
