@@ -91,28 +91,28 @@ function IntelligentAnalysis() {
   // LangGraph nodes and edges definition - optimized layout for better visual flow
   const langGraphNodes = [
     // Layer 1: Start
-    { id: 'start_node', name: 'Start', type: 'start', position: { x: 400, y: 60 }, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
+    { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 1, totalCols: 1, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
     
     // Layer 2: Router
-    { id: 'router_node', name: 'Router', type: 'decision', position: { x: 400, y: 180 }, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
+    { id: 'router_node', name: 'Router', type: 'decision', layer: 2, col: 1, totalCols: 1, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
     
     // Layer 3: Path Split
-    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', position: { x: 250, y: 300 }, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
-    { id: 'rag_query_node', name: 'RAG Query', type: 'process', position: { x: 550, y: 300 }, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
+    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', layer: 3, col: 1, totalCols: 2, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
+    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 2, totalCols: 2, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
     
     // Layer 4: SQL Execution
-    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', position: { x: 150, y: 430 }, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
-    { id: 'sql_query_node', name: 'SQL Query', type: 'process', position: { x: 350, y: 430 }, description: 'Execute database query', icon: FaDatabase, color: 'green' },
+    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', layer: 4, col: 1, totalCols: 2, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
+    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 4, col: 2, totalCols: 2, description: 'Execute database query', icon: FaDatabase, color: 'green' },
     
     // Layer 5: Chart Processing
-    { id: 'chart_config_node', name: 'Chart Config', type: 'process', position: { x: 150, y: 560 }, description: 'Generate chart configuration', icon: FaCogs, color: 'amber' },
-    { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', position: { x: 250, y: 690 }, description: 'Call QuickChart API', icon: FaChartLine, color: 'orange' },
+    { id: 'chart_config_node', name: 'Chart Config', type: 'process', layer: 5, col: 1, totalCols: 2, description: 'Generate chart configuration', icon: FaCogs, color: 'amber' },
+    { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', layer: 5, col: 2, totalCols: 2, description: 'Call QuickChart API', icon: FaChartLine, color: 'orange' },
     
     // Layer 6: LLM Convergence
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', position: { x: 400, y: 690 }, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 6, col: 1, totalCols: 1, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
     
     // Layer 7: End
-    { id: 'end_node', name: 'Complete', type: 'end', position: { x: 400, y: 810 }, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
+    { id: 'end_node', name: 'Complete', type: 'end', layer: 7, col: 1, totalCols: 1, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
   ];
 
   const langGraphEdges = [
@@ -863,11 +863,11 @@ function IntelligentAnalysis() {
                   {category.category}
                 </SelectLabel>
                 {category.examples.map((example, exampleIndex) => (
-                  <SelectItem 
-                    key={`${index}-${exampleIndex}`} 
-                    value={example}
-                      className="cursor-pointer px-4 py-3 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-gray-700 dark:hover:to-gray-600 rounded-lg mx-2 my-1 transition-all duration-200"
-                  >
+                       <SelectItem 
+                         key={`${index}-${exampleIndex}`} 
+                         value={example}
+                         className="cursor-pointer px-4 py-2 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-gray-700 dark:hover:to-gray-600 rounded-lg mx-2 my-0.5 transition-all duration-200"
+                       >
                       <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       {category.category} - {example}
                     </span>

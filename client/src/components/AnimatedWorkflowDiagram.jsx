@@ -63,8 +63,8 @@ const Circle = forwardRef(({ className, children, icon: Icon, color = 'blue', is
   };
 
   const colorSet = colorClasses[color] || colorClasses.blue;
-  const sizeClasses = size === 'small' ? 'h-10 w-10' : 'h-14 w-14';
-  const iconSize = size === 'small' ? 'h-4 w-4' : 'h-6 w-6';
+  const sizeClasses = size === 'small' ? 'h-8 w-8' : 'h-12 w-12';
+  const iconSize = size === 'small' ? 'h-3 w-3' : 'h-5 w-5';
 
   return (
     <div
@@ -126,8 +126,8 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
     const rect = container.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
-    const paddingX = 48; // left/right padding for layout
-    const paddingY = 24; // top/bottom padding for layout
+    const paddingX = 40; // left/right padding for layout
+    const paddingY = 30; // top/bottom padding for layout
 
     // Group nodes by layer if layer is provided
     const layers = new Map();
@@ -151,7 +151,7 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
     const sortedLayers = Array.from(layers.keys()).sort((a, b) => a - b);
     const layerCount = sortedLayers.length;
     const availableHeight = Math.max(1, height - paddingY * 2);
-    const layerGap = availableHeight / Math.max(1, layerCount - 1);
+    const layerGap = layerCount > 1 ? availableHeight / (layerCount - 1) : availableHeight / 2;
 
     const positions = {};
     sortedLayers.forEach((layerIdx, li) => {
@@ -165,7 +165,12 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
         const totalCols = node.totalCols != null ? Number(node.totalCols) : colCount;
         const availableWidth = Math.max(1, width - paddingX * 2);
         const x = paddingX + (availableWidth * (col + 1)) / (totalCols + 1);
-        positions[node.id] = { x, y };
+        
+        // Ensure x and y are within bounds
+        const clampedX = Math.max(paddingX, Math.min(width - paddingX, x));
+        const clampedY = Math.max(paddingY, Math.min(height - paddingY, y));
+        
+        positions[node.id] = { x: clampedX, y: clampedY };
       });
     });
 
@@ -175,7 +180,7 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
   const responsivePositions = computePositions();
 
   return (
-    <div className="relative w-full h-[400px] flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 rounded-xl p-4 shadow-inner" ref={containerRef}>
+    <div className="relative w-full h-full min-h-[300px] max-h-[500px] flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 rounded-xl p-3 shadow-inner" ref={containerRef}>
       <style>{`
         @keyframes pulse-strong {
           0%, 100% {
@@ -222,10 +227,11 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
               isActive={isNodeActive(node.id)}
               isCompleted={isNodeCompleted(node.id)}
               size={node.type === 'start' || node.type === 'end' ? 'small' : 'default'}
+              data-node-id={node.id}
             />
-            <div className="text-center max-w-[100px] transition-all duration-300">
+            <div className="text-center max-w-[80px] transition-all duration-300">
               <div className={cn(
-                'text-xs font-bold transition-colors duration-300',
+                'text-[10px] font-semibold transition-colors duration-300 leading-tight',
                 isNodeActive(node.id) && 'text-blue-600 dark:text-blue-300',
                 isNodeCompleted(node.id) && 'text-gray-400 dark:text-gray-600',
                 !isNodeActive(node.id) && !isNodeCompleted(node.id) && 'text-gray-700 dark:text-gray-300'
@@ -281,19 +287,19 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
       })}
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-lg p-3 shadow-xl border border-gray-200 dark:border-gray-700">
-        <div className="text-[10px] font-bold mb-2 text-gray-800 dark:text-gray-200 uppercase tracking-wide">Status</div>
-        <div className="flex flex-col gap-1.5 text-[10px]">
-          <div className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-blue-400 ring-opacity-50 shadow-lg" style={{ animation: 'pulse-strong 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}></div>
+      <div className="absolute bottom-2 left-2 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-md p-2 shadow-lg border border-gray-200 dark:border-gray-700">
+        <div className="text-[9px] font-bold mb-1.5 text-gray-800 dark:text-gray-200 uppercase tracking-wide">Status</div>
+        <div className="flex flex-col gap-1 text-[9px]">
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-blue-500 ring-1 ring-blue-400 ring-opacity-50 shadow-md" style={{ animation: 'pulse-strong 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}></div>
             <span className="text-gray-700 dark:text-gray-300 font-medium">Active</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-full bg-green-500 shadow-md"></div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-green-500 shadow-md"></div>
             <span className="text-gray-700 dark:text-gray-300 font-medium">Completed</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600"></div>
             <span className="text-gray-700 dark:text-gray-300 font-medium">Pending</span>
           </div>
         </div>
