@@ -952,9 +952,9 @@ function IntelligentAnalysis() {
       {/* Background decoration */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-400/20 via-transparent to-purple-600/20 dark:from-blue-500/20 dark:to-purple-700/20"></div>
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-indigo-400/20 via-transparent to-cyan-400/20 dark:from-indigo-500/20 dark:to-cyan-500/20"></div>
-       <div className="relative w-full h-full px-4 py-2 overflow-y-auto">
+       <div className="relative w-full h-full px-4 py-2">
          {/* Main content area - Three columns layout */}
-         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full h-full">
+         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full" style={{height: 'calc(100vh - 2rem)'}}>
          {/* Left side: Query form - 1 column */}
          <div className="space-y-4 h-full flex flex-col">
            <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1">
@@ -1007,7 +1007,13 @@ function IntelligentAnalysis() {
                )}
 
               {/* Example dropdown between datasource and query input */}
-              {renderExampleQueries()}
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center">
+                  <Lightbulb className="h-4 w-4 text-yellow-500 mr-2" />
+                  Example Queries
+                </Label>
+                {renderExampleQueries()}
+              </div>
 
               {/* Query form */}
               <form onSubmit={handleSubmit} className="space-y-6">
@@ -1108,21 +1114,16 @@ function IntelligentAnalysis() {
          <div className="space-y-4 h-full flex flex-col">
            <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1 flex flex-col">
             <CardHeader className="bg-gradient-to-r from-emerald-400/20 via-teal-400/20 to-cyan-400/20 dark:from-emerald-500/20 dark:via-teal-500/20 dark:to-cyan-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30 flex-shrink-0">
-              <CardTitle className="flex items-center text-2xl font-bold justify-between">
+              <CardTitle className="flex items-center text-2xl font-bold">
                 <div className="flex items-center">
                   <div className="p-3 bg-gradient-to-r from-emerald-400 to-teal-500 rounded-xl shadow-lg mr-4">
                     <FaLightbulb className="h-6 w-6 text-white" />
                   </div>
                   {t('intelligentAnalysis.analysisResult')}
                 </div>
-                {(result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score) && (
-                  <Badge variant="secondary" className="bg-gradient-to-r from-green-400 to-emerald-500 text-white px-4 py-2 rounded-full shadow-lg font-semibold">
-                    {t('intelligentAnalysis.qualityScore')}: {result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score}/10
-                  </Badge>
-                )}
               </CardTitle>
             </CardHeader>
-             <CardContent className="p-6 space-y-6 flex-1 overflow-y-auto">
+             <CardContent className="p-6 space-y-6 overflow-y-auto" style={{height: '500px'}}>
                {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
                  <div className="flex items-center justify-center h-40">
                    <Spinner className="h-8 w-8" />
@@ -1162,13 +1163,6 @@ function IntelligentAnalysis() {
 
                 return (
                   <div className="flex flex-col gap-6">
-                    {/* Streaming Indicator */}
-                    {isStreaming && (
-                      <div className="flex items-center gap-2 text-blue-600 animate-pulse">
-                        <FaSpinner className="animate-spin" />
-                        <span className="text-sm font-medium">{t('intelligentAnalysis.generatingAnswer') || 'Generating answer...'}</span>
-                      </div>
-                    )}
                     
                     {/* Answer Text with Streaming Support */}
                     {displayAnswer && (
