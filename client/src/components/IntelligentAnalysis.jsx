@@ -846,15 +846,17 @@ function IntelligentAnalysis() {
     ];
     
     return (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <Select onValueChange={handleExampleSelect} disabled={loading}>
-            <SelectTrigger className="w-full h-10 bg-white/70 dark:bg-slate-800/70 backdrop-blur border border-blue-200 dark:border-slate-700 rounded-lg shadow-sm hover:shadow transition focus:ring-2 focus:ring-blue-400">
-              <div className="flex items-center w-full text-gray-700 dark:text-gray-200">
-                <Lightbulb size={16} className="text-amber-500 mr-2" />
-                <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} />
+            <SelectTrigger className="w-full h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-0 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500/50">
+              <div className="flex items-center w-full text-gray-800 dark:text-gray-200">
+                <div className="p-2 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-lg shadow-md mr-3">
+                  <Lightbulb size={16} className="text-white" />
+                </div>
+                <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} className="font-medium" />
               </div>
             </SelectTrigger>
-            <SelectContent className="bg-white/80 dark:bg-slate-800/90 backdrop-blur-md border border-blue-100 dark:border-slate-700 shadow-lg rounded-lg">
+            <SelectContent className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-0 shadow-2xl rounded-xl">
             {exampleQueries.map((category, index) => (
               <SelectGroup key={index}>
                   <SelectLabel className={`text-${category.color}-600 font-semibold px-2 py-1`}>
@@ -864,9 +866,9 @@ function IntelligentAnalysis() {
                   <SelectItem 
                     key={`${index}-${exampleIndex}`} 
                     value={example}
-                      className="cursor-pointer px-2 py-1 hover:bg-blue-50 dark:hover:bg-slate-700 rounded"
+                      className="cursor-pointer px-4 py-3 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-gray-700 dark:hover:to-gray-600 rounded-lg mx-2 my-1 transition-all duration-200"
                   >
-                      <span className="text-sm text-gray-700 dark:text-gray-200">
+                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       {category.category} - {example}
                     </span>
                   </SelectItem>
@@ -946,29 +948,41 @@ function IntelligentAnalysis() {
   };
 
   return (
-    <div className="h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-gray-900 dark:via-blue-900 dark:to-indigo-900">
-      <div className="w-full h-full px-3 py-0 overflow-y-auto">
-        {/* Main content area */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 w-full">
-        {/* Left side: Query form */}
-        <div className="space-y-2 h-full flex flex-col">
-          <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
-            {/* Header removed per request */}
-            <CardContent className="p-2 space-y-2">
+    <div className="h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50/80 to-indigo-100/80 dark:from-gray-900 dark:via-blue-900/80 dark:to-indigo-900/80 relative">
+      {/* Background decoration */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-400/20 via-transparent to-purple-600/20 dark:from-blue-500/20 dark:to-purple-700/20"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-indigo-400/20 via-transparent to-cyan-400/20 dark:from-indigo-500/20 dark:to-cyan-500/20"></div>
+       <div className="relative w-full h-full px-4 py-2 overflow-y-auto">
+         {/* Main content area - Three columns layout */}
+         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full h-full">
+         {/* Left side: Query form - 1 column */}
+         <div className="space-y-4 h-full flex flex-col">
+           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1">
+             <CardHeader className="bg-gradient-to-r from-blue-400/20 via-indigo-400/20 to-purple-400/20 dark:from-blue-500/20 dark:via-indigo-500/20 dark:to-purple-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
+               <CardTitle className="flex items-center text-2xl font-bold justify-between">
+                 <div className="flex items-center">
+                   <div className="p-3 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-xl shadow-lg mr-4">
+                     <FaDatabase className="h-6 w-6 text-white" />
+                   </div>
+                   Query Input
+                 </div>
+               </CardTitle>
+             </CardHeader>
+             <CardContent className="p-6 space-y-6 h-full overflow-y-auto">
                              {/* Current data source display and switching */}
                {availableDataSources.length > 0 && (
-                 <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-blue-100 dark:border-gray-700">
-                   <Label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 block">
-                     {t('intelligentAnalysis.currentDataSource')}:
+                 <div className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-4 border border-white/20 dark:border-gray-600/30 shadow-lg">
+                   <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center">
+                     <FaDatabase className="h-4 w-4 text-blue-500 mr-2" />
+                     {t('intelligentAnalysis.currentDataSource')}
                    </Label>
                    <div className="space-y-3">
-                     <div className="flex items-center space-x-2">
-                       <FaDatabase className="h-4 w-4 text-blue-500" />
-                       <span className="text-gray-800 dark:text-gray-200 font-medium">
+                     <div className="flex items-center justify-between">
+                       <span className="text-gray-800 dark:text-gray-200 font-semibold text-lg">
                          {activeDataSource?.name || t('intelligentAnalysis.noDataSource')}
                        </span>
                        {activeDataSource && (
-                         <Badge variant="secondary" className="bg-green-100 text-green-800 text-xs">
+                         <Badge variant="secondary" className="bg-gradient-to-r from-green-400 to-emerald-500 text-white text-xs px-3 py-1 rounded-full shadow-md">
                            Active
                          </Badge>
                        )}
@@ -977,7 +991,7 @@ function IntelligentAnalysis() {
                        <select
                          value={activeDataSource?.id || ''}
                          onChange={(e) => e.target.value && handleDataSourceChange(parseInt(e.target.value))}
-                         className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200"
+                         className="w-full px-4 py-3 text-sm border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm text-gray-800 dark:text-gray-200 shadow-lg transition-all duration-200 hover:shadow-xl"
                          disabled={loading}
                        >
                          <option value="">{t('intelligentAnalysis.selectDataSource')}</option>
@@ -996,9 +1010,10 @@ function IntelligentAnalysis() {
               {renderExampleQueries()}
 
               {/* Query form */}
-              <form onSubmit={handleSubmit} className="space-y-2">
+              <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
-                  <Label htmlFor="query" className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+                  <Label htmlFor="query" className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center">
+                    <FaLightbulb className="h-4 w-4 text-yellow-500 mr-2" />
                     {t('intelligentAnalysis.inputLabel')}
                   </Label>
                   <Textarea
@@ -1006,17 +1021,17 @@ function IntelligentAnalysis() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={t('intelligentAnalysis.inputPlaceholder')}
-                    rows={2}
-                    className="w-full border-blue-200 focus:border-blue-300 focus:ring-blue-300 rounded-lg bg-white/70 dark:bg-slate-800/70"
+                    rows={3}
+                    className="w-full border-0 rounded-xl bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm text-gray-800 dark:text-gray-200 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-lg transition-all duration-200 hover:shadow-xl resize-none"
                     disabled={loading}
                   />
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-4">
                 <Button
                   type="submit"
                     disabled={loading || isLimited}
-                    className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white py-3 rounded-lg font-medium transition-all duration-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full bg-gradient-to-r from-blue-500 via-purple-500 to-indigo-600 hover:from-blue-600 hover:via-purple-600 hover:to-indigo-700 text-white py-4 rounded-xl font-semibold text-lg transition-all duration-300 shadow-xl hover:shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
                 >
                   {loading && !currentExecutionData?.isStreaming ? (
                     <>
@@ -1087,47 +1102,35 @@ function IntelligentAnalysis() {
               )}
             </CardContent>
           </Card>
-
-          {/* Example queries (removed at bottom per request) */}
-          <div className="flex-1"></div>
         </div>
 
-        {/* Center: LangGraph flow */}
-        <div className="space-y-2">
-          {/* Flow chart */}
-          <Card className="shadow-xl border-0 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
-            <CardContent className="p-2">
-              {renderLangGraphDiagram()}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-        {/* Analysis results - full width display */}
-        {(loading || result || currentExecutionData?.result) && (
-          <Card className="w-full shadow-lg border-gray-300">
-            <CardHeader className="bg-gradient-to-r from-emerald-200 to-teal-200 text-gray-700 rounded-t-lg">
-              <CardTitle className="flex items-center text-xl justify-between">
+         {/* Center: Analysis results - 1 column */}
+         <div className="space-y-4 h-full flex flex-col">
+           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1 flex flex-col">
+            <CardHeader className="bg-gradient-to-r from-emerald-400/20 via-teal-400/20 to-cyan-400/20 dark:from-emerald-500/20 dark:via-teal-500/20 dark:to-cyan-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30 flex-shrink-0">
+              <CardTitle className="flex items-center text-2xl font-bold justify-between">
                 <div className="flex items-center">
-                  <FaLightbulb className="mr-3 h-7 w-7" />
+                  <div className="p-3 bg-gradient-to-r from-emerald-400 to-teal-500 rounded-xl shadow-lg mr-4">
+                    <FaLightbulb className="h-6 w-6 text-white" />
+                  </div>
                   {t('intelligentAnalysis.analysisResult')}
                 </div>
                 {(result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score) && (
-                  <Badge variant="secondary" className="bg-green-100 text-green-800">
+                  <Badge variant="secondary" className="bg-gradient-to-r from-green-400 to-emerald-500 text-white px-4 py-2 rounded-full shadow-lg font-semibold">
                     {t('intelligentAnalysis.qualityScore')}: {result?.validation_node?.quality_score || currentExecutionData?.result?.validation_node?.quality_score || result?.quality_score || currentExecutionData?.result?.quality_score}/10
                   </Badge>
                 )}
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-6 space-y-6">
-              {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
-                <div className="flex items-center justify-center h-40">
-                  <Spinner className="h-8 w-8" />
-                  <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
-                </div>
-              )}
-              
-              {(result || currentExecutionData?.result || currentExecutionData?.streamingAnswer) && (() => {
+             <CardContent className="p-6 space-y-6 flex-1 overflow-y-auto">
+               {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
+                 <div className="flex items-center justify-center h-40">
+                   <Spinner className="h-8 w-8" />
+                   <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
+                 </div>
+               )}
+               
+               {(() => {
                 const actualResult = result || currentExecutionData?.result;
                 // Safely extract chart image and answer from the workflow result
                 console.log('Extracting data from actualResult:', actualResult);
@@ -1143,6 +1146,19 @@ function IntelligentAnalysis() {
                 console.log('Streaming answer:', streamingAnswer?.substring(0, 100));
                 console.log('Final answer:', finalAnswer?.substring(0, 100));
                 console.log('Is streaming:', isStreaming);
+
+                // If no result yet, show placeholder
+                if (!actualResult && !streamingAnswer && !loading) {
+                  return (
+                    <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400">
+                      <div className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-4">
+                        <FaLightbulb className="h-8 w-8 text-blue-500" />
+                      </div>
+                      <h3 className="text-lg font-semibold mb-2">Ready for Analysis</h3>
+                      <p className="text-sm">Enter your query and click "Start Analysis" to see results here.</p>
+                    </div>
+                  );
+                }
 
                 return (
                   <div className="flex flex-col gap-6">
@@ -1195,10 +1211,31 @@ function IntelligentAnalysis() {
                   </div>
                 );
               })()}
-            </CardContent>
-          </Card>
-        )}
-      </div>
+             </CardContent>
+           </Card>
+         </div>
+
+         {/* Right side: LangGraph flow - 1 column */}
+         <div className="space-y-4 h-full flex flex-col">
+           {/* Flow chart */}
+           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1">
+             <CardHeader className="bg-gradient-to-r from-purple-400/20 via-pink-400/20 to-rose-400/20 dark:from-purple-500/20 dark:via-pink-500/20 dark:to-rose-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
+               <CardTitle className="flex items-center text-2xl font-bold justify-between">
+                 <div className="flex items-center">
+                   <div className="p-3 bg-gradient-to-r from-purple-400 to-pink-500 rounded-xl shadow-lg mr-4">
+                     <FaProjectDiagram className="h-6 w-6 text-white" />
+                   </div>
+                   Workflow Diagram
+                 </div>
+               </CardTitle>
+             </CardHeader>
+             <CardContent className="p-6 h-full">
+               {renderLangGraphDiagram()}
+             </CardContent>
+           </Card>
+         </div>
+       </div>
+       </div>
       
       {/* Node Detail Dialog */}
       {renderNodeDetailDialog()}
