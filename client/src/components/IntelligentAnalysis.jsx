@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
+import ChartRenderer from './charts/ChartRenderer';
+import InteractiveChart from './charts/InteractiveChart';
+import { convertBackendChartData, validateChartConfig, getChartTypeDisplayName } from '../lib/chartUtils';
 import { 
   FaBrain, 
   FaProjectDiagram, 
@@ -848,15 +851,15 @@ function IntelligentAnalysis() {
     return (
         <div className="space-y-3">
           <Select onValueChange={handleExampleSelect} disabled={loading}>
-            <SelectTrigger className="w-full h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-0 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500/50">
-              <div className="flex items-center w-full text-gray-800 dark:text-gray-200">
+            <SelectTrigger className="w-full h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-0 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500/50 overflow-hidden">
+              <div className="flex items-center w-full text-gray-800 dark:text-gray-200 min-w-0">
                 <div className="p-2 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-lg shadow-md mr-3">
                   <Lightbulb size={16} className="text-white" />
                 </div>
-                <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} className="font-medium" />
+                <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} className="font-medium truncate w-full" />
               </div>
             </SelectTrigger>
-            <SelectContent className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-0 shadow-2xl rounded-xl">
+            <SelectContent className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-0 shadow-2xl rounded-xl max-w-full">
             {exampleQueries.map((category, index) => (
               <SelectGroup key={index}>
                   <SelectLabel className={`text-${category.color}-600 font-semibold px-2 py-1`}>
@@ -866,9 +869,9 @@ function IntelligentAnalysis() {
                        <SelectItem 
                          key={`${index}-${exampleIndex}`} 
                          value={example}
-                         className="cursor-pointer px-4 py-2 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-gray-700 dark:hover:to-gray-600 rounded-lg mx-2 my-0.5 transition-all duration-200"
+                         className="cursor-pointer px-4 py-2 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-gray-700 dark:hover:to-gray-600 rounded-lg mx-2 my-0.5 transition-all duration-200 max-w-full overflow-hidden"
                        >
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate block w-full">
                       {category.category} - {example}
                     </span>
                   </SelectItem>
@@ -1176,16 +1179,86 @@ function IntelligentAnalysis() {
                       </div>
                     )}
 
-                    {/* Chart Image */}
-                    {chartImage && (
-                      <div className="flex items-center justify-center p-4 bg-gray-50 rounded-lg border">
-                        <img 
-                          src={chartImage} 
-                          alt={t('intelligentAnalysis.analysisChart')} 
-                          className="max-w-full h-auto rounded-md shadow-lg"
-                        />
-                      </div>
-                    )}
+                    {/* Interactive Chart */}
+                    {(() => {
+                      // Extract chart configuration from result
+                      const chartConfig = actualResult?.chart_config || actualResult?.chart_rendering_node?.chart_config;
+                      const chartType = actualResult?.chart_type || actualResult?.chart_rendering_node?.chart_type;
+                      const chartData = actualResult?.chart_data || actualResult?.chart_rendering_node?.chart_data;
+                      
+                      // Convert backend data to frontend format
+                      const frontendChartConfig = convertBackendChartData({
+                        chart_config: chartConfig,
+                        chart_type: chartType,
+                        chart_data: chartData
+                      });
+                      
+                      if (frontendChartConfig && validateChartConfig(frontendChartConfig)) {
+                        return (
+                          <InteractiveChart
+                            chartConfig={frontendChartConfig}
+                            onDataPointClick={(event) => {
+                              console.log('Data point clicked:', event);
+                            }}
+                            onChartTypeChange={(newType) => {
+                              console.log('Chart type changed to:', newType);
+                            }}
+                            showControls={true}
+                            className="w-full"
+                          />
+                        );
+                      }
+                      
+                      // Check for chart-related errors
+                      const chartError = actualResult?.error || actualResult?.chart_rendering_node?.error;
+                      if (chartError) {
+                        return (
+                          <div className="space-y-4">
+                            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                              <div className="flex items-center">
+                                <FaExclamationTriangle className="h-5 w-5 text-red-500 mr-3" />
+                                <div>
+                                  <h3 className="text-lg font-semibold text-red-800 dark:text-red-200">
+                                    Chart Generation Error
+                                  </h3>
+                                  <p className="text-sm text-red-600 dark:text-red-300 mt-1">
+                                    {chartError}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Provide helpful suggestions */}
+                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                              <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2">
+                                Suggestions:
+                              </h4>
+                              <ul className="text-sm text-blue-600 dark:text-blue-300 space-y-1">
+                                <li>• Ensure your data source has a database table configured</li>
+                                <li>• Check that the data source contains structured data</li>
+                                <li>• Try uploading a CSV or Excel file with tabular data</li>
+                                <li>• Verify that your query can be executed against the data source</li>
+                              </ul>
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      // Fallback to old image display if available
+                      if (chartImage) {
+                        return (
+                          <div className="flex items-center justify-center p-4 bg-gray-50 rounded-lg border">
+                            <img 
+                              src={chartImage} 
+                              alt={t('intelligentAnalysis.analysisChart')} 
+                              className="max-w-full h-auto rounded-md shadow-lg"
+                            />
+                          </div>
+                        );
+                      }
+                      
+                      return null;
+                    })()}
 
                     {/* Raw Data Details - show only if there's data and it's not just the chart/answer */}
                     {actualResult && (

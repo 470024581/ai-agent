@@ -171,7 +171,8 @@ def router_node(state: GraphState) -> GraphState:
             "sales", "count", "sum", "average", "total", "report", "data", "table", 
             "chart", "graph", "visualization", "trend", "statistics", "analysis",
             "product", "inventory", "amount", "quantity", "value", "calculate",
-            "show me", "how many", "how much", "what is the"
+            "show me", "how many", "how much", "what is the", "pie chart", "bar chart",
+            "line chart", "proportion", "percentage", "distribution", "breakdown"
         ]
         
         if any(keyword in user_input.lower() for keyword in sql_keywords):
@@ -183,10 +184,18 @@ def router_node(state: GraphState) -> GraphState:
         try:
             prompt = f"""
             Analyze the following user query and determine the most appropriate processing method:
-            1. sql - Data analysis, statistics, calculations, reports, charts (requires structured data from database)
-            2. rag - Knowledge search, document questions, explanations (requires document search)
+            1. sql - Data analysis, statistics, calculations, reports, charts, visualizations (requires structured data from database)
+               Examples: "show sales data", "generate pie chart", "sales proportion", "monthly trends", "product analysis"
+            2. rag - Knowledge search, document questions, explanations, general information (requires document search)
+               Examples: "what is machine learning", "explain the concept", "tell me about the company"
             
             User query: "{user_input}"
+            
+            Key indicators for SQL:
+            - Chart/graph requests (pie chart, bar chart, line chart)
+            - Data analysis (sales, products, trends, proportions)
+            - Statistical calculations (sum, count, average)
+            - Database queries (show me data, analyze results)
             
             Based on the query content, should this be processed with 'sql' or 'rag'?
             Only answer 'sql' or 'rag' (lowercase, no explanation needed).
@@ -499,7 +508,12 @@ def chart_config_node(state: GraphState) -> GraphState:
         # Generate chart configuration based on data and user requirements
         chart_config = generate_chart_config(structured_data, user_input)
         
-        return {**state, "chart_config": chart_config}
+        # Pass structured_data to next node for chart rendering
+        return {
+            **state, 
+            "chart_config": chart_config,
+            "structured_data": structured_data  # Ensure structured_data is passed through
+        }
     except Exception as e:
         logger.error(f"Chart config node error: {e}")
         return {**state, "error": str(e)}
@@ -542,17 +556,91 @@ async def rag_query_node(state: GraphState) -> GraphState:
         logger.error(f"RAG query node error: {e}")
         return {**state, "error": str(e)}
 
+# Sample data generation removed - system will use real data only
+
 def chart_rendering_node(state: GraphState) -> GraphState:
-    """Chart rendering node: render chart from configuration"""
+    """Chart rendering node: render interactive chart configuration"""
     try:
         chart_config = state.get("chart_config")
+        structured_data = state.get("structured_data")
+        
         if not chart_config:
             return {**state, "error": "Missing chart configuration"}
         
-        # Generate chart image
-        chart_image = generate_chart_image(chart_config)
+        # Require structured data for chart generation
+        if not structured_data:
+            return {**state, "error": "Missing structured data for chart"}
         
-        return {**state, "chart_image": chart_image}
+        # Import AntV chart service
+        from ..mcp.antv_chart_service import AntVChartService
+        
+        # Process structured data for chart generation
+        chart_type = chart_config.get("type", "line")
+        chart_title = chart_config.get("title", "Data Visualization")
+        
+        # Convert structured data to chart data format
+        chart_data = []
+        
+        # Handle structured_data format: {'rows': [...], 'columns': [...], ...}
+        if isinstance(structured_data, dict) and "rows" in structured_data:
+            rows = structured_data.get("rows", [])
+            if rows and len(rows) > 0:
+                # Convert rows to chart data format
+                for row in rows:
+                    if isinstance(row, dict):
+                        # Handle dict format like {'col_0': '2025-01', 'col_1': 42, 'col_2': 88293.43}
+                        row_keys = list(row.keys())
+                        if len(row_keys) >= 2:
+                            # Use first column as x-axis (time/date), last column as y-axis (value)
+                            x_value = row[row_keys[0]]  # e.g., '2025-01'
+                            y_value = row[row_keys[-1]]  # e.g., 88293.43
+                            chart_data.append({
+                                "x": str(x_value),
+                                "y": float(y_value) if isinstance(y_value, (int, float)) else 0
+                            })
+                    else:
+                        # Handle list format
+                        if len(row) >= 2:
+                            chart_data.append({
+                                "x": str(row[0]),
+                                "y": float(row[-1]) if isinstance(row[-1], (int, float)) else 0
+                            })
+        elif isinstance(structured_data, list) and len(structured_data) > 0:
+            # Handle direct list format
+            if isinstance(structured_data[0], dict):
+                chart_data = structured_data
+            else:
+                # Convert simple list to chart data
+                for i, value in enumerate(structured_data):
+                    chart_data.append({"x": i, "y": value})
+        else:
+            # No structured data available
+            logger.warning("No structured data available for chart generation")
+            return {**state, "error": "No structured data available for chart generation"}
+        
+        # Generate interactive chart configuration using PyEcharts
+        chart_service = AntVChartService()
+        interactive_chart_config = chart_service.render_chart(
+            chart_type=chart_type,
+            data=chart_data,
+            config={
+                "title": chart_title,
+                "xField": chart_config.get("xField", "x"),
+                "yField": chart_config.get("yField", "y"),
+                "seriesField": chart_config.get("seriesField"),
+                "categoryField": chart_config.get("categoryField", "category"),
+                "valueField": chart_config.get("valueField", "value")
+            }
+        )
+        
+        logger.info(f"Generated interactive chart config for {chart_type} chart")
+        
+        return {
+            **state, 
+            "chart_config": interactive_chart_config,
+            "chart_type": chart_type,
+            "chart_data": chart_data
+        }
     except Exception as e:
         logger.error(f"Chart rendering error: {e}")
         return {**state, "error": str(e)}
@@ -785,7 +873,10 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         }}
         
         Analysis requirements:
-        1. Determine the most suitable chart type based on user query
+        1. Determine the most suitable chart type based on user query:
+           - Use "pie" for: proportion, percentage, distribution, breakdown, "each product", "by category"
+           - Use "line" for: trend, over time, monthly, weekly, yearly, quarterly
+           - Use "bar" for: comparison, ranking, top/bottom items
         2. Generate meaningful titles and axis labels
         3. Identify which fields in the data should be used for labels and values
         4. **CRITICAL**: Analyze if this is a time series query by looking for keywords:
@@ -805,10 +896,10 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
            - For year grouping: use "Year"
            - For quarter grouping: use "Quarter"
            - For non-time series: use appropriate category label
-        7. For time series data:
-           - Always use "line" chart type for trends
-           - Set data_field_for_labels to "0" (first column, usually time)
-           - Set data_field_for_values to "1" (second column, usually aggregated values)
+        7. For different chart types:
+           - For pie charts: Set data_field_for_labels to "0" (category/product names), data_field_for_values to "1" (amounts/quantities)
+           - For time series data: Always use "line" chart type for trends, set data_field_for_labels to "0" (time), data_field_for_values to "1" (values)
+           - For bar charts: Set data_field_for_labels to "0" (categories), data_field_for_values to "1" (values)
         8. Only return JSON, no other explanation
         """
         
@@ -1275,9 +1366,21 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                 elif len(row) > max(label_idx, value_idx):
                     # Handle multi-column data
                     try:
-                        label = str(row[label_idx]) if row[label_idx] else f"Item{len(labels)+1}"
-                        # Handle TEXT type numeric fields
-                        value_str = str(row[value_idx]) if row[value_idx] else "0"
+                        # Handle both dict and list formats
+                        if isinstance(row, dict):
+                            # For dict format like {'col_0': '2025-01', 'col_1': 42, 'col_2': 88293.43}
+                            row_keys = list(row.keys())
+                            if label_idx < len(row_keys) and value_idx < len(row_keys):
+                                label_key = row_keys[label_idx]
+                                value_key = row_keys[value_idx]
+                                label = str(row[label_key]) if row[label_key] else f"Item{len(labels)+1}"
+                                value_str = str(row[value_key]) if row[value_key] else "0"
+                            else:
+                                continue
+                        else:
+                            # For list format
+                            label = str(row[label_idx]) if row[label_idx] else f"Item{len(labels)+1}"
+                            value_str = str(row[value_idx]) if row[value_idx] else "0"
                         try:
                             value = float(value_str)
                         except ValueError:
@@ -1492,33 +1595,7 @@ def generate_fallback_chart_config(data: Dict[str, Any], user_input: str) -> Dic
     
     return chart_config
 
-def generate_chart_image(chart_config: Dict[str, Any]) -> str:
-    """Call QuickChart to generate chart image"""
-    try:
-        import json
-        import urllib.parse
-        
-        quickchart_url = "https://quickchart.io/chart"
-        
-        # Use GET request method, pass chart configuration as URL parameters
-        chart_json = json.dumps(chart_config)
-        encoded_chart = urllib.parse.quote(chart_json)
-        
-        chart_url = f"{quickchart_url}?c={encoded_chart}&width=800&height=400&format=png&devicePixelRatio=2.0"
-        
-        logger.info(f"Generated QuickChart URL with config: {json.dumps(chart_config, indent=2)}")
-        logger.info(f"Chart URL: {chart_url}")
-        
-        # Verify URL accessibility
-        response = requests.head(chart_url, timeout=10)
-        if response.status_code == 200:
-            return chart_url
-        else:
-            logger.error(f"QuickChart URL validation failed: {response.status_code}")
-            return ""
-    except Exception as e:
-        logger.error(f"Failed to generate chart image: {e}")
-        return ""
+# QuickChart image generation removed - now using AntV interactive charts
 
 # Enhanced flow processing function with WebSocket support
 async def process_intelligent_query(

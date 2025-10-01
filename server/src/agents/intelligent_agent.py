@@ -541,12 +541,14 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     logger.warning(f"Query returned string result: {query_result}")
                     
                     # Try to parse if it's a string representation of data
-                    parsed_data = _parse_string_query_result(query_result)
+                    parsed_data = _parse_string_query_result(query_result, db_table_name)
                     if parsed_data:
+                        # Get actual column names from database
+                        actual_columns = _get_table_columns(db_table_name)
                         # Successfully parsed tuple list string
                         structured_data = {
                             "rows": parsed_data,
-                            "columns": list(parsed_data[0].keys()) if parsed_data else [],
+                            "columns": actual_columns if actual_columns else list(parsed_data[0].keys()),
                             "executed_sql": clean_sql,
                             "queried_table": db_table_name
                         }
@@ -918,12 +920,14 @@ async def get_query_from_sqltable_datasource(
                     logger.warning(f"Query returned string result: {query_result}")
                     
                     # Try to parse if it's a string representation of data
-                    parsed_data = _parse_string_query_result(query_result)
+                    parsed_data = _parse_string_query_result(query_result, table_name)
                     if parsed_data:
+                        # Get actual column names from database
+                        actual_columns = _get_table_columns(table_name)
                         # Successfully parsed tuple list string
                         structured_data = {
                             "rows": parsed_data,
-                            "columns": list(parsed_data[0].keys()) if parsed_data else [],
+                            "columns": actual_columns if actual_columns else list(parsed_data[0].keys()),
                             "executed_sql": clean_sql,
                             "queried_table": table_name
                         }
@@ -1079,7 +1083,27 @@ def _process_time_expressions(query: str) -> str:
     
     return processed
 
-def _parse_string_query_result(result: str) -> Optional[List[Dict[str, Any]]]:
+def _get_table_columns(table_name: str) -> Optional[List[str]]:
+    """Get actual column names from database table"""
+    try:
+        from ..database.db_operations import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get column information
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns_info = cursor.fetchall()
+        
+        # Extract column names
+        column_names = [col[1] for col in columns_info]  # col[1] is the column name
+        
+        conn.close()
+        return column_names
+    except Exception as e:
+        logger.error(f"Error getting table columns for {table_name}: {e}")
+        return None
+
+def _parse_string_query_result(result: str, table_name: str = None) -> Optional[List[Dict[str, Any]]]:
     """Parse a string result that contains Python tuple list representation"""
     try:
         # Check if the result looks like a Python tuple list string
@@ -1101,10 +1125,17 @@ def _parse_string_query_result(result: str) -> Optional[List[Dict[str, Any]]]:
                                 "value": float(tuple_item[1]) if isinstance(tuple_item[1], (int, float)) else tuple_item[1]
                             })
                         else:
-                            # Multiple columns: create numbered columns
+                            # Multiple columns: use actual column names from database
                             row_dict = {}
+                            actual_columns = _get_table_columns(table_name) if table_name else None
+                            
                             for i, value in enumerate(tuple_item):
-                                row_dict[f"col_{i}"] = value
+                                if actual_columns and i < len(actual_columns):
+                                    # Use actual column name from database
+                                    row_dict[actual_columns[i]] = value
+                                else:
+                                    # Fallback to generic column names
+                                    row_dict[f"col_{i}"] = value
                             parsed_data.append(row_dict)
                     
                     logger.info(f"Successfully parsed {len(parsed_data)} rows from string result")

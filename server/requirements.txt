@@ -18,6 +18,7 @@ faiss-cpu
 # For parsing different file types
 pypdf2
 python-docx>=0.8.11
+pyecharts>=2.0.8
 openpyxl
 pandas
 # For local embeddings
