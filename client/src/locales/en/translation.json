@@ -253,6 +253,8 @@
     "exampleTitle": "Example Queries",
     "selectExample": "Select an example query...",
     "analysisResult": "Analysis Result",
+    "queryInput": "Query Input",
+    "workflowDiagram": "Workflow Diagram",
     "qualityScore": "Quality Score",
     "connectionStatus": {
       "connected": "Live Connected",

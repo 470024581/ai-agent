@@ -967,7 +967,7 @@ function IntelligentAnalysis() {
                    <div className="p-3 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-xl shadow-lg mr-4">
                      <FaDatabase className="h-6 w-6 text-white" />
                    </div>
-                   Query Input
+                   {t('intelligentAnalysis.queryInput')}
                  </div>
                </CardTitle>
              </CardHeader>
@@ -1292,7 +1292,7 @@ function IntelligentAnalysis() {
                    <div className="p-3 bg-gradient-to-r from-purple-400 to-pink-500 rounded-xl shadow-lg mr-4">
                      <FaProjectDiagram className="h-6 w-6 text-white" />
                    </div>
-                   Workflow Diagram
+                   {t('intelligentAnalysis.workflowDiagram')}
                  </div>
                </CardTitle>
              </CardHeader>

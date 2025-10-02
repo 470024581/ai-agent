@@ -214,6 +214,8 @@
     "langGraphProcess": "LangGraph 分析流程",
     "exampleQueries": "示例查询",
     "analysisResult": "分析结果",
+    "queryInput": "查询输入",
+    "workflowDiagram": "工作流程图",
     "qualityScore": "质量评分",
     "connectionStatus": {
       "connected": "实时连接",
