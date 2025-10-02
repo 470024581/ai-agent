@@ -38,41 +38,31 @@ class Config:
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/smart.db")
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
-    # LLM configuration - Multi-provider support
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # openrouter, openai, ollama, dify, bedrock
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-3.5-turbo")  # Unified model control
+    # LLM configuration - Multi-provider support (unified keys)
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")  # openrouter, openai, ollama, bedrock
+    # Unified model fields. 'LLM_MODEL' kept for backward compatibility (defaults to CHAT model)
+    LLM_CHAT_MODEL: str = os.getenv("LLM_CHAT_MODEL", "gpt-3.5-turbo")
+    LLM_REASONING_MODEL: str = os.getenv("LLM_REASONING_MODEL", "o3-mini")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     LLM_TIMEOUT: int = int(os.getenv("LLM_TIMEOUT", "30"))
     
-    # Embedding configuration
-    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface, dify, bedrock
+    # Embedding configuration (unified keys)
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")  # local, openai, huggingface, bedrock
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "512"))
     EMBEDDING_CACHE_DIR: Path = DATA_DIR / "embeddings_cache"
     
-    # OpenAI configuration
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
-    OPENAI_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    # Unified API credentials for OpenAI/OpenRouter-compatible providers
+    API_KEY: Optional[str] = os.getenv("API_KEY")
+    BASE_URL: Optional[str] = os.getenv("BASE_URL")
     
-    # OpenRouter configuration
-    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
-    OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    # Defaults for OpenRouter base URL when provider=openrouter and BASE_URL is not set
+    OPENROUTER_DEFAULT_BASE_URL: str = "https://openrouter.ai/api/v1"
     
     # Ollama configuration
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
-    
-    # Dify.ai configuration
-    DIFY_API_KEY: Optional[str] = os.getenv("DIFY_API_KEY")
-    DIFY_BASE_URL: Optional[str] = os.getenv("DIFY_BASE_URL")
-    DIFY_USER: Optional[str] = os.getenv("DIFY_USER")
-    # Dify embedding use openai api key and base url
-    DIFY_EMBEDDING_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    DIFY_EMBEDDING_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL")
-    DIFY_EMBEDDING_USER: Optional[str] = os.getenv("DIFY_EMBEDDING_USER")
-    DIFY_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     
     # AWS Bedrock configuration
     AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
@@ -81,12 +71,8 @@ class Config:
     AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
     DEPLOYMENT_ENV: str = os.getenv("DEPLOYMENT_ENV", "local")  # local, ecs, ec2
     
-    # Bedrock model configuration
-    BEDROCK_MODEL_ID: str = os.getenv("BEDROCK_MODEL_ID", "mistral.mixtral-8x7b-instruct-v0:1")
-    BEDROCK_FAST_MODEL: str = os.getenv("BEDROCK_FAST_MODEL", "mistral.mistral-7b-instruct-v0:2")
-    BEDROCK_COMPLEX_MODEL: str = os.getenv("BEDROCK_COMPLEX_MODEL", "mistral.mixtral-8x7b-instruct-v0:1")
-    BEDROCK_EMBEDDING_MODEL: str = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
-    BEDROCK_EMBEDDING_DIMENSION: int = int(os.getenv("BEDROCK_EMBEDDING_DIMENSION", "1024"))
+    # Bedrock model configuration (use unified chat/reasoning models; legacy ids removed)
+    # Bedrock embedding defaults removed; use unified EMBEDDING_MODEL/EMBEDDING_DIMENSION
     
     # Bedrock advanced features
     ENABLE_MODEL_ROUTING: bool = os.getenv("ENABLE_MODEL_ROUTING", "false").lower() == "true"
@@ -145,25 +131,27 @@ class Config:
         
         # Strictly follow the specified provider configuration
         if provider == "openai":
-            if not cls.OPENAI_API_KEY:
-                raise ValueError("LLM_PROVIDER is set to openai, but OPENAI_API_KEY is not configured")
+            if not cls.API_KEY:
+                raise ValueError("LLM_PROVIDER is set to openai, but API_KEY is not configured")
             return {
                 "provider": "openai",
-                "api_key": cls.OPENAI_API_KEY,
-                "base_url": cls.OPENAI_BASE_URL,
-                "model": cls.LLM_MODEL,
+                "api_key": cls.API_KEY,
+                "base_url": cls.BASE_URL,
+                "model": cls.LLM_CHAT_MODEL,
+                "reasoning_model": cls.LLM_REASONING_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT
             }
         elif provider == "openrouter":
-            if not cls.OPENROUTER_API_KEY:
-                raise ValueError("LLM_PROVIDER is set to openrouter, but OPENROUTER_API_KEY is not configured")
+            if not cls.API_KEY:
+                raise ValueError("LLM_PROVIDER is set to openrouter, but API_KEY is not configured")
             return {
                 "provider": "openrouter",
-                "api_key": cls.OPENROUTER_API_KEY,
-                "base_url": cls.OPENROUTER_BASE_URL,
-                "model": cls.LLM_MODEL,
+                "api_key": cls.API_KEY,
+                "base_url": cls.BASE_URL or cls.OPENROUTER_DEFAULT_BASE_URL,
+                "model": cls.LLM_CHAT_MODEL,
+                "reasoning_model": cls.LLM_REASONING_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT
@@ -172,26 +160,13 @@ class Config:
             return {
                 "provider": "ollama",
                 "base_url": cls.OLLAMA_BASE_URL,
-                "model": cls.LLM_MODEL,
+                "model": cls.LLM_CHAT_MODEL,
+                "reasoning_model": cls.LLM_REASONING_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT
             }
-        elif provider == "dify":
-            if not cls.DIFY_API_KEY:
-                raise ValueError("LLM_PROVIDER is set to dify, but DIFY_API_KEY is not configured")
-            if not cls.DIFY_BASE_URL:
-                raise ValueError("LLM_PROVIDER is set to dify, but DIFY_BASE_URL is not configured")
-            return {
-                "provider": "dify",
-                "api_key": cls.DIFY_API_KEY,
-                "base_url": cls.DIFY_BASE_URL,
-                "user": cls.DIFY_USER,
-                "model": cls.LLM_MODEL,
-                "temperature": cls.LLM_TEMPERATURE,
-                "max_tokens": cls.LLM_MAX_TOKENS,
-                "timeout": cls.LLM_TIMEOUT
-            }
+        
         elif provider == "bedrock":
             return {
                 "provider": "bedrock",
@@ -200,9 +175,8 @@ class Config:
                 "access_key_id": cls.AWS_ACCESS_KEY_ID,
                 "secret_access_key": cls.AWS_SECRET_ACCESS_KEY,
                 "deployment_env": cls.DEPLOYMENT_ENV,
-                "model": cls.LLM_MODEL or cls.BEDROCK_MODEL_ID,
-                "fast_model": cls.BEDROCK_FAST_MODEL,
-                "complex_model": cls.BEDROCK_COMPLEX_MODEL,
+                "model": cls.LLM_CHAT_MODEL,
+                "reasoning_model": cls.LLM_REASONING_MODEL,
                 "temperature": cls.LLM_TEMPERATURE,
                 "max_tokens": cls.LLM_MAX_TOKENS,
                 "timeout": cls.LLM_TIMEOUT,
@@ -214,7 +188,7 @@ class Config:
                 "cache_ttl_hours": cls.PROMPT_CACHE_TTL_HOURS
             }
         else:
-            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama, dify, bedrock")
+            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}. Supported values: openai, openrouter, ollama, bedrock")
     
     @classmethod
     def get_embedding_config(cls) -> dict:
@@ -229,13 +203,13 @@ class Config:
                 "dimension": cls.EMBEDDING_DIMENSION
             }
         elif provider == "openai":
-            if not cls.OPENAI_API_KEY:
-                raise ValueError("EMBEDDING_PROVIDER is set to openai, but OPENAI_API_KEY is not configured")
+            if not cls.API_KEY:
+                raise ValueError("EMBEDDING_PROVIDER is set to openai, but API_KEY is not configured")
             return {
                 "provider": "openai",
-                "api_key": cls.OPENAI_API_KEY,
-                "base_url": cls.OPENAI_BASE_URL,
-                "model": cls.OPENAI_EMBEDDING_MODEL,
+                "api_key": cls.API_KEY,
+                "base_url": cls.BASE_URL,
+                "model": cls.EMBEDDING_MODEL,
                 "dimension": cls.EMBEDDING_DIMENSION
             }
         elif provider == "huggingface":
@@ -253,19 +227,7 @@ class Config:
                 "dimension": cls.EMBEDDING_DIMENSION,
                 "cache_dir": cls.EMBEDDING_CACHE_DIR
             }
-        elif provider == "dify":
-            if not cls.DIFY_EMBEDDING_API_KEY:
-                raise ValueError("EMBEDDING_PROVIDER is set to dify, but DIFY_EMBEDDING_API_KEY is not configured")
-            if not cls.DIFY_EMBEDDING_BASE_URL:
-                raise ValueError("EMBEDDING_PROVIDER is set to dify, but DIFY_EMBEDDING_BASE_URL is not configured")
-            return {
-                "provider": "dify",
-                "api_key": cls.DIFY_EMBEDDING_API_KEY,
-                "base_url": cls.DIFY_EMBEDDING_BASE_URL,
-                "user": cls.DIFY_EMBEDDING_USER,
-                "model": cls.DIFY_EMBEDDING_MODEL,
-                "dimension": cls.EMBEDDING_DIMENSION
-            }
+        
         elif provider == "bedrock":
             return {
                 "provider": "bedrock",
@@ -274,11 +236,11 @@ class Config:
                 "access_key_id": cls.AWS_ACCESS_KEY_ID,
                 "secret_access_key": cls.AWS_SECRET_ACCESS_KEY,
                 "deployment_env": cls.DEPLOYMENT_ENV,
-                "model": cls.BEDROCK_EMBEDDING_MODEL,
-                "dimension": cls.BEDROCK_EMBEDDING_DIMENSION
+                "model": cls.EMBEDDING_MODEL,
+                "dimension": cls.EMBEDDING_DIMENSION
             }
         else:
-            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama, dify, bedrock")
+            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {provider}. Supported values: local, openai, huggingface, ollama, bedrock")
     
     @classmethod
     def is_development(cls) -> bool:

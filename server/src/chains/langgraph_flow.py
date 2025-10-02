@@ -276,7 +276,7 @@ def sql_classifier_node(state: GraphState) -> GraphState:
         else:
             sql_task_type = "query"
     else:
-        # Use LLM for semantic classification
+        # Use LLM for semantic classification (with strong rule overrides)
         try:
             prompt = f"""
             Analyze the following user query and determine what the user wants:
@@ -298,10 +298,21 @@ def sql_classifier_node(state: GraphState) -> GraphState:
             else:
                 sql_task_type = str(response).strip().lower()
             
+            # Normalize punctuation and whitespace
+            sql_task_type = sql_task_type.strip().strip(".!,; ")
+            
+            # Strong keyword override for chart intent
+            chart_keywords = [
+                "pie", "pie chart", "proportion", "percentage", "distribution", "breakdown",
+                "饼图", "占比", "比例", "分布", "图表"
+            ]
+            if any(k in user_input.lower() for k in chart_keywords):
+                sql_task_type = "chart"
+            
             # Validate response
             if sql_task_type not in ["query", "chart"]:
-                logger.warning(f"Invalid LLM SQL classification response: {sql_task_type}, defaulting to query")
-                sql_task_type = "query"
+                logger.warning(f"Invalid LLM SQL classification response: {sql_task_type}, defaulting to chart if keywords present else query")
+                sql_task_type = "chart" if any(k in user_input.lower() for k in chart_keywords) else "query"
                 
         except Exception as e:
             logger.error(f"Error in LLM SQL classification: {e}, falling back to rule-based")
@@ -371,7 +382,17 @@ async def sql_query_node(state: GraphState) -> GraphState:
                 }
             
             logger.info(f"SQL query successful, data: {structured_data}")
-            
+
+            # Strong intent-to-chart enforcement when data matches category-value schema
+            chart_intent = state.get("sql_task_type") == "chart" or any(k in user_input.lower() for k in [
+                "pie", "pie chart", "proportion", "percentage", "distribution", "breakdown", "饼图", "占比", "比例"
+            ])
+            if chart_intent and isinstance(structured_data, dict) and structured_data.get("rows"):
+                rows = structured_data.get("rows", [])
+                if rows and isinstance(rows[0], dict) and ("category" in rows[0] and "value" in rows[0]):
+                    logger.info("Chart intent detected with compatible data; ensuring downstream chart path.")
+                    state = {**state, "sql_task_type": "chart"}
+
             return {
                 **state,
                 "structured_data": structured_data,
@@ -903,7 +924,14 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         8. Only return JSON, no other explanation
         """
         
-        response = llm.invoke(chart_analysis_prompt)
+        # For chart推理使用 reasoning 模型
+        try:
+            from ..models.llm_factory import get_reasoning_llm
+            reasoning_llm = get_reasoning_llm()
+            response = reasoning_llm.invoke(chart_analysis_prompt)
+        except Exception:
+            # 兜底使用默认chat模型
+            response = llm.invoke(chart_analysis_prompt)
         
         # Process LLM response
         if hasattr(response, 'content'):

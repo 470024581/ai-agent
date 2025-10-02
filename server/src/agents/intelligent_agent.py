@@ -24,7 +24,7 @@ import re
 import asyncio
 from ..config.config import Config
 # Factory imports
-from ..models.llm_factory import get_llm, get_llm_status, reset_llm
+from ..models.llm_factory import get_llm, get_reasoning_llm, get_llm_status, reset_llm
 from ..models.embedding_factory import get_embeddings, get_embeddings_status, reset_embeddings
 # Imports for file parsing
 import PyPDF2
@@ -510,8 +510,11 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
 
         try:
             # Execute query with timeout from config
+            # Use reasoning model for SQL generation
+            reasoning_llm = get_reasoning_llm() if llm else None
+            active_llm = reasoning_llm or llm
             sql_response = await asyncio.wait_for(
-                llm.ainvoke(sql_generation_prompt),
+                active_llm.ainvoke(sql_generation_prompt),
                 timeout=Config.LLM_TIMEOUT
             )
             
