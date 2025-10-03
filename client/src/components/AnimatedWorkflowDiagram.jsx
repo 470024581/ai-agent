@@ -98,7 +98,16 @@ const Circle = forwardRef(({ className, children, icon: Icon, color = 'blue', is
 
 Circle.displayName = 'Circle';
 
-export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = null, activeEdges = [] }) {
+export function AnimatedWorkflowDiagram({ 
+  nodes = [], 
+  edges = [], 
+  currentNode = null, 
+  activeEdges = [],
+  onPause = null,
+  onInterrupt = null,
+  hitlEnabled = false,
+  executionId = null
+}) {
   const containerRef = useRef(null);
   const nodeRefs = useRef({});
 
@@ -180,7 +189,7 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
   const responsivePositions = computePositions();
 
   return (
-    <div className="relative w-full h-full min-h-[300px] max-h-[500px] flex items-center justify-center overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 rounded-xl p-3 shadow-inner" ref={containerRef}>
+    <div className="relative w-full h-full min-h-[300px] max-h-[500px] flex items-center justify-center overflow-hidden bg-transparent rounded-xl p-3" ref={containerRef}>
       <style>{`
         @keyframes pulse-strong {
           0%, 100% {
@@ -229,6 +238,27 @@ export function AnimatedWorkflowDiagram({ nodes = [], edges = [], currentNode = 
               size={node.type === 'start' || node.type === 'end' ? 'small' : 'default'}
               data-node-id={node.id}
             />
+            
+            {/* HITL Control Buttons */}
+            {hitlEnabled && isNodeActive(node.id) && node.hitlEnabled !== false && (
+              <div className="flex gap-1 mt-2">
+                <button
+                  onClick={() => onPause && onPause(node.id, executionId)}
+                  className="px-2 py-1 text-[8px] bg-yellow-500 hover:bg-yellow-600 text-white rounded transition-colors duration-200 shadow-sm"
+                  title="Pause execution"
+                >
+                  ⏸️
+                </button>
+                <button
+                  onClick={() => onInterrupt && onInterrupt(node.id, executionId)}
+                  className="px-2 py-1 text-[8px] bg-red-500 hover:bg-red-600 text-white rounded transition-colors duration-200 shadow-sm"
+                  title="Interrupt execution"
+                >
+                  ⏹️
+                </button>
+              </div>
+            )}
+            
             <div className="text-center max-w-[80px] transition-all duration-300">
               <div className={cn(
                 'text-[10px] font-semibold transition-colors duration-300 leading-tight',

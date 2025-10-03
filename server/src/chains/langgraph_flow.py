@@ -143,6 +143,83 @@ async def _stream_text_as_tokens(text: str, execution_id: str, node_id: str = "l
     
     logger.info(f"Completed simulated token streaming for execution {execution_id}")
 
+# ==================== HITL (Human-in-the-Loop) Utilities ====================
+
+def hitl_checkpoint(node_name: str, pause_enabled: bool = True, interrupt_enabled: bool = True):
+    """
+    Decorator for adding HITL checkpoints to workflow nodes
+    
+    Args:
+        node_name: Name of the node for HITL operations
+        pause_enabled: Whether pause functionality is enabled for this node
+        interrupt_enabled: Whether interrupt functionality is enabled for this node
+    """
+    def decorator(func):
+        def wrapper(state: GraphState) -> GraphState:
+            execution_id = state.get("execution_id", "")
+            
+            # Check for HITL actions
+            hitl_status = state.get("hitl_status")
+            
+            if hitl_status == "paused" and state.get("hitl_node") == node_name:
+                # Resume from pause with updated parameters
+                logger.info(f"Resuming execution {execution_id} at node {node_name}")
+                return func(state)
+            
+            elif hitl_status == "interrupted" and state.get("hitl_node") == node_name:
+                # Resume from interrupt with updated parameters
+                logger.info(f"Resuming interrupted execution {execution_id} at node {node_name}")
+                return func(state)
+            
+            # Normal execution
+            result = func(state)
+            
+            # Add HITL metadata to result
+            result["hitl_node"] = node_name
+            result["hitl_timestamp"] = time.time()
+            
+            return result
+        
+        return wrapper
+    return decorator
+
+def check_hitl_action(state: Dict[str, Any], node_name: str) -> Optional[str]:
+    """
+    Check if HITL action should be taken at this node
+    
+    Returns:
+        "pause", "interrupt", or None
+    """
+    # This would be called by external HITL controller
+    # For now, return None (no automatic HITL actions)
+    return None
+
+def apply_hitl_parameters(state: Dict[str, Any], parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply HITL parameter adjustments to state
+    
+    Args:
+        state: Current workflow state
+        parameters: Parameters to apply
+        
+    Returns:
+        Updated state with applied parameters
+    """
+    updated_state = state.copy()
+    
+    # Apply parameter updates
+    for key, value in parameters.items():
+        if key in updated_state:
+            updated_state[key] = value
+            logger.info(f"Applied HITL parameter update: {key} = {value}")
+    
+    # Update HITL status
+    updated_state["hitl_status"] = "resumed"
+    updated_state["hitl_parameters"] = parameters
+    updated_state["hitl_timestamp"] = time.time()
+    
+    return updated_state
+
 # ==================== Graph State Definition ====================
 
 class GraphState(TypedDict):
@@ -158,7 +235,14 @@ class GraphState(TypedDict):
     retry_count: int
     datasource: Dict[str, Any]
     error: Optional[str]
-    execution_id: str  # NEW: For WebSocket routing and token streaming
+    execution_id: str  # For WebSocket routing and token streaming
+    
+    # HITL (Human-in-the-Loop) state fields
+    hitl_status: Optional[str]  # "paused", "interrupted", "resumed", None
+    hitl_node: Optional[str]  # Node where HITL action occurred
+    hitl_reason: Optional[str]  # Reason for HITL action
+    hitl_parameters: Optional[Dict[str, Any]]  # Parameters for adjustment
+    hitl_timestamp: Optional[str]  # Timestamp of HITL action
 
 def router_node(state: GraphState) -> GraphState:
     """Router node: determine whether to use SQL or RAG based on user input"""
@@ -258,6 +342,7 @@ def router_node(state: GraphState) -> GraphState:
     
     return {**state, "query_type": query_type}
 
+@hitl_checkpoint("sql_classifier_node", pause_enabled=True, interrupt_enabled=True)
 def sql_classifier_node(state: GraphState) -> GraphState:
     """SQL classification node: use LLM to determine if it's data query or chart building"""
     user_input = state["user_input"]
@@ -520,6 +605,7 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             }
         }
 
+@hitl_checkpoint("chart_config_node", pause_enabled=True, interrupt_enabled=True)
 def chart_config_node(state: GraphState) -> GraphState:
     """Chart configuration node: generate chart configuration"""
     try:

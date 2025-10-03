@@ -26,7 +26,10 @@ from ..database.db_operations import (
     delete_datasource, set_active_datasource, get_active_datasource,
     # File management functions
     save_file_info, get_files_by_datasource, update_file_processing_status,
-    delete_file_record_and_associated_data
+    delete_file_record_and_associated_data,
+    # HITL functions
+    list_hitl_interrupts, get_hitl_interrupt, update_hitl_interrupt_status,
+    create_hitl_execution_history, get_hitl_execution_history
 )
 from ..utils.common_utils import (
     create_api_response, parse_query_intent
@@ -723,6 +726,181 @@ async def download_resume():
     except Exception as e:
         logger.error(f"Error downloading resume: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+# ==================== HITL (Human-in-the-Loop) API ======================
+
+@router.get("/api/v1/hitl/interrupts", summary="Get HITL Interrupt History")
+async def get_hitl_interrupts(
+    status: Optional[str] = Query(None, description="Filter by status (interrupted, cancelled, restored)"),
+    limit: int = Query(100, description="Maximum number of records to return")
+):
+    """Get list of HITL interrupts for history restoration"""
+    try:
+        interrupts = list_hitl_interrupts(status=status, limit=limit)
+        
+        # Format the response for frontend
+        formatted_interrupts = []
+        for interrupt in interrupts:
+            formatted_interrupts.append({
+                "id": interrupt["id"],
+                "execution_id": interrupt["execution_id"],
+                "user_input": interrupt["user_input"],
+                "datasource_id": interrupt["datasource_id"],
+                "node_name": interrupt["node_name"],
+                "interrupted_at": interrupt["interrupted_at"],
+                "status": interrupt["status"],
+                "reason": interrupt["reason"],
+                "state_data": interrupt["state_data"] if interrupt["state_data"] else None
+            })
+        
+        return create_api_response(
+            success=True,
+            data={"interrupts": formatted_interrupts},
+            message=f"Retrieved {len(formatted_interrupts)} interrupt records"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting HITL interrupts: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get interrupt history: {str(e)}")
+
+@router.get("/api/v1/hitl/interrupts/{execution_id}", summary="Get Specific HITL Interrupt")
+async def get_hitl_interrupt(execution_id: str):
+    """Get specific HITL interrupt by execution ID"""
+    try:
+        interrupt = get_hitl_interrupt(execution_id)
+        
+        if not interrupt:
+            raise HTTPException(status_code=404, detail="Interrupt not found")
+        
+        return create_api_response(
+            success=True,
+            data={
+                "id": interrupt["id"],
+                "execution_id": interrupt["execution_id"],
+                "user_input": interrupt["user_input"],
+                "datasource_id": interrupt["datasource_id"],
+                "node_name": interrupt["node_name"],
+                "interrupted_at": interrupt["interrupted_at"],
+                "status": interrupt["status"],
+                "reason": interrupt["reason"],
+                "state_data": interrupt["state_data"] if interrupt["state_data"] else None
+            },
+            message="Interrupt retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting HITL interrupt {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get interrupt: {str(e)}")
+
+@router.put("/api/v1/hitl/interrupts/{execution_id}/status", summary="Update HITL Interrupt Status")
+async def update_interrupt_status(execution_id: str, status: str):
+    """Update the status of an HITL interrupt"""
+    try:
+        success = update_hitl_interrupt_status(execution_id, status)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Interrupt not found or update failed")
+        
+        return create_api_response(
+            success=True,
+            data={"execution_id": execution_id, "status": status},
+            message="Interrupt status updated successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating interrupt status for {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update interrupt status: {str(e)}")
+
+@router.post("/api/v1/hitl/interrupts/{execution_id}/restore", summary="Restore HITL Interrupt")
+async def restore_interrupt(execution_id: str):
+    """Restore an interrupted execution"""
+    try:
+        # Get the interrupt record
+        interrupt = get_hitl_interrupt(execution_id)
+        
+        if not interrupt:
+            raise HTTPException(status_code=404, detail="Interrupt not found")
+        
+        if interrupt["status"] != "interrupted":
+            raise HTTPException(status_code=400, detail="Interrupt is not in interrupted status")
+        
+        # Update status to restored
+        success = update_hitl_interrupt_status(execution_id, "restored")
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update interrupt status")
+        
+        # Create execution history record
+        create_hitl_execution_history(
+            execution_id=execution_id,
+            operation_type="restore",
+            node_name=interrupt["node_name"],
+            user_action="restore_from_history"
+        )
+        
+        return create_api_response(
+            success=True,
+            data={
+                "execution_id": execution_id,
+                "status": "restored",
+                "node_name": interrupt["node_name"],
+                "user_input": interrupt["user_input"]
+            },
+            message="Interrupt restored successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error restoring interrupt {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to restore interrupt: {str(e)}")
+
+@router.post("/api/v1/hitl/interrupts/{execution_id}/cancel", summary="Cancel HITL Interrupt")
+async def cancel_interrupt(execution_id: str):
+    """Cancel an interrupted execution"""
+    try:
+        # Get the interrupt record
+        interrupt = get_hitl_interrupt(execution_id)
+        
+        if not interrupt:
+            raise HTTPException(status_code=404, detail="Interrupt not found")
+        
+        if interrupt["status"] != "interrupted":
+            raise HTTPException(status_code=400, detail="Interrupt is not in interrupted status")
+        
+        # Update status to cancelled
+        success = update_hitl_interrupt_status(execution_id, "cancelled")
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update interrupt status")
+        
+        # Create execution history record
+        create_hitl_execution_history(
+            execution_id=execution_id,
+            operation_type="cancel",
+            node_name=interrupt["node_name"],
+            user_action="cancel_from_history"
+        )
+        
+        return create_api_response(
+            success=True,
+            data={
+                "execution_id": execution_id,
+                "status": "cancelled",
+                "node_name": interrupt["node_name"]
+            },
+            message="Interrupt cancelled successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling interrupt {execution_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel interrupt: {str(e)}")
 
 # ==================== Health and Info ======================
 @router.get("/health", summary="Health Check")

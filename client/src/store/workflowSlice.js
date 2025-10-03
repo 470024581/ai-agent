@@ -7,6 +7,16 @@ const initialState = {
   currentExecution: null, // ID of the currently active execution
   executions: {}, // Store all execution data, keyed by ID
   executionHistory: [], // Array of execution summaries for history panel
+  
+  // HITL state
+  hitlPanel: {
+    isOpen: false,
+    executionId: null,
+    nodeName: null,
+    executionType: null, // 'pause' or 'interrupt'
+    currentState: null,
+  },
+  hitlEnabled: false,
 };
 
 const workflowSlice = createSlice({
@@ -192,6 +202,41 @@ const workflowSlice = createSlice({
             state.currentExecution = null;
         }
     },
+    
+    // HITL actions
+    setHITLEnabled: (state, action) => {
+      state.hitlEnabled = action.payload;
+    },
+    
+    openHITLPanel: (state, action) => {
+      const { executionId, nodeName, executionType, currentState } = action.payload;
+      state.hitlPanel = {
+        isOpen: true,
+        executionId,
+        nodeName,
+        executionType,
+        currentState,
+      };
+    },
+    
+    closeHITLPanel: (state) => {
+      state.hitlPanel = {
+        isOpen: false,
+        executionId: null,
+        nodeName: null,
+        executionType: null,
+        currentState: null,
+      };
+    },
+    
+    updateHITLExecutionState: (state, action) => {
+      const { executionId, hitlStatus, nodeName, reason } = action.payload;
+      if (state.executions[executionId]) {
+        state.executions[executionId].hitlStatus = hitlStatus;
+        state.executions[executionId].hitlNode = nodeName;
+        state.executions[executionId].hitlReason = reason;
+      }
+    },
   },
 });
 
@@ -212,6 +257,10 @@ export const {
   resetAllStates,
   clearExecutionHistory,
   removeExecution,
+  setHITLEnabled,
+  openHITLPanel,
+  closeHITLPanel,
+  updateHITLExecutionState,
 } = workflowSlice.actions;
 
 // Selectors
@@ -270,5 +319,10 @@ export const selectCurrentExecutionResult = createSelector(
   [selectCurrentExecutionData],
   (executionData) => executionData?.result || null
 );
+
+// HITL selectors
+export const selectHITLEnabled = (state) => state.workflow.hitlEnabled;
+export const selectHITLPanel = (state) => state.workflow.hitlPanel;
+export const selectHITLPanelOpen = (state) => state.workflow.hitlPanel.isOpen;
 
 export default workflowSlice.reducer;

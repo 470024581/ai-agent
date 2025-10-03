@@ -41,6 +41,11 @@ import {
   selectMemoizedNodeStates,
   selectCurrentExecutionResult,
   startExecution,
+  selectHITLEnabled,
+  selectHITLPanel,
+  selectHITLPanelOpen,
+  closeHITLPanel,
+  setHITLEnabled,
 } from '../store/workflowSlice';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -52,8 +57,11 @@ import { Spinner } from './ui/spinner';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from './ui/select';
+import { Switch } from './ui/switch';
 import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, FileText, AlertCircle } from 'lucide-react';
 import { AnimatedWorkflowDiagram } from './AnimatedWorkflowDiagram';
+import { HITLParameterPanel } from './HITLParameterPanel';
+import { HistoryRestoreDialog } from './HistoryRestoreDialog';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
@@ -76,6 +84,7 @@ function IntelligentAnalysis() {
   const [activeDataSource, setActiveDataSource] = useState(null);
   const [availableDataSources, setAvailableDataSources] = useState([]);
   const [executionId, setExecutionId] = useState(null);
+  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   
   // Redux state
   const connectionStatus = useSelector(selectConnectionStatus);
@@ -86,9 +95,18 @@ function IntelligentAnalysis() {
   const currentExecutionNodes = currentExecutionData?.nodes || {};
   const executionResult = useSelector(selectCurrentExecutionResult);
   
+  // HITL state
+  const hitlEnabled = useSelector(selectHITLEnabled);
+  const hitlPanel = useSelector(selectHITLPanel);
+  const hitlPanelOpen = useSelector(selectHITLPanelOpen);
+  
   // WebSocket connection
   const { 
     getClientId,
+    pauseExecution,
+    interruptExecution,
+    resumeExecution,
+    cancelExecution,
   } = useWorkflowWebSocket();
   
   // LangGraph nodes and edges definition - optimized layout for better visual flow
@@ -162,6 +180,13 @@ function IntelligentAnalysis() {
     // Don't reset result when executionResult becomes null
     // This allows the result to persist after execution completes
   }, [executionResult]);
+
+  // Sync executionId from websocket currentExecutionData
+  useEffect(() => {
+    if (currentExecutionData?.id) {
+      setExecutionId(currentExecutionData.id);
+    }
+  }, [currentExecutionData?.id]);
   
   // Handler for node click
   const handleNodeClick = (nodeId) => {
@@ -180,6 +205,70 @@ function IntelligentAnalysis() {
     setQuery(query);
     dispatch(resetCurrentExecution());
     // User can then submit to execute
+  };
+
+  // HITL control functions
+  const handlePauseExecution = (nodeName, executionId) => {
+    pauseExecution(nodeName, executionId);
+  };
+
+  const handleInterruptExecution = (nodeName, executionId) => {
+    interruptExecution(nodeName, executionId);
+  };
+
+  const handleResumeExecution = async (executionId, parameters, executionType) => {
+    try {
+      await resumeExecution(executionId, parameters, executionType);
+      dispatch(closeHITLPanel());
+    } catch (error) {
+      console.error('Error resuming execution:', error);
+      setError('恢复执行失败: ' + error.message);
+    }
+  };
+
+  const handleCancelExecution = async (executionId, executionType) => {
+    try {
+      await cancelExecution(executionId, executionType);
+      dispatch(closeHITLPanel());
+    } catch (error) {
+      console.error('Error cancelling execution:', error);
+      setError('取消执行失败: ' + error.message);
+    }
+  };
+
+  const handleRestoreFromHistory = async () => {
+    try {
+      setShowHistoryDialog(true);
+    } catch (error) {
+      console.error('Error opening history dialog:', error);
+      setError('打开历史对话框失败: ' + error.message);
+    }
+  };
+
+  const handleRestoreTask = async (task) => {
+    try {
+      // TODO: Implement actual task restoration logic
+      console.log('Restoring task:', task);
+      setError('任务恢复功能正在开发中...');
+    } catch (error) {
+      console.error('Error restoring task:', error);
+      setError('任务恢复失败: ' + error.message);
+    }
+  };
+
+  const handleCancelTask = async (task) => {
+    try {
+      // TODO: Implement actual task cancellation logic
+      console.log('Cancelling task:', task);
+      setError('任务取消功能正在开发中...');
+    } catch (error) {
+      console.error('Error cancelling task:', error);
+      setError('任务取消失败: ' + error.message);
+    }
+  };
+
+  const toggleHITL = () => {
+    dispatch(setHITLEnabled(!hitlEnabled));
   };
 
   const handleSubmit = async (e) => {
@@ -541,6 +630,10 @@ function IntelligentAnalysis() {
         edges={langGraphEdges}
         currentNode={currentNode}
         activeEdges={activeEdges || []}
+        onPause={handlePauseExecution}
+        onInterrupt={handleInterruptExecution}
+        hitlEnabled={hitlEnabled}
+        executionId={currentExecutionData?.id}
       />
     );
   };
@@ -855,9 +948,9 @@ function IntelligentAnalysis() {
               <div className="flex items-center w-full text-gray-800 dark:text-gray-200 min-w-0">
                 <div className="p-2 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-lg shadow-md mr-3">
                   <Lightbulb size={16} className="text-white" />
-                </div>
+            </div>
                 <SelectValue placeholder={t('intelligentAnalysis.selectExample') || 'Select an example query...'} className="font-medium truncate w-full" />
-              </div>
+          </div>
             </SelectTrigger>
             <SelectContent className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl border-0 shadow-2xl rounded-xl max-w-full">
             {exampleQueries.map((category, index) => (
@@ -873,7 +966,7 @@ function IntelligentAnalysis() {
                        >
                       <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate block w-full">
                       {category.category} - {example}
-                    </span>
+              </span>
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -951,26 +1044,27 @@ function IntelligentAnalysis() {
   };
 
   return (
-    <div className="h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50/80 to-indigo-100/80 dark:from-gray-900 dark:via-blue-900/80 dark:to-indigo-900/80 relative">
-      {/* Background decoration */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-400/20 via-transparent to-purple-600/20 dark:from-blue-500/20 dark:to-purple-700/20"></div>
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-indigo-400/20 via-transparent to-cyan-400/20 dark:from-indigo-500/20 dark:to-cyan-500/20"></div>
+    <div className="min-h-screen bg-transparent relative">
+      {/* Background decoration (removed per request) */}
        <div className="relative w-full h-full px-4 py-2">
-         {/* Main content area - Three columns layout */}
-         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full" style={{height: 'calc(100vh - 2rem)'}}>
-         {/* Left side: Query form - 1 column */}
-         <div className="space-y-4 h-full flex flex-col">
-           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1">
-             <CardHeader className="bg-gradient-to-r from-blue-400/20 via-indigo-400/20 to-purple-400/20 dark:from-blue-500/20 dark:via-indigo-500/20 dark:to-purple-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
-               <CardTitle className="flex items-center text-2xl font-bold justify-between">
-                 <div className="flex items-center">
-                   <div className="p-3 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-xl shadow-lg mr-4">
-                     <FaDatabase className="h-6 w-6 text-white" />
-                   </div>
-                   {t('intelligentAnalysis.queryInput')}
-                 </div>
-               </CardTitle>
-             </CardHeader>
+         {/* Main content area - Two rows layout */}
+        <div className="flex flex-col w-full gap-6" style={{height: 'calc(100vh - 2rem)'}}>
+          {/* Top row: Query Input and Workflow Diagram - Full width */}
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1">
+             
+             {/* Left: Query Input */}
+             <div className="space-y-4 h-full flex flex-col">
+               <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl flex-1">
+                  <CardHeader className="bg-transparent text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
+                   <CardTitle className="flex items-center text-2xl font-bold justify-between">
+                     <div className="flex items-center">
+                       <div className="p-3 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-xl shadow-lg mr-4">
+                         <FaDatabase className="h-6 w-6 text-white" />
+                       </div>
+                       {t('intelligentAnalysis.queryInput')}
+                     </div>
+              </CardTitle>
+            </CardHeader>
              <CardContent className="p-6 space-y-6 h-full overflow-y-auto">
                              {/* Current data source display and switching */}
                {availableDataSources.length > 0 && (
@@ -1113,160 +1207,223 @@ function IntelligentAnalysis() {
           </Card>
         </div>
 
-         {/* Center: Analysis results - 1 column */}
+         
+        {/* Right: Workflow Diagram */}
          <div className="space-y-4 h-full flex flex-col">
-           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1 flex flex-col">
-            <CardHeader className="bg-gradient-to-r from-emerald-400/20 via-teal-400/20 to-cyan-400/20 dark:from-emerald-500/20 dark:via-teal-500/20 dark:to-cyan-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30 flex-shrink-0">
-              <CardTitle className="flex items-center text-2xl font-bold">
+          {/* Flow chart */}
+           <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl flex-1">
+              <CardHeader className="bg-transparent text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
+               <CardTitle className="flex items-center text-2xl font-bold justify-between">
+                 <div className="flex items-center">
+                   <div className="p-3 bg-gradient-to-r from-purple-400 to-pink-500 rounded-xl shadow-lg mr-4">
+                     <FaProjectDiagram className="h-6 w-6 text-white" />
+                   </div>
+                   {t('intelligentAnalysis.workflowDiagram')}
+                 </div>
+               </CardTitle>
+             </CardHeader>
+             <CardContent className="p-6 h-full flex flex-col">
+          <div className="flex-1">
+              {renderLangGraphDiagram()}
+               </div>
+               
+               {/* HITL Control Panel */}
+               <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+                 <div className="bg-gradient-to-r from-yellow-50/80 to-orange-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-4 border border-white/20 dark:border-gray-600/30 shadow-lg">
+                   <div className="flex items-center justify-between mb-3">
+                     <div className="flex items-center">
+                       <FaCogs className="h-4 w-4 text-yellow-500 mr-2" />
+                       <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                         Human-in-the-Loop (HITL)
+                       </Label>
+          </div>
+        </div>
+
+                   <div className="space-y-4">
+                     <p className="text-xs text-gray-600 dark:text-gray-400">
+                       Enable pause/interrupt controls during workflow execution
+                     </p>
+                       
+                     {/* Pause Control Group */}
+                     <div className="space-y-2">
+                       <div className="flex items-center gap-2">
+                         <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                         <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                           Pause Control
+                         </Label>
+                       </div>
+                       <p className="text-xs text-gray-500 dark:text-gray-400 ml-4">
+                         Temporarily pause execution for quick resume
+                       </p>
+                       <div className="flex gap-2 ml-4">
+                       <Button
+                           size="sm"
+                           variant="outline"
+                           onClick={() => handlePauseExecution(currentNode, executionId)}
+                         disabled={!executionId}
+                           className="flex items-center gap-1 text-blue-600 hover:text-blue-700 border-blue-200 hover:border-blue-300"
+                         >
+                           <FaPlay className="h-3 w-3" />
+                           Pause
+                         </Button>
+                         
+                        <Button
+                           size="sm"
+                           variant="outline"
+                           onClick={() => handleResumeExecution(executionId)}
+                          disabled={!executionId}
+                           className="flex items-center gap-1 text-green-600 hover:text-green-700 border-green-200 hover:border-green-300"
+                         >
+                           <FaCheck className="h-3 w-3" />
+                           Resume
+                         </Button>
+                       </div>
+                     </div>
+
+                     {/* Interrupt Control Group */}
+                     <div className="space-y-2">
+                       <div className="flex items-center gap-2">
+                         <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                         <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                           Interrupt Control
+                         </Label>
+                       </div>
+                       <p className="text-xs text-gray-500 dark:text-gray-400 ml-4">
+                         Interrupt execution and save to history
+                       </p>
+                       <div className="flex gap-2 ml-4">
+                        <Button
+                           size="sm"
+                           variant="outline"
+                           onClick={() => handleInterruptExecution(currentNode, executionId)}
+                          disabled={!executionId}
+                           className="flex items-center gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
+                         >
+                           <FaStop className="h-3 w-3" />
+                           Interrupt
+                         </Button>
+                         
+                         <Button
+                           size="sm"
+                           variant="outline"
+                           onClick={() => handleRestoreFromHistory()}
+                           disabled={loading}
+                           className="flex items-center gap-1 text-purple-600 hover:text-purple-700 border-purple-200 hover:border-purple-300"
+                         >
+                           <FaRedo className="h-3 w-3" />
+                           Restore from History
+                         </Button>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+               </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Bottom row: Analysis Result - Full width */}
+      <div className="space-y-4 flex-shrink-0" style={{height: '400px'}}>
+        <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl h-full flex flex-col">
+          <CardHeader className="bg-transparent text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30 flex-shrink-0">
+            <CardTitle className="flex items-center text-2xl font-bold">
                 <div className="flex items-center">
-                  <div className="p-3 bg-gradient-to-r from-emerald-400 to-teal-500 rounded-xl shadow-lg mr-4">
-                    <FaLightbulb className="h-6 w-6 text-white" />
-                  </div>
+                <div className="p-3 bg-gradient-to-r from-emerald-400 to-teal-500 rounded-xl shadow-lg mr-4">
+                  <FaLightbulb className="h-6 w-6 text-white" />
+                </div>
                   {t('intelligentAnalysis.analysisResult')}
                 </div>
               </CardTitle>
             </CardHeader>
-             <CardContent className="p-6 space-y-6 overflow-y-auto" style={{height: '500px'}}>
-               {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
-                 <div className="flex items-center justify-center h-40">
-                   <Spinner className="h-8 w-8" />
-                   <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
-                 </div>
-               )}
-               
-               {(() => {
+           <CardContent className="p-6 space-y-6 overflow-visible flex-1">
+             {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
+                <div className="flex items-center justify-center h-40">
+                  <Spinner className="h-8 w-8" />
+                  <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
+                </div>
+              )}
+              
+             {(() => {
                 const actualResult = result || currentExecutionData?.result;
                 // Safely extract chart image and answer from the workflow result
                 console.log('Extracting data from actualResult:', actualResult);
-                const chartImage = actualResult?.chart_rendering_node?.chart_image || actualResult?.chart_image;
-                
-                // Priority: streaming answer > final answer > static answer
-                const streamingAnswer = currentExecutionData?.streamingAnswer;
-                const finalAnswer = currentExecutionData?.finalAnswer || actualResult?.llm_processing_node?.answer || actualResult?.sql_execution_node?.answer || actualResult?.answer;
-                const isStreaming = currentExecutionData?.isStreaming || false;
-                const displayAnswer = streamingAnswer || finalAnswer;
-                
+              const chartImage = actualResult?.chart_rendering_node?.chart_image || actualResult?.chart_image;
+              const chartConfig = actualResult?.chart_rendering_node?.chart_config || actualResult?.chart_config;
+              const structuredData = actualResult?.structured_data || actualResult?.data;
+              
+              // Priority: streaming answer > final answer > static answer
+              const streamingAnswer = currentExecutionData?.streamingAnswer;
+              const finalAnswer = currentExecutionData?.finalAnswer || actualResult?.llm_processing_node?.answer || actualResult?.sql_execution_node?.answer || actualResult?.answer;
+              const isStreaming = currentExecutionData?.isStreaming || false;
+              const displayAnswer = streamingAnswer || finalAnswer;
+              
                 console.log('Extracted chartImage:', chartImage);
-                console.log('Streaming answer:', streamingAnswer?.substring(0, 100));
-                console.log('Final answer:', finalAnswer?.substring(0, 100));
-                console.log('Is streaming:', isStreaming);
+              console.log('Streaming answer:', streamingAnswer?.substring(0, 100));
+              console.log('Final answer:', finalAnswer?.substring(0, 100));
+              console.log('Is streaming:', isStreaming);
 
-                // If no result yet, show placeholder
-                if (!actualResult && !streamingAnswer && !loading) {
-                  return (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400">
-                      <div className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-4">
-                        <FaLightbulb className="h-8 w-8 text-blue-500" />
-                      </div>
-                      <h3 className="text-lg font-semibold mb-2">Ready for Analysis</h3>
-                      <p className="text-sm">Enter your query and click "Start Analysis" to see results here.</p>
-                    </div>
-                  );
-                }
-
+              // If no result yet, show placeholder
+              if (!actualResult && !streamingAnswer && !loading) {
                 return (
-                  <div className="flex flex-col gap-6">
-                    
-                    {/* Answer Text with Streaming Support */}
-                    {displayAnswer && (
-                      <div className="prose max-w-none text-gray-700 relative">
-                        <p className="whitespace-pre-wrap">
-                          {displayAnswer}
-                          {isStreaming && (
-                            <span className="inline-block w-2 h-5 ml-1 bg-blue-600 animate-pulse">|</span>
-                          )}
-                        </p>
+                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 dark:text-gray-400">
+                    <div className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-gray-700 dark:to-gray-600 rounded-xl mb-4">
+                      <FaLightbulb className="h-8 w-8 text-blue-500" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">Ready for Analysis</h3>
+                    <p className="text-sm">Enter your query and click "Start Analysis" to see results here.</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-6">
+                  {/* Answer section */}
+                  {displayAnswer && (
+                    <div className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
+                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                        <FaLightbulb className="h-5 w-5 text-blue-500 mr-2" />
+                        Analysis Result
+                      </h3>
+                      <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300">
+                        <div className="whitespace-pre-wrap">{displayAnswer}</div>
+                      </div>
                       </div>
                     )}
 
-                    {/* Interactive Chart */}
-                    {(() => {
-                      // Extract chart configuration from result
-                      const chartConfig = actualResult?.chart_config || actualResult?.chart_rendering_node?.chart_config;
-                      const chartType = actualResult?.chart_type || actualResult?.chart_rendering_node?.chart_type;
-                      const chartData = actualResult?.chart_data || actualResult?.chart_rendering_node?.chart_data;
-                      
-                      // Convert backend data to frontend format
-                      const frontendChartConfig = convertBackendChartData({
-                        chart_config: chartConfig,
-                        chart_type: chartType,
-                        chart_data: chartData
-                      });
-                      
-                      if (frontendChartConfig && validateChartConfig(frontendChartConfig)) {
-                        return (
-                          <InteractiveChart
-                            chartConfig={frontendChartConfig}
-                            onDataPointClick={(event) => {
-                              console.log('Data point clicked:', event);
-                            }}
-                            onChartTypeChange={(newType) => {
-                              console.log('Chart type changed to:', newType);
-                            }}
-                            showControls={true}
-                            className="w-full"
-                          />
-                        );
-                      }
-                      
-                      // Check for chart-related errors
-                      const chartError = actualResult?.error || actualResult?.chart_rendering_node?.error;
-                      if (chartError) {
-                        return (
-                          <div className="space-y-4">
-                            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                              <div className="flex items-center">
-                                <FaExclamationTriangle className="h-5 w-5 text-red-500 mr-3" />
-                                <div>
-                                  <h3 className="text-lg font-semibold text-red-800 dark:text-red-200">
-                                    Chart Generation Error
-                                  </h3>
-                                  <p className="text-sm text-red-600 dark:text-red-300 mt-1">
-                                    {chartError}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                            
-                            {/* Provide helpful suggestions */}
-                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-                              <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2">
-                                Suggestions:
-                              </h4>
-                              <ul className="text-sm text-blue-600 dark:text-blue-300 space-y-1">
-                                <li>• Ensure your data source has a database table configured</li>
-                                <li>• Check that the data source contains structured data</li>
-                                <li>• Try uploading a CSV or Excel file with tabular data</li>
-                                <li>• Verify that your query can be executed against the data source</li>
-                              </ul>
-                            </div>
-                          </div>
-                        );
-                      }
-                      
-                      // Fallback to old image display if available
-                      if (chartImage) {
-                        return (
-                          <div className="flex items-center justify-center p-4 bg-gray-50 rounded-lg border">
-                            <img 
-                              src={chartImage} 
-                              alt={t('intelligentAnalysis.analysisChart')} 
-                              className="max-w-full h-auto rounded-md shadow-lg"
-                            />
-                          </div>
-                        );
-                      }
-                      
-                      return null;
-                    })()}
+                  {/* Chart section - prefer interactive config, fallback to image */}
+                    {chartConfig && (
+                    <div className="bg-gradient-to-r from-green-50/80 to-teal-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
+                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                        <FaChartLine className="h-5 w-5 text-green-500 mr-2" />
+                        Chart Visualization
+                      </h3>
+                      <InteractiveChart chartConfig={chartConfig} structuredData={structuredData} />
+                    </div>
+                    )}
 
-                    {/* Raw Data Details - show only if there's data and it's not just the chart/answer */}
+                    {!chartConfig && chartImage && (
+                    <div className="bg-gradient-to-r from-green-50/80 to-teal-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
+                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
+                        <FaChartLine className="h-5 w-5 text-green-500 mr-2" />
+                        Chart Visualization
+                      </h3>
+                      <div className="flex justify-center">
+                        <img 
+                          src={chartImage} 
+                          alt="Analysis Chart" 
+                          className="max-w-full h-auto rounded-lg shadow-lg"
+                        />
+                      </div>
+                      </div>
+                    )}
+
+                  {/* Debug section */}
                     {actualResult && (
                       <Collapsible>
-                        <CollapsibleTrigger asChild>
-                          <Button variant="outline" size="sm" className="flex items-center gap-2 mt-4">
-                            {t('intelligentAnalysis.dataDetails')} <ChevronsUpDown className="h-4 w-4" />
-                          </Button>
+                      <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                        <ChevronRight className="h-4 w-4" />
+                        Debug Information
                         </CollapsibleTrigger>
                         <CollapsibleContent>
                           <pre className="mt-4 p-4 bg-gray-900 text-white rounded-md overflow-x-auto text-sm">
@@ -1278,34 +1435,34 @@ function IntelligentAnalysis() {
                   </div>
                 );
               })()}
-             </CardContent>
-           </Card>
-         </div>
-
-         {/* Right side: LangGraph flow - 1 column */}
-         <div className="space-y-4 h-full flex flex-col">
-           {/* Flow chart */}
-           <Card className="shadow-2xl border-0 bg-white/70 backdrop-blur-xl dark:bg-gray-800/70 rounded-2xl flex-1">
-             <CardHeader className="bg-gradient-to-r from-purple-400/20 via-pink-400/20 to-rose-400/20 dark:from-purple-500/20 dark:via-pink-500/20 dark:to-rose-500/20 backdrop-blur-sm text-gray-800 dark:text-gray-200 rounded-t-2xl border-b border-white/20 dark:border-gray-600/30">
-               <CardTitle className="flex items-center text-2xl font-bold justify-between">
-                 <div className="flex items-center">
-                   <div className="p-3 bg-gradient-to-r from-purple-400 to-pink-500 rounded-xl shadow-lg mr-4">
-                     <FaProjectDiagram className="h-6 w-6 text-white" />
-                   </div>
-                   {t('intelligentAnalysis.workflowDiagram')}
-                 </div>
-               </CardTitle>
-             </CardHeader>
-             <CardContent className="p-6 h-full">
-               {renderLangGraphDiagram()}
-             </CardContent>
-           </Card>
-         </div>
-       </div>
-       </div>
+            </CardContent>
+          </Card>
+      </div>
+     </div>
+      </div>
       
       {/* Node Detail Dialog */}
       {renderNodeDetailDialog()}
+      
+      {/* HITL Parameter Panel */}
+      <HITLParameterPanel
+        isOpen={hitlPanelOpen}
+        onClose={() => dispatch(closeHITLPanel())}
+        executionId={hitlPanel.executionId}
+        nodeName={hitlPanel.nodeName}
+        currentState={hitlPanel.currentState}
+        onResume={handleResumeExecution}
+        onCancel={handleCancelExecution}
+        executionType={hitlPanel.executionType}
+      />
+
+      {/* History Restore Dialog */}
+      <HistoryRestoreDialog
+        isOpen={showHistoryDialog}
+        onClose={() => setShowHistoryDialog(false)}
+        onRestoreTask={handleRestoreTask}
+        onCancelTask={handleCancelTask}
+      />
     </div>
   );
 }

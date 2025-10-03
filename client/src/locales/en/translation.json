@@ -352,11 +352,33 @@
       },
       "links": {
         "github": "GitHub Project",
-        "youtube": "YouTube Demo"
-      }
-    },
-    "author": {
-      "title": "Author Information",
+      "youtube": "YouTube Demo"
+    }
+  },
+  "hitl": {
+    "title": "Human-in-the-Loop (HITL)",
+    "description": "Enable pause/interrupt controls during workflow execution",
+    "pause": "Pause",
+    "resume": "Resume",
+    "interrupt": "Interrupt",
+    "restoreFromHistory": "Restore from History",
+    "pauseGroup": "Pause Control",
+    "interruptGroup": "Interrupt Control",
+    "pauseDescription": "Temporarily pause execution for quick resume",
+    "interruptDescription": "Interrupt execution and save to history",
+    "restoreDescription": "Restore unfinished tasks from history",
+    "noHistoryTasks": "No unfinished history tasks",
+    "selectTaskToRestore": "Select task to restore",
+    "taskId": "Task ID",
+    "nodeName": "Node Name",
+    "pausedAt": "Paused At",
+    "interruptedAt": "Interrupted At",
+    "reason": "Reason",
+    "restoreTask": "Restore Task",
+    "cancelTask": "Cancel Task"
+  },
+  "author": {
+    "title": "Author Information",
       "name": "Name",
       "nameValue": "Long Liang",
       "email": "Email",

@@ -653,6 +653,230 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
     finally:
         conn.close()
 
+# ================== HITL (Human-in-the-Loop) Operations ==================
+
+def create_hitl_interrupt(execution_id: str, user_input: str, datasource_id: Optional[int], 
+                         interrupt_node: str, interrupt_reason: str, state_data: str) -> bool:
+    """Create a new HITL interrupt record"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO hitl_interrupts 
+            (execution_id, user_input, datasource_id, interrupt_node, interrupt_reason, state_data, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (execution_id, user_input, datasource_id, interrupt_node, interrupt_reason, state_data, "interrupted"))
+        
+        conn.commit()
+        return cursor.rowcount > 0
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error creating HITL interrupt: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_hitl_interrupt(execution_id: str) -> Optional[Dict[str, Any]]:
+    """Get HITL interrupt record by execution_id"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT id, execution_id, user_input, datasource_id, interrupt_node, 
+                   interrupt_reason, state_data, created_at, updated_at, status
+            FROM hitl_interrupts WHERE execution_id = ?
+        """, (execution_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error getting HITL interrupt: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_hitl_interrupt_status(execution_id: str, status: str) -> bool:
+    """Update HITL interrupt status"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE hitl_interrupts 
+            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE execution_id = ?
+        """, (status, execution_id))
+        
+        conn.commit()
+        return cursor.rowcount > 0
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error updating HITL interrupt status: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def list_hitl_interrupts(status: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    """List HITL interrupts with optional status filter"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        if status:
+            cursor.execute("""
+                SELECT id, execution_id, user_input, datasource_id, interrupt_node, 
+                       interrupt_reason, created_at, updated_at, status
+                FROM hitl_interrupts 
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (status, limit))
+        else:
+            cursor.execute("""
+                SELECT id, execution_id, user_input, datasource_id, interrupt_node, 
+                       interrupt_reason, created_at, updated_at, status
+                FROM hitl_interrupts 
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (limit,))
+        
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error listing HITL interrupts: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_hitl_parameter_adjustment(interrupt_id: int, parameter_name: str, 
+                                    old_value: Optional[str], new_value: str, 
+                                    adjustment_reason: str) -> bool:
+    """Create a HITL parameter adjustment record"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO hitl_parameter_adjustments 
+            (interrupt_id, parameter_name, old_value, new_value, adjustment_reason)
+            VALUES (?, ?, ?, ?, ?)
+        """, (interrupt_id, parameter_name, old_value, new_value, adjustment_reason))
+        
+        conn.commit()
+        return cursor.rowcount > 0
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error creating HITL parameter adjustment: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_hitl_parameter_adjustments(interrupt_id: int) -> List[Dict[str, Any]]:
+    """Get HITL parameter adjustments for an interrupt"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT id, parameter_name, old_value, new_value, adjustment_reason, created_at
+            FROM hitl_parameter_adjustments 
+            WHERE interrupt_id = ?
+            ORDER BY created_at ASC
+        """, (interrupt_id,))
+        
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error getting HITL parameter adjustments: {e}")
+        return []
+    finally:
+        conn.close()
+
+def create_hitl_execution_history(execution_id: str, operation_type: str, 
+                                 node_name: Optional[str] = None, 
+                                 parameters: Optional[str] = None,
+                                 user_action: str = "user_initiated") -> bool:
+    """Create a HITL execution history record"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            INSERT INTO hitl_execution_history 
+            (execution_id, operation_type, node_name, parameters, user_action)
+            VALUES (?, ?, ?, ?, ?)
+        """, (execution_id, operation_type, node_name, parameters, user_action))
+        
+        conn.commit()
+        return cursor.rowcount > 0
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error creating HITL execution history: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_hitl_execution_history(execution_id: str) -> List[Dict[str, Any]]:
+    """Get HITL execution history for an execution"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT id, operation_type, node_name, parameters, timestamp, user_action
+            FROM hitl_execution_history 
+            WHERE execution_id = ?
+            ORDER BY timestamp ASC
+        """, (execution_id,))
+        
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error getting HITL execution history: {e}")
+        return []
+    finally:
+        conn.close()
+
+def cleanup_old_hitl_data(max_age_hours: int = 24) -> int:
+    """Clean up old HITL data (cancelled interrupts older than max_age_hours)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Delete old cancelled interrupts and their related data
+        cursor.execute("""
+            DELETE FROM hitl_interrupts 
+            WHERE status = 'cancelled' 
+            AND created_at < datetime('now', '-{} hours')
+        """.format(max_age_hours))
+        
+        deleted_count = cursor.rowcount
+        conn.commit()
+        
+        if deleted_count > 0:
+            print(f"[DB-SQLite] Cleaned up {deleted_count} old HITL interrupts")
+        
+        return deleted_count
+        
+    except Exception as e:
+        print(f"[DB-SQLite] Error cleaning up old HITL data: {e}")
+        conn.rollback()
+        return 0
+    finally:
+        conn.close()
+
 # ================== Initialization Function ==================
 
 def initialize_database():

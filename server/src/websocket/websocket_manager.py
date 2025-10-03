@@ -4,6 +4,7 @@ WebSocket connection manager for real-time workflow tracking
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
 from ..models.data_models import WorkflowEvent, ExecutionState, NodeState, NodeStatus
@@ -21,6 +22,10 @@ class WebSocketManager:
         self.pending_cleanup: List[str] = []
         self.execution_paused: Dict[str, bool] = {}
         self.execution_cancelled: Dict[str, bool] = {}
+        
+        # HITL state management
+        self.hitl_paused_executions: Dict[str, Dict[str, Any]] = {}
+        self.hitl_interrupted_executions: Dict[str, Dict[str, Any]] = {}
     
     async def connect(self, websocket: WebSocket, client_id: str):
         """Connect a new WebSocket client."""
@@ -285,6 +290,224 @@ class WebSocketManager:
                 "duration": (execution_state.get("end_time", 0) - execution_state.get("start_time", 0)) if execution_state.get("start_time") else None
             }
         }
+
+    # ==================== HITL (Human-in-the-Loop) Methods ====================
+    
+    async def handle_hitl_message(self, client_id: str, message: Dict[str, Any]):
+        """Handle HITL control messages from client"""
+        try:
+            message_type = message.get("type")
+            execution_id = message.get("execution_id")
+            
+            if not execution_id:
+                await self.send_error(client_id, "Missing execution_id in HITL message")
+                return
+            
+            if message_type == "hitl_pause":
+                await self.pause_execution(client_id, execution_id, message)
+            elif message_type == "hitl_interrupt":
+                await self.interrupt_execution(client_id, execution_id, message)
+            elif message_type == "hitl_resume":
+                await self.resume_execution(client_id, execution_id, message)
+            elif message_type == "hitl_cancel":
+                await self.cancel_execution(client_id, execution_id, message)
+            else:
+                await self.send_error(client_id, f"Unknown HITL message type: {message_type}")
+                
+        except Exception as e:
+            logger.error(f"Error handling HITL message: {e}")
+            await self.send_error(client_id, f"Error processing HITL message: {str(e)}")
+    
+    async def pause_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
+        """Pause workflow execution"""
+        try:
+            from ..utils.hitl_state_manager import hitl_state_manager
+            
+            # Get current execution state
+            execution_state = self.execution_states.get(execution_id)
+            if not execution_state:
+                await self.send_error(client_id, f"Execution {execution_id} not found")
+                return
+            
+            node_name = message.get("node_name", "unknown")
+            reason = message.get("reason", "user_request")
+            
+            # Create state snapshot for pause
+            pause_state = {
+                "execution_id": execution_id,
+                "user_input": execution_state.get("user_input", ""),
+                "current_node": execution_state.get("current_node"),
+                "status": execution_state.get("status"),
+                "node_states": execution_state,
+                "timestamp": message.get("timestamp")
+            }
+            
+            # Store pause state
+            success = hitl_state_manager.pause_execution(execution_id, pause_state, node_name, reason)
+            
+            if success:
+                self.hitl_paused_executions[execution_id] = pause_state
+                self.execution_paused[execution_id] = True
+                
+                # Notify client
+                await self.send_to_client(client_id, {
+                    "type": "hitl_paused",
+                    "execution_id": execution_id,
+                    "node_name": node_name,
+                    "reason": reason,
+                    "timestamp": message.get("timestamp")
+                })
+                
+                logger.info(f"Execution {execution_id} paused at node {node_name}")
+            else:
+                await self.send_error(client_id, f"Failed to pause execution {execution_id}")
+                
+        except Exception as e:
+            logger.error(f"Error pausing execution {execution_id}: {e}")
+            await self.send_error(client_id, f"Error pausing execution: {str(e)}")
+    
+    async def interrupt_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
+        """Interrupt workflow execution"""
+        try:
+            from ..utils.hitl_state_manager import hitl_state_manager
+            
+            # Get current execution state
+            execution_state = self.execution_states.get(execution_id)
+            if not execution_state:
+                await self.send_error(client_id, f"Execution {execution_id} not found")
+                return
+            
+            node_name = message.get("node_name", "unknown")
+            reason = message.get("reason", "user_request")
+            
+            # Create state snapshot for interrupt
+            interrupt_state = {
+                "execution_id": execution_id,
+                "user_input": execution_state.get("user_input", ""),
+                "current_node": execution_state.get("current_node"),
+                "status": execution_state.get("status"),
+                "node_states": execution_state,
+                "timestamp": message.get("timestamp")
+            }
+            
+            # Store interrupt state in database
+            success = hitl_state_manager.interrupt_execution(execution_id, interrupt_state, node_name, reason)
+            
+            if success:
+                self.hitl_interrupted_executions[execution_id] = interrupt_state
+                self.execution_cancelled[execution_id] = True
+                
+                # Notify client
+                await self.send_to_client(client_id, {
+                    "type": "hitl_interrupted",
+                    "execution_id": execution_id,
+                    "node_name": node_name,
+                    "reason": reason,
+                    "timestamp": message.get("timestamp")
+                })
+                
+                logger.info(f"Execution {execution_id} interrupted at node {node_name}")
+            else:
+                await self.send_error(client_id, f"Failed to interrupt execution {execution_id}")
+                
+        except Exception as e:
+            logger.error(f"Error interrupting execution {execution_id}: {e}")
+            await self.send_error(client_id, f"Error interrupting execution: {str(e)}")
+    
+    async def resume_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
+        """Resume paused or interrupted execution"""
+        try:
+            from ..utils.hitl_state_manager import hitl_state_manager
+            
+            parameters = message.get("parameters", {})
+            execution_type = message.get("execution_type", "pause")  # "pause" or "interrupt"
+            
+            # Restore state based on execution type
+            if execution_type == "pause":
+                restored_state = hitl_state_manager.resume_execution(execution_id, parameters)
+                if execution_id in self.hitl_paused_executions:
+                    del self.hitl_paused_executions[execution_id]
+            else:  # interrupt
+                restored_state = hitl_state_manager.restore_interrupt(execution_id, parameters)
+                if execution_id in self.hitl_interrupted_executions:
+                    del self.hitl_interrupted_executions[execution_id]
+            
+            if restored_state:
+                # Update execution state
+                if execution_id in self.execution_states:
+                    self.execution_states[execution_id].update(restored_state.get("node_states", {}))
+                
+                # Clear pause/cancel flags
+                if execution_id in self.execution_paused:
+                    del self.execution_paused[execution_id]
+                if execution_id in self.execution_cancelled:
+                    del self.execution_cancelled[execution_id]
+                
+                # Notify client
+                await self.send_to_client(client_id, {
+                    "type": "hitl_resumed",
+                    "execution_id": execution_id,
+                    "execution_type": execution_type,
+                    "parameters": parameters,
+                    "timestamp": message.get("timestamp")
+                })
+                
+                logger.info(f"Execution {execution_id} resumed from {execution_type}")
+            else:
+                await self.send_error(client_id, f"Failed to resume execution {execution_id}")
+                
+        except Exception as e:
+            logger.error(f"Error resuming execution {execution_id}: {e}")
+            await self.send_error(client_id, f"Error resuming execution: {str(e)}")
+    
+    async def cancel_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
+        """Cancel paused or interrupted execution"""
+        try:
+            from ..utils.hitl_state_manager import hitl_state_manager
+            
+            execution_type = message.get("execution_type", "pause")
+            
+            # Cancel execution
+            success = hitl_state_manager.cancel_execution(execution_id, execution_type)
+            
+            if success:
+                # Clean up local state
+                if execution_id in self.hitl_paused_executions:
+                    del self.hitl_paused_executions[execution_id]
+                if execution_id in self.hitl_interrupted_executions:
+                    del self.hitl_interrupted_executions[execution_id]
+                if execution_id in self.execution_paused:
+                    del self.execution_paused[execution_id]
+                if execution_id in self.execution_cancelled:
+                    del self.execution_cancelled[execution_id]
+                
+                # Notify client
+                await self.send_to_client(client_id, {
+                    "type": "hitl_cancelled",
+                    "execution_id": execution_id,
+                    "execution_type": execution_type,
+                    "timestamp": message.get("timestamp")
+                })
+                
+                logger.info(f"Execution {execution_id} cancelled ({execution_type})")
+            else:
+                await self.send_error(client_id, f"Failed to cancel execution {execution_id}")
+                
+        except Exception as e:
+            logger.error(f"Error cancelling execution {execution_id}: {e}")
+            await self.send_error(client_id, f"Error cancelling execution: {str(e)}")
+    
+    async def send_error(self, client_id: str, error_message: str):
+        """Send error message to client"""
+        try:
+            if client_id in self.active_connections:
+                await self.active_connections[client_id].send_text(json.dumps({
+                    "type": "error",
+                    "message": error_message,
+                    "timestamp": time.time()
+                }))
+        except Exception as e:
+            logger.error(f"Error sending error message to client {client_id}: {e}")
 
 # Create a singleton instance
 websocket_manager = WebSocketManager() 

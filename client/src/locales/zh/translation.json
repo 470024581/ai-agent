@@ -344,5 +344,27 @@
     "cannotDeleteActive": "无法删除当前激活的数据源",
     "deleteConfirm": "确定要删除这个数据源吗？",
     "cannotDeleteActiveMessage": "无法删除当前激活的数据源，请先停用或删除所有关联的文件和数据。"
+  },
+  "hitl": {
+    "title": "人机交互 (HITL)",
+    "description": "在工作流执行过程中启用暂停/中断控制",
+    "pause": "暂停",
+    "resume": "恢复",
+    "interrupt": "中断",
+    "restoreFromHistory": "从历史恢复",
+    "pauseGroup": "暂停控制",
+    "interruptGroup": "中断控制",
+    "pauseDescription": "临时暂停执行，可快速恢复",
+    "interruptDescription": "中断执行并保存到历史记录",
+    "restoreDescription": "从历史记录中恢复未完成的任务",
+    "noHistoryTasks": "没有未完成的历史任务",
+    "selectTaskToRestore": "选择要恢复的任务",
+    "taskId": "任务ID",
+    "nodeName": "节点名称",
+    "pausedAt": "暂停时间",
+    "interruptedAt": "中断时间",
+    "reason": "原因",
+    "restoreTask": "恢复任务",
+    "cancelTask": "取消任务"
   }
 } 

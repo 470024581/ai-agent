@@ -13,6 +13,8 @@ import {
   streamToken,
   errorNode,
   activateEdge,
+  openHITLPanel,
+  updateHITLExecutionState,
 } from '../store/workflowSlice';
 
 const useWorkflowWebSocket = () => {
@@ -122,6 +124,59 @@ const useWorkflowWebSocket = () => {
           console.log('Received pong from server');
           break;
 
+        // HITL message handlers
+        case 'hitl_paused':
+          console.log('Execution paused:', data);
+          dispatch(updateHITLExecutionState({
+            executionId: data.execution_id,
+            hitlStatus: 'paused',
+            nodeName: data.node_name,
+            reason: data.reason
+          }));
+          dispatch(openHITLPanel({
+            executionId: data.execution_id,
+            nodeName: data.node_name,
+            executionType: 'pause',
+            currentState: data.current_state
+          }));
+          break;
+
+        case 'hitl_interrupted':
+          console.log('Execution interrupted:', data);
+          dispatch(updateHITLExecutionState({
+            executionId: data.execution_id,
+            hitlStatus: 'interrupted',
+            nodeName: data.node_name,
+            reason: data.reason
+          }));
+          dispatch(openHITLPanel({
+            executionId: data.execution_id,
+            nodeName: data.node_name,
+            executionType: 'interrupt',
+            currentState: data.current_state
+          }));
+          break;
+
+        case 'hitl_resumed':
+          console.log('Execution resumed:', data);
+          dispatch(updateHITLExecutionState({
+            executionId: data.execution_id,
+            hitlStatus: 'resumed',
+            nodeName: data.node_name,
+            reason: 'resumed'
+          }));
+          break;
+
+        case 'hitl_cancelled':
+          console.log('Execution cancelled:', data);
+          dispatch(updateHITLExecutionState({
+            executionId: data.execution_id,
+            hitlStatus: 'cancelled',
+            nodeName: data.node_name,
+            reason: 'cancelled'
+          }));
+          break;
+
         default:
           console.log('Unknown message type:', data.type);
       }
@@ -196,7 +251,54 @@ const useWorkflowWebSocket = () => {
     }
   }, []);
 
-  return { getClientId, sendMessage };
+  // HITL control functions
+  const pauseExecution = useCallback((nodeName, executionId) => {
+    sendMessage({
+      type: 'hitl_pause',
+      execution_id: executionId,
+      node_name: nodeName,
+      reason: 'user_request',
+      timestamp: new Date().toISOString()
+    });
+  }, [sendMessage]);
+
+  const interruptExecution = useCallback((nodeName, executionId) => {
+    sendMessage({
+      type: 'hitl_interrupt',
+      execution_id: executionId,
+      node_name: nodeName,
+      reason: 'user_request',
+      timestamp: new Date().toISOString()
+    });
+  }, [sendMessage]);
+
+  const resumeExecution = useCallback((executionId, parameters, executionType) => {
+    sendMessage({
+      type: 'hitl_resume',
+      execution_id: executionId,
+      execution_type: executionType,
+      parameters: parameters,
+      timestamp: new Date().toISOString()
+    });
+  }, [sendMessage]);
+
+  const cancelExecution = useCallback((executionId, executionType) => {
+    sendMessage({
+      type: 'hitl_cancel',
+      execution_id: executionId,
+      execution_type: executionType,
+      timestamp: new Date().toISOString()
+    });
+  }, [sendMessage]);
+
+  return { 
+    getClientId, 
+    sendMessage, 
+    pauseExecution, 
+    interruptExecution, 
+    resumeExecution, 
+    cancelExecution 
+  };
 };
 
 export default useWorkflowWebSocket; 

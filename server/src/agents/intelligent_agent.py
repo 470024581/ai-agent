@@ -600,6 +600,10 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     error_msg = f"Table not found. Available tables are: {', '.join(available_tables)}"
                 elif "no such column" in error_msg.lower():
                     error_msg = f"Column not found in schema: {error_msg}"
+                elif "no such function: strtofloat" in error_msg.lower():
+                    error_msg = "SQLite does not support strtofloat function. Please use CAST(column AS REAL) or column * 1.0 to convert text to numbers."
+                elif "strtofloat" in error_msg.lower():
+                    error_msg = "The query contains an unsupported function. Please rephrase your question to avoid using strtofloat or similar functions."
                     
                 logger.error(f"SQL execution failed: {error_msg}")
                 return {
@@ -979,6 +983,10 @@ async def get_query_from_sqltable_datasource(
                     error_msg = f"Table not found. Available tables are: {', '.join(available_tables)}"
                 elif "no such column" in error_msg.lower():
                     error_msg = f"Column not found in schema: {error_msg}"
+                elif "no such function: strtofloat" in error_msg.lower():
+                    error_msg = "SQLite does not support strtofloat function. Please use CAST(column AS REAL) or column * 1.0 to convert text to numbers."
+                elif "strtofloat" in error_msg.lower():
+                    error_msg = "The query contains an unsupported function. Please rephrase your question to avoid using strtofloat or similar functions."
                     
                 logger.error(f"SQL execution failed: {error_msg}")
                 return {
