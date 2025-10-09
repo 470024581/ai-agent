@@ -45,6 +45,7 @@ import {
   selectHITLPanel,
   selectHITLPanelOpen,
   closeHITLPanel,
+  openHITLPanel,
   setHITLEnabled,
 } from '../store/workflowSlice';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -100,10 +101,13 @@ function IntelligentAnalysis() {
   const hitlPanel = useSelector(selectHITLPanel);
   const hitlPanelOpen = useSelector(selectHITLPanelOpen);
   
+  // Debug: Log HITL panel state
+  console.log('HITL Panel State:', hitlPanel);
+  console.log('HITL Panel Open:', hitlPanelOpen);
+  
   // WebSocket connection
   const { 
     getClientId,
-    pauseExecution,
     interruptExecution,
     resumeExecution,
     cancelExecution,
@@ -181,6 +185,14 @@ function IntelligentAnalysis() {
     // This allows the result to persist after execution completes
   }, [executionResult]);
 
+  // Hide loading as soon as streaming starts or any partial answer appears
+  useEffect(() => {
+    const hasStreaming = !!(currentExecutionData?.isStreaming || (currentExecutionData?.streamingAnswer && currentExecutionData.streamingAnswer.length > 0));
+    if (hasStreaming && loading) {
+      setLoading(false);
+    }
+  }, [currentExecutionData?.isStreaming, currentExecutionData?.streamingAnswer]);
+
   // Sync executionId from websocket currentExecutionData
   useEffect(() => {
     if (currentExecutionData?.id) {
@@ -208,10 +220,6 @@ function IntelligentAnalysis() {
   };
 
   // HITL control functions
-  const handlePauseExecution = (nodeName, executionId) => {
-    pauseExecution(nodeName, executionId);
-  };
-
   const handleInterruptExecution = (nodeName, executionId) => {
     interruptExecution(nodeName, executionId);
   };
@@ -223,6 +231,41 @@ function IntelligentAnalysis() {
     } catch (error) {
       console.error('Error resuming execution:', error);
       setError('恢复执行失败: ' + error.message);
+    }
+  };
+
+  const handleResumeClick = (executionId) => {
+    console.log('🔄 [FRONTEND] handleResumeClick called');
+    console.log('📥 [FRONTEND] handleResumeClick input params:', { executionId });
+    
+    // Open HITL parameter panel when user clicks resume button
+    // Get the current execution data and HITL state from Redux
+    const hitlStatus = currentExecutionData?.hitl_status;
+    const hitlNode = currentExecutionData?.hitl_node;
+    const hitlCurrentState = currentExecutionData?.hitl_current_state;
+    
+    console.log('📊 [FRONTEND] handleResumeClick currentExecutionData:', currentExecutionData);
+    console.log('📊 [FRONTEND] handleResumeClick hitlStatus:', hitlStatus);
+    console.log('📊 [FRONTEND] handleResumeClick hitlNode:', hitlNode);
+    console.log('📊 [FRONTEND] handleResumeClick hitlCurrentState:', hitlCurrentState);
+    
+    if (hitlStatus === 'paused' || hitlStatus === 'interrupted') {
+      // 优先使用hitl_current_state，如果没有则使用currentExecutionData
+      const stateToUse = hitlCurrentState || currentExecutionData || {};
+      
+      const panelData = {
+        executionId: executionId,
+        nodeName: hitlNode || 'unknown',
+        executionType: hitlStatus === 'paused' ? 'pause' : 'interrupt',
+        currentState: stateToUse
+      };
+      
+      console.log('📤 [FRONTEND] handleResumeClick opening HITL panel with data:', panelData);
+      console.log('📤 [FRONTEND] handleResumeClick stateToUse keys:', Object.keys(stateToUse));
+      dispatch(openHITLPanel(panelData));
+      console.log('✅ [FRONTEND] handleResumeClick completed successfully');
+    } else {
+      console.warn('⚠️ [FRONTEND] handleResumeClick: No paused or interrupted execution found');
     }
   };
 
@@ -630,7 +673,6 @@ function IntelligentAnalysis() {
         edges={langGraphEdges}
         currentNode={currentNode}
         activeEdges={activeEdges || []}
-        onPause={handlePauseExecution}
         onInterrupt={handleInterruptExecution}
         hitlEnabled={hitlEnabled}
         executionId={currentExecutionData?.id}
@@ -1241,45 +1283,9 @@ function IntelligentAnalysis() {
 
                    <div className="space-y-4">
                      <p className="text-xs text-gray-600 dark:text-gray-400">
-                       Enable pause/interrupt controls during workflow execution
+                       Enable interrupt controls during workflow execution
                      </p>
                        
-                     {/* Pause Control Group */}
-                     <div className="space-y-2">
-                       <div className="flex items-center gap-2">
-                         <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                         <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                           Pause Control
-                         </Label>
-                       </div>
-                       <p className="text-xs text-gray-500 dark:text-gray-400 ml-4">
-                         Temporarily pause execution for quick resume
-                       </p>
-                       <div className="flex gap-2 ml-4">
-                       <Button
-                           size="sm"
-                           variant="outline"
-                           onClick={() => handlePauseExecution(currentNode, executionId)}
-                         disabled={!executionId}
-                           className="flex items-center gap-1 text-blue-600 hover:text-blue-700 border-blue-200 hover:border-blue-300"
-                         >
-                           <FaPlay className="h-3 w-3" />
-                           Pause
-                         </Button>
-                         
-                        <Button
-                           size="sm"
-                           variant="outline"
-                           onClick={() => handleResumeExecution(executionId)}
-                          disabled={!executionId}
-                           className="flex items-center gap-1 text-green-600 hover:text-green-700 border-green-200 hover:border-green-300"
-                         >
-                           <FaCheck className="h-3 w-3" />
-                           Resume
-                         </Button>
-                       </div>
-                     </div>
-
                      {/* Interrupt Control Group */}
                      <div className="space-y-2">
                        <div className="flex items-center gap-2">
@@ -1295,7 +1301,7 @@ function IntelligentAnalysis() {
                         <Button
                            size="sm"
                            variant="outline"
-                           onClick={() => handleInterruptExecution(currentNode, executionId)}
+                           onClick={() => handleInterruptExecution(currentNode || 'unknown', executionId)}
                           disabled={!executionId}
                            className="flex items-center gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
                          >
@@ -1337,7 +1343,7 @@ function IntelligentAnalysis() {
               </CardTitle>
             </CardHeader>
            <CardContent className="p-6 space-y-6 overflow-visible flex-1">
-             {loading && !result && !currentExecutionData?.result && !currentExecutionData?.isStreaming && (
+            {loading && !result && !currentExecutionData?.result && !(currentExecutionData?.isStreaming || (currentExecutionData?.streamingAnswer && currentExecutionData.streamingAnswer.length > 0)) && (
                 <div className="flex items-center justify-center h-40">
                   <Spinner className="h-8 w-8" />
                   <p className="ml-4 text-lg text-gray-600">{t('intelligentAnalysis.analyzing')}</p>
@@ -1345,9 +1351,9 @@ function IntelligentAnalysis() {
               )}
               
              {(() => {
-                const actualResult = result || currentExecutionData?.result;
-                // Safely extract chart image and answer from the workflow result
-                console.log('Extracting data from actualResult:', actualResult);
+              const actualResult = result || currentExecutionData?.result;
+              // Safely extract chart image and answer from the workflow result
+              console.log('Extracting data from actualResult:', actualResult);
               const chartImage = actualResult?.chart_rendering_node?.chart_image || actualResult?.chart_image;
               const chartConfig = actualResult?.chart_rendering_node?.chart_config || actualResult?.chart_config;
               const structuredData = actualResult?.structured_data || actualResult?.data;
@@ -1358,7 +1364,7 @@ function IntelligentAnalysis() {
               const isStreaming = currentExecutionData?.isStreaming || false;
               const displayAnswer = streamingAnswer || finalAnswer;
               
-                console.log('Extracted chartImage:', chartImage);
+              console.log('Extracted chartImage:', chartImage);
               console.log('Streaming answer:', streamingAnswer?.substring(0, 100));
               console.log('Final answer:', finalAnswer?.substring(0, 100));
               console.log('Is streaming:', isStreaming);
@@ -1381,10 +1387,6 @@ function IntelligentAnalysis() {
                   {/* Answer section */}
                   {displayAnswer && (
                     <div className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                        <FaLightbulb className="h-5 w-5 text-blue-500 mr-2" />
-                        Analysis Result
-                      </h3>
                       <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300">
                         <div className="whitespace-pre-wrap">{displayAnswer}</div>
                       </div>
@@ -1450,7 +1452,7 @@ function IntelligentAnalysis() {
         onClose={() => dispatch(closeHITLPanel())}
         executionId={hitlPanel.executionId}
         nodeName={hitlPanel.nodeName}
-        currentState={hitlPanel.currentState}
+        currentState={hitlPanel.currentState || currentExecutionData}
         onResume={handleResumeExecution}
         onCancel={handleCancelExecution}
         executionType={hitlPanel.executionType}

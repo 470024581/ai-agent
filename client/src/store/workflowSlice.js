@@ -230,11 +230,14 @@ const workflowSlice = createSlice({
     },
     
     updateHITLExecutionState: (state, action) => {
-      const { executionId, hitlStatus, nodeName, reason } = action.payload;
+      const { executionId, hitlStatus, nodeName, reason, currentState } = action.payload;
       if (state.executions[executionId]) {
-        state.executions[executionId].hitlStatus = hitlStatus;
-        state.executions[executionId].hitlNode = nodeName;
-        state.executions[executionId].hitlReason = reason;
+        state.executions[executionId].hitl_status = hitlStatus;
+        state.executions[executionId].hitl_node = nodeName;
+        state.executions[executionId].hitl_reason = reason;
+        if (currentState) {
+          state.executions[executionId].hitl_current_state = currentState;
+        }
       }
     },
   },

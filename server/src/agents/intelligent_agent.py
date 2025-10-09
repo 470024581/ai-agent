@@ -31,8 +31,7 @@ import PyPDF2
 from docx import Document as DocxDocument
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Defer logging configuration to centralized start.py
 logger = logging.getLogger(__name__)
 
 # Import for local embeddings

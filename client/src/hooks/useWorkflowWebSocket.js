@@ -126,23 +126,26 @@ const useWorkflowWebSocket = () => {
 
         // HITL message handlers
         case 'hitl_paused':
-          console.log('Execution paused:', data);
+          console.log('🔄 [FRONTEND-WS] hitl_paused message received');
+          console.log('📥 [FRONTEND-WS] hitl_paused data:', data);
+          console.log('📍 [FRONTEND-WS] hitl_paused current_state:', data.current_state);
+          
           dispatch(updateHITLExecutionState({
             executionId: data.execution_id,
             hitlStatus: 'paused',
             nodeName: data.node_name,
-            reason: data.reason
-          }));
-          dispatch(openHITLPanel({
-            executionId: data.execution_id,
-            nodeName: data.node_name,
-            executionType: 'pause',
+            reason: data.reason,
             currentState: data.current_state
           }));
+          
+          // Stop loading state when paused
+          dispatch(setLoading(false));
+          console.log('✅ [FRONTEND-WS] hitl_paused processing completed');
           break;
 
         case 'hitl_interrupted':
-          console.log('Execution interrupted:', data);
+          console.log('🚫 Execution interrupted:', data);
+          console.log('📍 Current state:', data.current_state);
           dispatch(updateHITLExecutionState({
             executionId: data.execution_id,
             hitlStatus: 'interrupted',
@@ -155,16 +158,21 @@ const useWorkflowWebSocket = () => {
             executionType: 'interrupt',
             currentState: data.current_state
           }));
+          console.log('✅ HITL interrupt panel action dispatched');
           break;
 
         case 'hitl_resumed':
-          console.log('Execution resumed:', data);
+          console.log('🔄 [FRONTEND-WS] hitl_resumed message received');
+          console.log('📥 [FRONTEND-WS] hitl_resumed data:', data);
+          
           dispatch(updateHITLExecutionState({
             executionId: data.execution_id,
             hitlStatus: 'resumed',
             nodeName: data.node_name,
             reason: 'resumed'
           }));
+          
+          console.log('✅ [FRONTEND-WS] hitl_resumed processing completed');
           break;
 
         case 'hitl_cancelled':
@@ -252,34 +260,33 @@ const useWorkflowWebSocket = () => {
   }, []);
 
   // HITL control functions
-  const pauseExecution = useCallback((nodeName, executionId) => {
-    sendMessage({
-      type: 'hitl_pause',
-      execution_id: executionId,
-      node_name: nodeName,
-      reason: 'user_request',
-      timestamp: new Date().toISOString()
-    });
-  }, [sendMessage]);
-
   const interruptExecution = useCallback((nodeName, executionId) => {
-    sendMessage({
+    const message = {
       type: 'hitl_interrupt',
       execution_id: executionId,
       node_name: nodeName,
       reason: 'user_request',
       timestamp: new Date().toISOString()
-    });
+    };
+    console.log('Sending HITL interrupt message:', message);
+    sendMessage(message);
   }, [sendMessage]);
 
   const resumeExecution = useCallback((executionId, parameters, executionType) => {
-    sendMessage({
+    console.log('🔄 [FRONTEND-WS] resumeExecution called');
+    console.log('📥 [FRONTEND-WS] resumeExecution input params:', { executionId, parameters, executionType });
+    
+    const message = {
       type: 'hitl_resume',
       execution_id: executionId,
       execution_type: executionType,
       parameters: parameters,
       timestamp: new Date().toISOString()
-    });
+    };
+    
+    console.log('📤 [FRONTEND-WS] resumeExecution sending message:', message);
+    sendMessage(message);
+    console.log('✅ [FRONTEND-WS] resumeExecution message sent successfully');
   }, [sendMessage]);
 
   const cancelExecution = useCallback((executionId, executionType) => {
@@ -294,8 +301,7 @@ const useWorkflowWebSocket = () => {
   return { 
     getClientId, 
     sendMessage, 
-    pauseExecution, 
-    interruptExecution, 
+    interruptExecution,
     resumeExecution, 
     cancelExecution 
   };

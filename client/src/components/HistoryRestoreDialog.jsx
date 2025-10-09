@@ -198,11 +198,11 @@ export function HistoryRestoreDialog({
                               <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
                                 <div className="flex items-center gap-1">
                                   <Database className="h-4 w-4" />
-                                  {task.node_name}
+                                  {task.interrupt_node || task.node_name}
                                 </div>
                                 <div className="flex items-center gap-1">
                                   <Clock className="h-4 w-4" />
-                                  {task.interrupted_at}
+                                  {task.created_at || task.interrupted_at}
                                 </div>
                               </div>
                             </div>

@@ -731,19 +731,19 @@ def list_hitl_interrupts(status: Optional[str] = None, limit: int = 100) -> List
     try:
         if status:
             cursor.execute("""
-                SELECT id, execution_id, user_input, datasource_id, interrupt_node, 
-                       interrupt_reason, created_at, updated_at, status
+                SELECT id, execution_id, node_name, user_input, status,
+                       interrupted_at, restored_at
                 FROM hitl_interrupts 
                 WHERE status = ?
-                ORDER BY created_at DESC
+                ORDER BY interrupted_at DESC
                 LIMIT ?
             """, (status, limit))
         else:
             cursor.execute("""
-                SELECT id, execution_id, user_input, datasource_id, interrupt_node, 
-                       interrupt_reason, created_at, updated_at, status
+                SELECT id, execution_id, node_name, user_input, status,
+                       interrupted_at, restored_at
                 FROM hitl_interrupts 
-                ORDER BY created_at DESC
+                ORDER BY interrupted_at DESC
                 LIMIT ?
             """, (limit,))
         

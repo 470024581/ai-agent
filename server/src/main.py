@@ -12,13 +12,82 @@ from fastapi.responses import FileResponse
 from typing import Dict
 import os
 from pathlib import Path
+import logging
+import sys
+from .config.config import config
+from fastapi import Request
+import time
 
 # Import from the restructured modules
 from .models.data_models import QueryRequest, QueryResponse
 from .agents.intelligent_agent import initialize_app_state, get_answer_from
 from .api.routes import router
 
+# ===== CRITICAL FIX: Configure logging in worker process =====
+# Uvicorn reload spawns worker processes that don't inherit log_config from parent
+# We must configure logging HERE (in the application module) to ensure worker processes have proper logging
+
+# 1. Clear any existing handlers to avoid duplicates
+root_logger = logging.getLogger()
+root_logger.handlers.clear()
+
+# 2. Add a single console handler to root
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))
+console_handler.setFormatter(logging.Formatter(config.LOG_FORMAT))
+root_logger.addHandler(console_handler)
+root_logger.setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))
+
+# 3. Configure uvicorn loggers to propagate (use root's handler)
+for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access"]:
+    logger_obj = logging.getLogger(logger_name)
+    logger_obj.handlers.clear()  # Remove uvicorn's default handlers
+    # uvicorn.error logs too much DEBUG info (ping/pong, websocket messages), set to INFO
+    if logger_name == "uvicorn.error":
+        logger_obj.setLevel(logging.INFO)
+    else:
+        logger_obj.setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))
+    logger_obj.propagate = True  # Use root's handler
+
+# 4. Silence noisy third-party loggers
+logging.getLogger("botocore").setLevel(logging.WARNING)  # Bedrock streaming is too verbose
+logging.getLogger("botocore.parsers").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.INFO)
+logging.getLogger("watchfiles").setLevel(logging.WARNING)  # File change detection noise
+
+# 4. Configure src.* loggers
+src_logger = logging.getLogger("src")
+src_logger.handlers.clear()
+src_logger.setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))
+src_logger.propagate = True
+
+# Logging configured successfully in worker process
+
 app = FastAPI(title="Smart AI Assistant API", version="0.5.0")
+
+# ===== ACCESS LOGGING MIDDLEWARE (Must be added BEFORE other middlewares) =====
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class AccessLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        
+        # Log access
+        try:
+            logger = logging.getLogger("uvicorn.access")
+            client = request.client.host if request.client else "-"
+            logger.info(f"{client} - \"{request.method} {request.url.path}\" {response.status_code} ({duration_ms}ms)")
+        except Exception:
+            pass
+        
+        return response
+
+# Add access log middleware FIRST (before CORS!)
+app.add_middleware(AccessLogMiddleware)
 
 # CORS Middleware Configuration
 origins = [
@@ -34,6 +103,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Test route to verify logging works
 
 # Include the router from the restructured API module
 app.include_router(router)
@@ -53,20 +124,25 @@ if static_dir.exists():
             return FileResponse(str(index_file))
         return {"message": "Frontend not found. Please build the frontend first."}
     
-    @app.get("/{path:path}", tags=["Frontend"])
-    async def serve_frontend_routes(path: str):
-        """Serve frontend routes and static files"""
-        # Check if it's a static file request
-        file_path = static_dir / path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(str(file_path))
-        
-        # For all other routes, serve the index.html (SPA routing)
-        index_file = static_dir / "index.html"
-        if index_file.exists():
-            return FileResponse(str(index_file))
-        
-        return {"message": f"File not found: {path}"}
+    # TEMPORARILY DISABLED to test if this is blocking API routes
+    # # Catch-all route for frontend SPA - MUST be last and most specific
+    # @app.get("/{full_path:path}", tags=["Frontend"], include_in_schema=False)
+    # async def serve_frontend_catchall(full_path: str):
+    #     """Catch-all route for frontend SPA - only handles non-API routes"""
+    #     # This route should NEVER handle API routes - they are registered first and take precedence
+    #     # If we're here, it means no API route matched, so serve frontend
+    #     
+    #     # Check if it's a static file request
+    #     file_path = static_dir / full_path
+    #     if file_path.exists() and file_path.is_file():
+    #         return FileResponse(str(file_path))
+    #     
+    #     # For all other routes (SPA routing), serve the index.html
+    #     index_file = static_dir / "index.html"
+    #     if index_file.exists():
+    #         return FileResponse(str(index_html))
+    #     
+    #     return {"message": f"File not found: {full_path}"}
 
 @app.on_event("startup")
 async def startup_event():

@@ -113,7 +113,7 @@ async def _stream_text_as_tokens(text: str, execution_id: str, node_id: str = "l
     if not text or not execution_id:
         return
     
-    logger.info(f"Starting simulated token streaming for execution {execution_id}, text length: {len(text)}")
+    logger.debug(f"Starting simulated token streaming for execution {execution_id}, text length: {len(text)}")
     
     # Split text into chunks (simulate tokens)
     words = text.split()
@@ -141,47 +141,85 @@ async def _stream_text_as_tokens(text: str, execution_id: str, node_id: str = "l
         stream_complete=True
     )
     
-    logger.info(f"Completed simulated token streaming for execution {execution_id}")
+    logger.debug(f"Completed simulated token streaming for execution {execution_id}")
 
 # ==================== HITL (Human-in-the-Loop) Utilities ====================
 
-def hitl_checkpoint(node_name: str, pause_enabled: bool = True, interrupt_enabled: bool = True):
-    """
-    Decorator for adding HITL checkpoints to workflow nodes
+class HITLPausedException(Exception):
+    """Exception raised when execution is paused for HITL"""
+    def __init__(self, execution_id: str, node_name: str, reason: str, state: dict):
+        self.execution_id = execution_id
+        self.node_name = node_name
+        self.reason = reason
+        self.state = state
+        super().__init__(f"Execution {execution_id} paused at node {node_name}")
+
+class HITLInterruptedException(Exception):
+    """Exception raised when execution is interrupted for HITL"""
+    def __init__(self, execution_id: str, node_name: str, reason: str, state: dict):
+        self.execution_id = execution_id
+        self.node_name = node_name
+        self.reason = reason
+        self.state = state
+        super().__init__(f"Execution {execution_id} interrupted at node {node_name}")
+
+# GraphState definition moved to top
+# GraphState definition
+class GraphState(TypedDict):
+    """Define graph state"""
+    user_input: str
+    query_type: str  # "sql" or "rag"
+    sql_task_type: str  # "query" or "chart"
+    structured_data: Optional[Dict[str, Any]]
+    chart_config: Optional[Dict[str, Any]]
+    chart_image: Optional[str]
+    answer: str
+    quality_score: int
+    retry_count: int
+    datasource: Dict[str, Any]
+    error: Optional[str]
+    execution_id: str  # For WebSocket routing and token streaming
     
-    Args:
-        node_name: Name of the node for HITL operations
-        pause_enabled: Whether pause functionality is enabled for this node
-        interrupt_enabled: Whether interrupt functionality is enabled for this node
-    """
-    def decorator(func):
-        def wrapper(state: GraphState) -> GraphState:
-            execution_id = state.get("execution_id", "")
-            
-            # Check for HITL actions
-            hitl_status = state.get("hitl_status")
-            
-            if hitl_status == "paused" and state.get("hitl_node") == node_name:
-                # Resume from pause with updated parameters
-                logger.info(f"Resuming execution {execution_id} at node {node_name}")
-                return func(state)
-            
-            elif hitl_status == "interrupted" and state.get("hitl_node") == node_name:
-                # Resume from interrupt with updated parameters
-                logger.info(f"Resuming interrupted execution {execution_id} at node {node_name}")
-                return func(state)
-            
-            # Normal execution
-            result = func(state)
-            
-            # Add HITL metadata to result
-            result["hitl_node"] = node_name
-            result["hitl_timestamp"] = time.time()
-            
-            return result
-        
-        return wrapper
-    return decorator
+    # HITL (Human-in-the-Loop) state fields
+    hitl_status: Optional[str]  # "paused", "interrupted", "resumed", None
+    hitl_node: Optional[str]  # Node where HITL action occurred
+    hitl_reason: Optional[str]  # Reason for HITL action
+    hitl_parameters: Optional[Dict[str, Any]]  # Parameters for adjustment
+    hitl_timestamp: Optional[str]  # Timestamp of HITL action
+
+# LangGraph native interrupt implementation
+def check_interrupt_status(state: GraphState) -> str:
+    """Check if execution should be interrupted"""
+    execution_id = state.get("execution_id")
+    if not execution_id:
+        return "continue"
+    
+    from ..websocket.websocket_manager import websocket_manager
+    
+    # Check if execution is interrupted
+    if (execution_id in websocket_manager.hitl_interrupted_executions or 
+        execution_id in websocket_manager.execution_cancelled):
+        logger.info(f"Execution {execution_id} is interrupted, returning interrupt signal")
+        return "interrupt"
+    
+    return "continue"
+
+def interrupt_node(state: GraphState) -> GraphState:
+    """Node that handles interrupt - saves state and stops execution"""
+    execution_id = state.get("execution_id")
+    logger.info(f"Interrupt node called for execution {execution_id}")
+    
+    # Save current state
+    set_execution_final_state(execution_id, state)
+    
+    # Create interrupted state
+    interrupted_state = state.copy()
+    interrupted_state["hitl_status"] = "interrupted"
+    interrupted_state["hitl_reason"] = "user_interrupted"
+    interrupted_state["hitl_timestamp"] = time.time()
+    
+    logger.info(f"Execution {execution_id} interrupted, state saved")
+    return interrupted_state
 
 def check_hitl_action(state: Dict[str, Any], node_name: str) -> Optional[str]:
     """
@@ -222,27 +260,7 @@ def apply_hitl_parameters(state: Dict[str, Any], parameters: Dict[str, Any]) -> 
 
 # ==================== Graph State Definition ====================
 
-class GraphState(TypedDict):
-    """Define graph state"""
-    user_input: str
-    query_type: str  # "sql" or "rag"
-    sql_task_type: str  # "query" or "chart"
-    structured_data: Optional[Dict[str, Any]]
-    chart_config: Optional[Dict[str, Any]]
-    chart_image: Optional[str]
-    answer: str
-    quality_score: int
-    retry_count: int
-    datasource: Dict[str, Any]
-    error: Optional[str]
-    execution_id: str  # For WebSocket routing and token streaming
-    
-    # HITL (Human-in-the-Loop) state fields
-    hitl_status: Optional[str]  # "paused", "interrupted", "resumed", None
-    hitl_node: Optional[str]  # Node where HITL action occurred
-    hitl_reason: Optional[str]  # Reason for HITL action
-    hitl_parameters: Optional[Dict[str, Any]]  # Parameters for adjustment
-    hitl_timestamp: Optional[str]  # Timestamp of HITL action
+# Remove duplicate GraphState definition
 
 def router_node(state: GraphState) -> GraphState:
     """Router node: determine whether to use SQL or RAG based on user input"""
@@ -342,7 +360,7 @@ def router_node(state: GraphState) -> GraphState:
     
     return {**state, "query_type": query_type}
 
-@hitl_checkpoint("sql_classifier_node", pause_enabled=True, interrupt_enabled=True)
+# Remove hitl_checkpoint decorator completely and use LangGraph native interrupt
 def sql_classifier_node(state: GraphState) -> GraphState:
     """SQL classification node: use LLM to determine if it's data query or chart building"""
     user_input = state["user_input"]
@@ -467,7 +485,7 @@ async def sql_query_node(state: GraphState) -> GraphState:
                 }
             
             logger.info(f"SQL query successful, data: {structured_data}")
-
+            
             # Strong intent-to-chart enforcement when data matches category-value schema
             chart_intent = state.get("sql_task_type") == "chart" or any(k in user_input.lower() for k in [
                 "pie", "pie chart", "proportion", "percentage", "distribution", "breakdown", "饼图", "占比", "比例"
@@ -477,7 +495,7 @@ async def sql_query_node(state: GraphState) -> GraphState:
                 if rows and isinstance(rows[0], dict) and ("category" in rows[0] and "value" in rows[0]):
                     logger.info("Chart intent detected with compatible data; ensuring downstream chart path.")
                     state = {**state, "sql_task_type": "chart"}
-
+            
             return {
                 **state,
                 "structured_data": structured_data,
@@ -605,7 +623,6 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             }
         }
 
-@hitl_checkpoint("chart_config_node", pause_enabled=True, interrupt_enabled=True)
 def chart_config_node(state: GraphState) -> GraphState:
     """Chart configuration node: generate chart configuration"""
     try:
@@ -890,7 +907,7 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     else:
                         formatted_value = f"{value:,}"
                     
-                    response_lines.append(f"• {category}: {formatted_value}")
+                    response_lines.append(f"�?{category}: {formatted_value}")
                 
                 # Add insights for average/price queries
                 if 'average' in query_lower and 'price' in query_lower:
@@ -898,11 +915,11 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     highest = sorted_rows[0]
                     lowest = sorted_rows[-1]
                     response_lines.append(f"\nKey insights:")
-                    response_lines.append(f"• Highest average price: {highest['category']} (${highest['value']:.2f})")
-                    response_lines.append(f"• Lowest average price: {lowest['category']} (${lowest['value']:.2f})")
+                    response_lines.append(f"�?Highest average price: {highest['category']} (${highest['value']:.2f})")
+                    response_lines.append(f"�?Lowest average price: {lowest['category']} (${lowest['value']:.2f})")
                     
                     price_diff = highest['value'] - lowest['value']
-                    response_lines.append(f"• Price range: ${price_diff:.2f}")
+                    response_lines.append(f"�?Price range: ${price_diff:.2f}")
                 
                 result = "\n".join(response_lines)
                 logger.info(f"Category-value response generated: {result[:200]}...")
@@ -1117,7 +1134,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             chart_config["data"]["labels"] = labels
             chart_config["data"]["datasets"][0]["data"] = values
 
-            # Ensure backgroundColor and borderColor arrays与数据点数量一致
+            # Ensure backgroundColor and borderColor arrays match data point count
             base_colors_bg = [
                 "rgba(54, 162, 235, 0.6)",
                 "rgba(255, 99, 132, 0.6)",
@@ -1129,7 +1146,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
                 "rgba(83, 102, 255, 0.6)"
             ]
             def to_border(c):
-                # 将透明度由 0.6 调整为 1 形成描边色
+                # Convert transparency from 0.6 to 1 for border
                 if c.endswith("0.6)"):
                     return c.replace("0.6)", "1)")
                 return c
@@ -1494,7 +1511,7 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                         else:
                             # For list format
                             label = str(row[label_idx]) if row[label_idx] else f"Item{len(labels)+1}"
-                            value_str = str(row[value_idx]) if row[value_idx] else "0"
+                        value_str = str(row[value_idx]) if row[value_idx] else "0"
                         try:
                             value = float(value_str)
                         except ValueError:
@@ -1712,25 +1729,11 @@ def generate_fallback_chart_config(data: Dict[str, Any], user_input: str) -> Dic
 # QuickChart image generation removed - now using AntV interactive charts
 
 # Enhanced flow processing function with WebSocket support
-async def process_intelligent_query(
-    user_input: str, 
-    datasource: Dict[str, Any], 
-    execution_id: str = None
-) -> Dict[str, Any]:
+def get_compiled_app():
     """
-    Process intelligent analysis query using LangGraph, with WebSocket support.
+    Build and compile the LangGraph workflow app.
+    Centralizes workflow construction so both normal run and resume reuse identical graph.
     """
-    
-    # Import WebSocket manager
-    from ..websocket.websocket_manager import websocket_manager
-    
-    if not datasource:
-        return {
-            "success": False,
-            "error": "No active data source found. Please select or create a data source first.",
-            "user_input": user_input
-        }
-    
     # Define workflow graph
     workflow = StateGraph(GraphState)
     
@@ -1744,6 +1747,7 @@ async def process_intelligent_query(
     workflow.add_node("chart_config_node", chart_config_node)
     workflow.add_node("chart_rendering_node", chart_rendering_node)
     workflow.add_node("llm_processing_node", llm_processing_node)
+    workflow.add_node("interrupt_node", interrupt_node)  # Add interrupt node
     workflow.add_node("end_node", lambda state: {"success": True})
 
     # Set entry point
@@ -1772,11 +1776,25 @@ async def process_intelligent_query(
         }
     )
 
-    # Connect SQL Query node to LLM Processing
-    workflow.add_edge("sql_query_node", "llm_processing_node")
+    # Connect SQL Query node to LLM Processing with interrupt check
+    workflow.add_conditional_edges(
+        "sql_query_node",
+        check_interrupt_status,
+        {
+            "continue": "llm_processing_node",
+            "interrupt": "interrupt_node"
+        }
+    )
 
-    # Connect SQL Chart node to Chart Config
-    workflow.add_edge("sql_chart_node", "chart_config_node")
+    # Connect SQL Chart node to Chart Config with interrupt check
+    workflow.add_conditional_edges(
+        "sql_chart_node",
+        check_interrupt_status,
+        {
+            "continue": "chart_config_node",
+            "interrupt": "interrupt_node"
+        }
+    )
 
     # Rest of the edges remain the same
     workflow.add_edge("chart_config_node", "chart_rendering_node")
@@ -1785,15 +1803,109 @@ async def process_intelligent_query(
     
     # LLM processing goes directly to end node (validation & retry removed)
     workflow.add_edge("llm_processing_node", "end_node")
+    
+    # Interrupt node goes to end (workflow stops)
+    workflow.add_edge("interrupt_node", "end_node")
 
     # Set finish point
     workflow.set_finish_point("end_node")
 
     # Compile the graph
-    app = workflow.compile()
+    return workflow.compile()
+async def resume_workflow_from_paused_state(
+    execution_id: str,
+    paused_state: Dict[str, Any],
+    paused_node: str
+) -> Dict[str, Any]:
+    """
+    Resume workflow execution from a paused state at a specific node.
+    """
+    from ..websocket.websocket_manager import websocket_manager
     
-    # Initial state
-    initial_state = {
+    try:
+        logger.info(f"Resuming workflow execution {execution_id} from paused node {paused_node}")
+        
+        # Get the workflow app
+        app = get_compiled_app()
+        
+        # Use the paused state as initial state
+        initial_state = paused_state.copy()
+        initial_state["execution_id"] = execution_id
+        
+        # Clear pause flags but keep paused node info for logging
+        initial_state["hitl_status"] = "running"
+        # Keep hitl_paused for debugging - don't remove it yet
+        # initial_state.pop("hitl_paused", None)
+        initial_state.pop("hitl_reason", None)
+        
+        # Create config for execution
+        config = {"configurable": {"thread_id": execution_id}}
+        
+        # Resume from the paused node
+        # We need to continue from where we left off
+        logger.info(f"Resuming execution from node {paused_node} with state keys: {list(initial_state.keys())}")
+        
+        # Use LangGraph's ability to continue from a specific state
+        # The initial_state already contains the paused state, so we can continue from there
+        
+        # Stream the resumed execution starting from the paused state
+        final_state = None
+        async for state in app.astream(initial_state, config):
+            final_state = state
+            # Send state updates to WebSocket clients
+            await websocket_manager.broadcast_execution_update(execution_id, state)
+        
+        logger.info(f"Workflow execution {execution_id} resumed and completed successfully")
+        return final_state or initial_state
+        
+    except Exception as e:
+        logger.error(f"Error resuming workflow execution {execution_id}: {e}")
+        return {
+            "success": False,
+            "error": f"Error resuming workflow: {str(e)}",
+            "execution_id": execution_id
+        }
+
+
+async def process_intelligent_query(
+    user_input: str, 
+    datasource: Dict[str, Any], 
+    execution_id: str = None,
+    restored_state: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """
+    Process intelligent analysis query using LangGraph, with WebSocket support.
+    """
+    
+    # Import WebSocket manager
+    from ..websocket.websocket_manager import websocket_manager
+    
+    if not datasource:
+        return {
+            "success": False,
+            "error": "No active data source found. Please select or create a data source first.",
+            "user_input": user_input
+        }
+    
+    # Build compiled app
+    app = get_compiled_app()
+    
+    # Initial state - use restored state if available
+    if restored_state:
+        initial_state = restored_state.copy()
+        # Ensure execution_id is set
+        initial_state["execution_id"] = execution_id
+        # Ensure critical fields are present
+        if "user_input" not in initial_state:
+            initial_state["user_input"] = user_input
+        if "datasource" not in initial_state:
+            initial_state["datasource"] = datasource
+        logger.info(f"Using restored state for execution {execution_id}")
+        logger.info(f"Restored state keys: {list(initial_state.keys())}")
+        logger.info(f"Restored query_type: {initial_state.get('query_type', 'NOT_SET')}")
+        logger.info(f"Restored sql_task_type: {initial_state.get('sql_task_type', 'NOT_SET')}")
+    else:
+        initial_state = {
         "user_input": user_input,
         "datasource": datasource,
         "query_type": "",  # Will be set by router_node
@@ -1804,8 +1916,8 @@ async def process_intelligent_query(
         "answer": "",
         "quality_score": 10,
         "retry_count": 0,
-        "error": None,
-        "execution_id": execution_id  # NEW: For token streaming
+            "error": None,
+            "execution_id": execution_id  # NEW: For token streaming
     }
     
     config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}
@@ -1830,23 +1942,37 @@ async def process_intelligent_query(
         # Use both astream_events for real-time updates and astream for final state
         events_task = None
         async def track_events():
-            async for event in app.astream_events(initial_state, config, version="v1"):
-                kind = event["event"]
-                
-                if kind == "on_chain_start":
-                    node_name = event.get("name", "")
-                    logger.info(f"Node started: {node_name}")
-                    await emit_event("node_started", node_id=node_name)
-                
-                elif kind == "on_chain_end":
-                    node_name = event.get("name", "")
-                    logger.info(f"Node completed: {node_name}")
-                    await emit_event("node_completed", node_id=node_name, data=event.get("data"))
-                
-                elif kind == "on_chain_error":
-                    node_name = event.get("name", "")
-                    logger.error(f"Node error: {node_name} - {event.get('data')}")
-                    await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
+            try:
+                async for event in app.astream_events(initial_state, config, version="v1"):
+                    kind = event["event"]
+                    
+                    if kind == "on_chain_start":
+                        node_name = event.get("name", "")
+                        logger.info(f"Node started: {node_name}")
+                        await emit_event("node_started", node_id=node_name)
+                    
+                    elif kind == "on_chain_end":
+                        node_name = event.get("name", "")
+                        logger.info(f"Node completed: {node_name}")
+                        await emit_event("node_completed", node_id=node_name, data=event.get("data"))
+                    
+                    elif kind == "on_chain_error":
+                        node_name = event.get("name", "")
+                        logger.error(f"Node error: {node_name} - {event.get('data')}")
+                        await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
+                        
+            except Exception as e:
+                # Check if it's a HITL exception
+                if "HITLPausedException" in str(type(e)) or "HITLInterruptedException" in str(type(e)):
+                    logger.info(f"HITL event tracking terminated due to {type(e).__name__}: {e}")
+                else:
+                    logger.error(f"Unexpected error in event tracking: {e}")
+        
+        # Check if execution is interrupted BEFORE starting the workflow
+        if execution_id in websocket_manager.execution_cancelled or execution_id in websocket_manager.hitl_interrupted_executions:
+            logger.info(f"🎯 Execution {execution_id} was interrupted before workflow start, raising exception")
+            from .exceptions import HITLInterruptedException
+            raise HITLInterruptedException(execution_id, "preworkflow", "preworkflow_interrupted", {"user_input": user_input})
         
         # Start event tracking in background and get final state
         events_task = asyncio.create_task(track_events())
@@ -1854,15 +1980,78 @@ async def process_intelligent_query(
         # Get the complete final state using astream
         # We need to accumulate the state throughout the execution
         accumulated_state = initial_state.copy()
-        async for state in app.astream(initial_state, config):
-            if isinstance(state, dict):
-                accumulated_state.update(state)
-            else:
-                # Handle AddableUpdatesDict or similar types
-                for key, value in state.items():
-                    accumulated_state[key] = value
+        try:
+            async for state in app.astream(initial_state, config):
+                if isinstance(state, dict):
+                    accumulated_state.update(state)
+                else:
+                    # Handle AddableUpdatesDict or similar types
+                    for key, value in state.items():
+                        accumulated_state[key] = value
         
-        final_state = accumulated_state
+            final_state = accumulated_state
+            
+            # Save execution state for HITL operations
+            set_execution_final_state(execution_id, final_state)
+            
+            # Check if final state indicates interrupted status
+            if final_state.get("hitl_status") == "interrupted":
+                logger.info(f"🎯 Workflow detected interrupted state in final state for execution {execution_id}")
+                await websocket_manager.send_to_client(
+                    websocket_manager.execution_to_client.get(execution_id, ""), 
+                    {
+                        "type": "hitl_interrupted",
+                        "execution_id": execution_id,
+                        "node_name": final_state.get("hitl_interrupted", "unknown"),
+                        "reason": final_state.get("hitl_reason", "paused"),
+                        "current_state": final_state,
+                        "timestamp": time.time()
+                    }
+                )
+                return {
+                    "success": True,
+                    "user_input": user_input,
+                    "hitl_status": "paused",
+                    "hitl_node": final_state.get("hitl_paused"),
+                    "hitl_reason": final_state.get("hitl_reason"),
+                    **final_state
+                }
+            
+            # Check if execution is currently paused (even if not in final state)
+            if execution_id in websocket_manager.execution_paused or execution_id in websocket_manager.hitl_interrupted_executions:
+                logger.info(f"🎯 Execution {execution_id} is currently paused, sending pause notification")
+                await websocket_manager.send_to_client(
+                    websocket_manager.execution_to_client.get(execution_id, ""), 
+                    {
+                        "type": "hitl_paused",
+                        "execution_id": execution_id,
+                        "node_name": "workflow_completion",
+                        "reason": "paused_during_execution",
+                        "current_state": final_state,
+                        "timestamp": time.time()
+                    }
+                )
+                return {
+                    "success": True,
+                    "user_input": user_input,
+                    "hitl_status": "paused",
+                    "hitl_node": "workflow_completion",
+                    "hitl_reason": "paused_during_execution",
+                    **final_state
+                }
+                
+        except Exception as e:
+            # Check if it's a HITL exception
+            if "HITLPausedException" in str(type(e)) or "HITLInterruptedException" in str(type(e)):
+                logger.info(f"HITL execution interrupted during state accumulation: {e}")
+                final_state = accumulated_state.copy()
+                # Add HITL info to final state
+                final_state["hitl_status"] = "interrupted" if "HITLInterruptedException" in str(type(e)) else "paused"
+                final_state["hitl_node"] = getattr(e, 'node_name', 'unknown')
+                final_state["hitl_reason"] = getattr(e, 'reason', 'unknown')
+            else:
+                # Re-raise non-HITL exceptions
+                raise
         
         # Wait for events to complete
         if events_task:
@@ -1883,10 +2072,86 @@ async def process_intelligent_query(
         await emit_event("execution_completed", data=final_state_for_event)
         logger.info(f"Execution completed event sent for {execution_id}")
         
+        # Check if this is a HITL execution (paused or interrupted)
+        if "hitl_status" in final_state:
+            hitl_status = final_state["hitl_status"]
+            if hitl_status == "paused" or hitl_status == "interrupted":
+                # Send appropriate HITL notification
+                client_id = websocket_manager.execution_to_client.get(execution_id) or websocket_manager.client_to_execution.get(execution_id)
+                hitl_message_type = f"hitl_{hitl_status}"
+                
+                await websocket_manager.send_to_client(client_id, {
+                    "type": hitl_message_type,
+                    "execution_id": execution_id,
+                    "node_name": final_state["hitl_node"],
+                    "reason": final_state["hitl_reason"],
+                    "current_state": final_state,
+                    "timestamp": time.time()
+                })
+                
+                return {
+                    "success": True,  # HITL actions are successful operations
+                    "hitl_status": hitl_status,
+                    "hitl_node": final_state["hitl_node"],
+                    "hitl_reason": final_state["hitl_reason"],
+                    "user_input": user_input,
+                    **final_state
+                }
+        
+        # Regular successful completion
         return {
             "success": not final_state.get("error"),
             **final_state
         }
+    
+    except Exception as e:
+        # Check if it's a HITL exception
+        if "HITLPausedException" in str(type(e)):
+            logger.info(f"HITL Execution paused: {e}")
+            # Send pause notification to client via WebSocket manager
+            await websocket_manager.send_to_client(
+                websocket_manager.execution_to_client.get(execution_id, ""), 
+                {
+                    "type": "hitl_paused",
+                    "execution_id": execution_id,
+                    "node_name": getattr(e, 'node_name', 'unknown'),
+                    "reason": getattr(e, 'reason', 'paused'),
+                    "current_state": getattr(e, 'state', {}),
+                    "timestamp": time.time()
+                }
+            )
+            return {
+                "success": True,
+                "user_input": user_input,
+                "hitl_status": "paused",
+                "hitl_node": getattr(e, 'node_name', 'unknown'),
+                "hitl_reason": getattr(e, 'reason', 'paused'),
+                **getattr(e, 'state', {})
+            }
+        elif "HITLInterruptedException" in str(type(e)):
+            logger.info(f"HITL Execution interrupted: {e}")
+            # Notify WebSocket manager about interrupt
+            client_id = websocket_manager.execution_to_client.get(execution_id, "")
+            if client_id:
+                await websocket_manager.send_to_client(client_id, {
+                    "type": "hitl_interrupted",
+                    "execution_id": execution_id,
+                    "node_name": getattr(e, 'node_name', 'unknown'),
+                    "reason": getattr(e, 'reason', 'interrupted'),
+                    "current_state": getattr(e, 'state', {}),
+                    "timestamp": time.time()
+                })
+            return {
+                "success": True,
+                "user_input": user_input,
+                "hitl_status": "interrupted",
+                "hitl_node": getattr(e, 'node_name', 'unknown'),
+                "hitl_reason": getattr(e, 'reason', 'interrupted'),
+                **getattr(e, 'state', {})
+            }
+        else:
+            # Re-raise non-HITL exceptions
+            raise
     
     except Exception as e:
         logger.error(f"Error during graph execution for {execution_id}: {e}")
@@ -2113,6 +2378,7 @@ def _apply_flexible_sorting(rows: List[Dict], sort_config: Any, user_input: str)
                 def sort_time_key(row):
                     category = str(row.get("category", ""))
                     try:
+                        import re  # Import re inside the function to avoid scope issues
                         if re.match(r'^\d{4}-\d{2}$', category):
                             year, month = category.split('-')
                             return int(year) * 100 + int(month)
@@ -2144,6 +2410,7 @@ def _apply_flexible_sorting(rows: List[Dict], sort_config: Any, user_input: str)
                 def sort_time_key(row):
                     category = str(row.get("category", ""))
                     try:
+                        import re  # Import re inside the function to avoid scope issues
                         if re.match(r'^\d{4}-\d{2}$', category):
                             year, month = category.split('-')
                             return int(year) * 100 + int(month)
@@ -2203,3 +2470,34 @@ def _apply_flexible_transformations(rows: List[Dict], transform_config: Any, use
     except Exception as e:
         logger.warning(f"Error applying flexible transformations: {e}")
         return rows 
+
+
+# Global state storage for execution states
+_execution_states: Dict[str, Dict[str, Any]] = {}
+
+def get_execution_final_state(execution_id: str) -> Dict[str, Any]:
+    """Get the final state of an execution for HITL operations"""
+    logger.info(f"🔄 [BACKEND-LG] get_execution_final_state called")
+    logger.info(f"📥 [BACKEND-LG] get_execution_final_state input params: execution_id={execution_id}")
+    
+    state = _execution_states.get(execution_id, {})
+    logger.info(f"📊 [BACKEND-LG] get_execution_final_state found state for execution {execution_id}")
+    logger.info(f"📊 [BACKEND-LG] get_execution_final_state state keys: {list(state.keys())}")
+    logger.info(f"📊 [BACKEND-LG] get_execution_final_state query_type: {state.get('query_type', 'NOT_SET')}")
+    logger.info(f"📊 [BACKEND-LG] get_execution_final_state sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
+    
+    logger.info(f"�?[BACKEND-LG] get_execution_final_state completed successfully")
+    return state
+
+def set_execution_final_state(execution_id: str, state: Dict[str, Any]):
+    """Set the final state of an execution for HITL operations"""
+    logger.info(f"🔄 [BACKEND-LG] set_execution_final_state called")
+    logger.info(f"📥 [BACKEND-LG] set_execution_final_state input params: execution_id={execution_id}")
+    logger.info(f"📥 [BACKEND-LG] set_execution_final_state state keys: {list(state.keys())}")
+    
+    _execution_states[execution_id] = state
+    logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored state for execution {execution_id}")
+    logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored query_type: {state.get('query_type', 'NOT_SET')}")
+    logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
+    
+    logger.info(f"�?[BACKEND-LG] set_execution_final_state completed successfully")

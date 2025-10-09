@@ -22,19 +22,49 @@ export function HITLParameterPanel({
   const [validationErrors, setValidationErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Debug: Log all props
+  console.log('HITLParameterPanel props:', {
+    isOpen,
+    executionId,
+    nodeName,
+    currentState,
+    executionType
+  });
+  
+  // Debug: Log when component renders
+  console.log('HITLParameterPanel rendering, isOpen:', isOpen);
+
   useEffect(() => {
-    if (isOpen && currentState) {
-      // Initialize parameters with current state values
+    if (isOpen) {
+      // Debug: Log currentState structure
+      console.log('🔄 [FRONTEND-HITL] HITLParameterPanel useEffect called');
+      console.log('📥 [FRONTEND-HITL] HITLParameterPanel currentState received:', currentState);
+      console.log('📥 [FRONTEND-HITL] HITLParameterPanel currentState keys:', currentState ? Object.keys(currentState) : 'null');
+      
+      // Initialize parameters with current state values - use complete state
       const initialParams = {
-        user_input: currentState.user_input || '',
-        query_type: currentState.query_type || '',
-        sql_task_type: currentState.sql_task_type || '',
-        // Add more parameters as needed
+        user_input: currentState?.user_input || currentState?.query || '',
+        query_type: currentState?.query_type || '',
+        sql_task_type: currentState?.sql_task_type || '',
+        structured_data: currentState?.structured_data || null,
+        chart_config: currentState?.chart_config || null,
+        answer: currentState?.answer || '',
+        datasource: currentState?.datasource || null,
+        // Add any other fields that might be useful for debugging
+        execution_id: currentState?.execution_id || executionId || '',
+        hitl_status: currentState?.hitl_status || '',
+        hitl_node: currentState?.hitl_node || nodeName || '',
       };
+      
+      console.log('📊 [FRONTEND-HITL] HITLParameterPanel initialParams:', initialParams);
+      console.log('📊 [FRONTEND-HITL] HITLParameterPanel query_type from state:', currentState?.query_type);
+      console.log('📊 [FRONTEND-HITL] HITLParameterPanel sql_task_type from state:', currentState?.sql_task_type);
+      console.log('📊 [FRONTEND-HITL] HITLParameterPanel datasource from state:', currentState?.datasource);
       setParameters(initialParams);
       setValidationErrors({});
+      console.log('✅ [FRONTEND-HITL] HITLParameterPanel initialization completed');
     }
-  }, [isOpen, currentState]);
+  }, [isOpen, currentState, executionId, nodeName]);
 
   const handleParameterChange = (key, value) => {
     setParameters(prev => ({
@@ -71,20 +101,36 @@ export function HITLParameterPanel({
   };
 
   const handleResume = async () => {
+    console.log('🔄 [FRONTEND-HITL] handleResume called');
+    console.log('📥 [FRONTEND-HITL] handleResume input params:', { parameters, executionId, executionType });
+    
     if (!validateParameters()) {
+      console.error('❌ [FRONTEND-HITL] handleResume validation failed');
       return;
     }
     
     setIsSubmitting(true);
     try {
-      await onResume(executionId, parameters, executionType);
+      // Only send parameters that have been modified (non-empty values)
+      const modifiedParams = {};
+      Object.keys(parameters).forEach(key => {
+        const value = parameters[key];
+        if (value !== null && value !== undefined && value !== '') {
+          modifiedParams[key] = value;
+        }
+      });
+      
+      console.log('📤 [FRONTEND-HITL] handleResume sending modified parameters:', modifiedParams);
+      await onResume(executionId, modifiedParams, executionType);
       onClose();
+      console.log('✅ [FRONTEND-HITL] handleResume completed successfully');
     } catch (error) {
-      console.error('Error resuming execution:', error);
+      console.error('❌ [FRONTEND-HITL] handleResume failed:', error);
     } finally {
       setIsSubmitting(false);
     }
   };
+
 
   const handleCancel = async () => {
     setIsSubmitting(true);
@@ -242,7 +288,7 @@ export function HITLParameterPanel({
               className="flex items-center gap-2"
             >
               <CheckCircle className="h-4 w-4" />
-              Resume Execution
+              Resume with Parameters
             </Button>
           </div>
 

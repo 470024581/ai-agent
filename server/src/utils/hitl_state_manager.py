@@ -27,7 +27,7 @@ class HITLStateManager:
         
     def pause_execution(self, execution_id: str, state: Dict[str, Any], node_name: str, reason: str = "user_request") -> bool:
         """
-        Pause workflow execution and store state in memory
+        Pause workflow execution and store complete state in memory
         
         Args:
             execution_id: Unique execution identifier
@@ -38,23 +38,66 @@ class HITLStateManager:
         Returns:
             bool: Success status
         """
+        logger.info(f"🔄 [BACKEND-HITL] pause_execution called")
+        logger.info(f"📥 [BACKEND-HITL] pause_execution input params: execution_id={execution_id}, node_name={node_name}, reason={reason}")
+        logger.info(f"📥 [BACKEND-HITL] pause_execution state keys: {list(state.keys())}")
+        
         try:
             with self.lock:
+                # Create serializable state snapshot for pause - store complete state
+                def make_serializable(obj):
+                    """Convert complex objects to serializable format"""
+                    if isinstance(obj, dict):
+                        return {k: make_serializable(v) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return [make_serializable(item) for item in obj]
+                    elif hasattr(obj, '__dict__'):
+                        # For complex objects, extract basic attributes
+                        try:
+                            return {k: make_serializable(v) for k, v in obj.__dict__.items() 
+                                    if not k.startswith('_')}
+                        except:
+                            return str(obj)
+                    else:
+                        return obj
+                
+                # Store the complete state as-is, don't cherry-pick fields
+                complete_state = make_serializable(state.copy())
+                
+                # Ensure critical fields are present
+                if "user_input" not in complete_state:
+                    complete_state["user_input"] = ""
+                if "datasource" not in complete_state:
+                    complete_state["datasource"] = {}
+                if "query_type" not in complete_state:
+                    complete_state["query_type"] = ""
+                if "sql_task_type" not in complete_state:
+                    complete_state["sql_task_type"] = ""
+                
                 pause_data = {
                     "execution_id": execution_id,
-                    "state": state,
+                    "state": complete_state,  # Store complete state
                     "node_name": node_name,
                     "reason": reason,
                     "paused_at": datetime.now().isoformat(),
                     "status": "paused"
                 }
                 
+                logger.info(f"📊 [BACKEND-HITL] pause_execution prepared pause_data keys: {list(pause_data.keys())}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution complete_state keys: {list(complete_state.keys())}")
+                
                 self.pause_states[execution_id] = pause_data
-                logger.info(f"Workflow execution {execution_id} paused at node {node_name}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution stored in pause_states for execution {execution_id}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution paused state keys: {list(complete_state.keys())}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution paused query_type: {complete_state.get('query_type', 'NOT_SET')}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution paused sql_task_type: {complete_state.get('sql_task_type', 'NOT_SET')}")
+                logger.info(f"📊 [BACKEND-HITL] pause_execution paused datasource: {complete_state.get('datasource', 'NOT_SET')}")
+                
+                logger.info(f"✅ [BACKEND-HITL] pause_execution completed successfully for execution {execution_id}")
                 return True
                 
         except Exception as e:
-            logger.error(f"Failed to pause execution {execution_id}: {e}")
+            logger.error(f"❌ [BACKEND-HITL] pause_execution failed: Failed to pause execution {execution_id}: {e}")
             return False
     
     def interrupt_execution(self, execution_id: str, state: Dict[str, Any], node_name: str, reason: str = "user_request") -> bool:
@@ -75,25 +118,18 @@ class HITLStateManager:
                 # Serialize state data
                 state_json = json.dumps(state, default=str)
                 
-                # Extract datasource_id from state if available
-                datasource_id = None
-                if "datasource" in state and isinstance(state["datasource"], dict):
-                    datasource_id = state["datasource"].get("id")
-                
                 # Store in database
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 
                 cursor.execute("""
                     INSERT OR REPLACE INTO hitl_interrupts 
-                    (execution_id, user_input, datasource_id, interrupt_node, interrupt_reason, state_data, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (execution_id, node_name, user_input, current_state, status)
+                    VALUES (?, ?, ?, ?, ?)
                 """, (
                     execution_id,
-                    state.get("user_input", ""),
-                    datasource_id,
                     node_name,
-                    reason,
+                    state.get("user_input", ""),
                     state_json,
                     "interrupted"
                 ))
@@ -101,9 +137,9 @@ class HITLStateManager:
                 # Log operation in history
                 cursor.execute("""
                     INSERT INTO hitl_execution_history 
-                    (execution_id, operation_type, node_name, user_action)
+                    (execution_id, action_type, node_name, parameters)
                     VALUES (?, ?, ?, ?)
-                """, (execution_id, "interrupt", node_name, "user_initiated"))
+                """, (execution_id, "interrupt", node_name, ""))
                 
                 conn.commit()
                 conn.close()
@@ -117,37 +153,62 @@ class HITLStateManager:
     
     def resume_execution(self, execution_id: str, parameters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
-        Resume paused execution from memory
+        Resume paused execution from memory with selective parameter updates
         
         Args:
             execution_id: Unique execution identifier
-            parameters: Optional parameter updates
+            parameters: Optional parameter updates (only non-empty values will be applied)
             
         Returns:
             Dict[str, Any]: Restored state or None if not found
         """
+        logger.info(f"🔄 [BACKEND-HITL] resume_execution called")
+        logger.info(f"📥 [BACKEND-HITL] resume_execution input params: execution_id={execution_id}, parameters={parameters}")
+        
         try:
             with self.lock:
                 if execution_id not in self.pause_states:
-                    logger.warning(f"No paused execution found for {execution_id}")
+                    logger.warning(f"⚠️ [BACKEND-HITL] resume_execution: No paused execution found for {execution_id}")
                     return None
                 
                 pause_data = self.pause_states[execution_id]
                 state = pause_data["state"].copy()
                 
-                # Apply parameter updates if provided
+                logger.info(f"📊 [BACKEND-HITL] resume_execution found pause_data for execution {execution_id}")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution pause_data keys: {list(pause_data.keys())}")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution state keys: {list(state.keys())}")
+                
+                # Apply parameter updates selectively - only update non-empty values
                 if parameters:
-                    state.update(parameters)
-                    logger.info(f"Applied parameter updates to execution {execution_id}")
+                    updated_fields = []
+                    for key, value in parameters.items():
+                        # Only update if value is not empty/None
+                        if value is not None and value != "" and value != [] and value != {}:
+                            old_value = state.get(key)
+                            state[key] = value
+                            updated_fields.append(f"{key}: {old_value} -> {value}")
+                    
+                    if updated_fields:
+                        logger.info(f"📊 [BACKEND-HITL] resume_execution applied selective parameter updates to execution {execution_id}: {', '.join(updated_fields)}")
+                    else:
+                        logger.info(f"📊 [BACKEND-HITL] resume_execution no valid parameter updates for execution {execution_id} (all values were empty)")
+                else:
+                    logger.info(f"📊 [BACKEND-HITL] resume_execution no parameters provided for execution {execution_id}")
                 
                 # Remove from pause states
                 del self.pause_states[execution_id]
+                logger.info(f"📊 [BACKEND-HITL] resume_execution removed execution {execution_id} from pause_states")
                 
-                logger.info(f"Workflow execution {execution_id} resumed from pause")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution resumed state keys: {list(state.keys())}")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution resumed query_type: {state.get('query_type', 'NOT_SET')}")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution resumed sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
+                logger.info(f"📊 [BACKEND-HITL] resume_execution resumed datasource: {state.get('datasource', 'NOT_SET')}")
+                
+                logger.info(f"✅ [BACKEND-HITL] resume_execution completed successfully for execution {execution_id}")
                 return state
                 
         except Exception as e:
-            logger.error(f"Failed to resume execution {execution_id}: {e}")
+            logger.error(f"❌ [BACKEND-HITL] resume_execution failed: Failed to resume execution {execution_id}: {e}")
             return None
     
     def restore_interrupt(self, execution_id: str, parameters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -167,7 +228,7 @@ class HITLStateManager:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT state_data, interrupt_node FROM hitl_interrupts 
+                    SELECT current_state, node_name FROM hitl_interrupts 
                     WHERE execution_id = ? AND status = 'interrupted'
                 """, (execution_id,))
                 
@@ -189,10 +250,10 @@ class HITLStateManager:
                         old_value = state.get(param_name)
                         cursor.execute("""
                             INSERT INTO hitl_parameter_adjustments 
-                            (interrupt_id, parameter_name, old_value, new_value, adjustment_reason)
+                            (execution_id, parameter_name, original_value, new_value, adjustment_type)
                             VALUES (?, ?, ?, ?, ?)
                         """, (
-                            execution_id,  # Using execution_id as interrupt_id reference
+                            execution_id,
                             param_name,
                             json.dumps(old_value) if old_value is not None else None,
                             json.dumps(new_value),
@@ -203,21 +264,20 @@ class HITLStateManager:
                 
                 # Update status to resumed
                 cursor.execute("""
-                    UPDATE hitl_interrupts SET status = 'resumed', updated_at = CURRENT_TIMESTAMP
+                    UPDATE hitl_interrupts SET status = 'resumed', restored_at = CURRENT_TIMESTAMP
                     WHERE execution_id = ?
                 """, (execution_id,))
                 
                 # Log operation in history
                 cursor.execute("""
                     INSERT INTO hitl_execution_history 
-                    (execution_id, operation_type, node_name, parameters, user_action)
-                    VALUES (?, ?, ?, ?, ?)
+                    (execution_id, action_type, node_name, parameters)
+                    VALUES (?, ?, ?, ?)
                 """, (
                     execution_id, 
                     "resume", 
                     interrupt_node, 
-                    json.dumps(parameters) if parameters else None,
-                    "user_initiated"
+                    json.dumps(parameters) if parameters else None
                 ))
                 
                 conn.commit()
@@ -257,7 +317,7 @@ class HITLStateManager:
                     cursor = conn.cursor()
                     
                     cursor.execute("""
-                        UPDATE hitl_interrupts SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                        UPDATE hitl_interrupts SET status = 'cancelled'
                         WHERE execution_id = ? AND status = 'interrupted'
                     """, (execution_id,))
                     
@@ -294,7 +354,7 @@ class HITLStateManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT state_data, interrupt_node, interrupt_reason, created_at, status
+                SELECT current_state, node_name, reason, interrupted_at, status
                 FROM hitl_interrupts WHERE execution_id = ?
             """, (execution_id,))
             
@@ -328,10 +388,10 @@ class HITLStateManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT execution_id, user_input, interrupt_node, interrupt_reason, 
-                       created_at, status, datasource_id
+                SELECT execution_id, user_input, node_name, reason, 
+                       interrupted_at, status, id
                 FROM hitl_interrupts WHERE status = 'interrupted'
-                ORDER BY created_at DESC
+                ORDER BY interrupted_at DESC
             """)
             
             results = cursor.fetchall()
@@ -345,7 +405,7 @@ class HITLStateManager:
                     "reason": row[3],
                     "created_at": row[4],
                     "status": row[5],
-                    "datasource_id": row[6]
+                    "id": row[6]
                 }
                 for row in results
             ]

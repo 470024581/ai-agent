@@ -103,7 +103,6 @@ export function AnimatedWorkflowDiagram({
   edges = [], 
   currentNode = null, 
   activeEdges = [],
-  onPause = null,
   onInterrupt = null,
   hitlEnabled = false,
   executionId = null
@@ -242,13 +241,6 @@ export function AnimatedWorkflowDiagram({
             {/* HITL Control Buttons */}
             {hitlEnabled && isNodeActive(node.id) && node.hitlEnabled !== false && (
               <div className="flex gap-1 mt-2">
-                <button
-                  onClick={() => onPause && onPause(node.id, executionId)}
-                  className="px-2 py-1 text-[8px] bg-yellow-500 hover:bg-yellow-600 text-white rounded transition-colors duration-200 shadow-sm"
-                  title="Pause execution"
-                >
-                  ⏸️
-                </button>
                 <button
                   onClick={() => onInterrupt && onInterrupt(node.id, executionId)}
                   className="px-2 py-1 text-[8px] bg-red-500 hover:bg-red-600 text-white rounded transition-colors duration-200 shadow-sm"

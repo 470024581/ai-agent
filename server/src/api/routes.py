@@ -37,6 +37,7 @@ from ..utils.common_utils import (
 from ..document_loaders.file_processor import process_uploaded_file
 from ..config.config import DATA_DIR
 import json
+import time
 import sqlite3
 from fastapi.responses import FileResponse, StreamingResponse
 import logging
@@ -576,6 +577,8 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
 
 @router.post("/api/v1/intelligent-analysis")
 async def intelligent_analysis(data: IntelligentAnalysisRequest):
+    logger.info(f"Intelligent analysis request - query: {data.query[:50]}..., datasource: {data.datasource_id}")
+    
     try:
         # Get the client ID from the request
         client_id = data.client_id
@@ -627,32 +630,33 @@ async def workflow_websocket(websocket: WebSocket, client_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            # Here you can handle client-side messages, e.g., pause, resume
-            message = json.loads(data)
-            execution_id = websocket_manager.client_to_execution.get(client_id)
             
-            if not execution_id:
-                logger.warning(f"Received message from client {client_id} before execution association.")
-                continue
-
-            if message.get("type") == "pause":
-                websocket_manager.pause_execution(execution_id)
-                await websocket_manager.broadcast_to_execution(
-                    execution_id,
-                    WorkflowEvent(type="execution_paused", execution_id=execution_id, timestamp=datetime.now().timestamp())
-                )
-            elif message.get("type") == "resume":
-                websocket_manager.resume_execution(execution_id)
-                await websocket_manager.broadcast_to_execution(
-                    execution_id,
-                    WorkflowEvent(type="execution_resumed", execution_id=execution_id, timestamp=datetime.now().timestamp())
-                )
-            elif message.get("type") == "cancel":
-                websocket_manager.cancel_execution(execution_id)
-                await websocket_manager.broadcast_to_execution(
-                    execution_id,
-                    WorkflowEvent(type="execution_cancelled", execution_id=execution_id, timestamp=datetime.now().timestamp())
-                )
+            try:
+                message = json.loads(data)
+                message_type = message.get("type")
+                
+                logger.info(f"Received WebSocket message from client {client_id}: type={message_type}, data={message}")
+                
+                # Handle HITL messages
+                if message_type in ["hitl_pause", "hitl_interrupt", "hitl_resume", "hitl_cancel"]:
+                    logger.info(f"Processing HITL message: {message_type} for client {client_id}")
+                    await websocket_manager.handle_hitl_message(client_id, message)
+                # Handle legacy ping-pong
+                elif message_type == "ping":
+                    await websocket_manager.send_to_client(client_id, {
+                        "type": "pong",
+                        "timestamp": time.time()
+                    })
+                else:
+                    logger.warning(f"Unknown message type: {message_type}")
+                    
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON received from client {client_id}: {data}")
+                await websocket_manager.send_to_client(client_id, {
+                    "type": "error",
+                    "message": "Invalid JSON format",
+                    "timestamp": time.time()
+                })
                 
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket, client_id)
