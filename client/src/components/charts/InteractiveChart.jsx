@@ -15,6 +15,7 @@ import {
 
 const InteractiveChart = ({ 
   chartConfig, 
+  structuredData = null,
   className = "", 
   style = {},
   onDataPointClick = null,
@@ -84,8 +85,59 @@ const InteractiveChart = ({
   };
 
   const availableChartTypes = ['line', 'bar', 'pie', 'area'];
+
+  // Build a sanitized config with robust fallbacks
+  const normalizedData = (() => {
+    // 1) Preferred: chartConfig.data
+    if (Array.isArray(chartConfig?.data) && chartConfig.data.length > 0) {
+      return chartConfig.data;
+    }
+    // 2) Fallback: chartConfig.chart_data
+    if (Array.isArray(chartConfig?.chart_data) && chartConfig.chart_data.length > 0) {
+      return chartConfig.chart_data;
+    }
+    // 3) Fallback: structuredData.rows
+    if (Array.isArray(structuredData?.rows) && structuredData.rows.length > 0) {
+      const rows = structuredData.rows;
+      // Try to map category/value → x/y for non-pie defaults
+      const sample = rows[0] || {};
+      const hasCategoryValue = 'category' in sample && 'value' in sample;
+      if (hasCategoryValue) {
+        return rows.map(r => ({ x: r.category, y: r.value }));
+      }
+      return rows;
+    }
+    return [];
+  })();
+
+  // Normalize pie fields if needed
+  const sanitizedConfig = (() => {
+    if (!chartConfig) return { type: chartType, data: normalizedData };
+    const base = { ...chartConfig };
+    if (!Array.isArray(base.data) || base.data.length === 0) {
+      base.data = normalizedData;
+    }
+    // If pie, ensure angleField/colorField or remap from x/y
+    if ((base.type || chartType) === 'pie' && Array.isArray(base.data) && base.data.length > 0) {
+      const sample = base.data[0] || {};
+      const hasXY = ('x' in sample) || ('y' in sample);
+      const angleField = base.angleField || 'value';
+      const colorField = base.colorField || 'category';
+      if (hasXY) {
+        base.data = base.data.map(d => ({ [colorField]: d.x, [angleField]: d.y }));
+        base.angleField = angleField;
+        base.colorField = colorField;
+      } else {
+        // Ensure fields exist when data already category/value shaped
+        base.angleField = base.angleField || angleField;
+        base.colorField = base.colorField || colorField;
+      }
+    }
+    return base;
+  })();
+
   const currentConfig = {
-    ...chartConfig,
+    ...sanitizedConfig,
     type: chartType,
     onPointClick: handleDataPointClick
   };
@@ -154,7 +206,7 @@ const InteractiveChart = ({
         {/* Chart Info */}
         <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400">
           <div>
-            {chartConfig.data?.length || 0} data points
+            {(currentConfig.data?.length || 0)} data points
           </div>
           <div>
             Type: {chartType} | Interactive

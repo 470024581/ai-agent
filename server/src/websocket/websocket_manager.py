@@ -344,10 +344,8 @@ class WebSocketManager:
             await self.send_error(client_id, f"Error processing HITL message: {str(e)}")
     
     async def interrupt_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
-        """Interrupt workflow execution"""
+        """Interrupt workflow execution (memory checkpoint only)"""
         try:
-            from ..utils.hitl_state_manager import hitl_state_manager
-            
             # Get current execution state
             execution_state = self.execution_states.get(execution_id)
             if not execution_state:
@@ -357,68 +355,141 @@ class WebSocketManager:
             node_name = message.get("node_name", "unknown")
             reason = message.get("reason", "user_request")
             
-            # Create serializable state snapshot for interrupt  
-            interrupt_state = {
-                "execution_id": execution_id,
-                "user_input": execution_state.get("user_input", ""),
-                "current_node": execution_state.get("current_node"),
-                "status": execution_state.get("status"),
-                "structured_data": execution_state.get("structured_data"),
-                "chart_config": execution_state.get("chart_config"),
-                "query_type": execution_state.get("query_type"),
-                "sql_task_type": execution_state.get("sql_task_type"),
-                "answer": execution_state.get("answer", ""),
-                "error": execution_state.get("error"),
-                "quality_score": execution_state.get("quality_score", 0),
-                "timestamp": message.get("timestamp")
-            }
+            # STEP 1: Set interrupt flags to trigger LangGraph interrupt_node
+            logger.info(f"🎯 Setting interrupt flags for execution {execution_id}")
+            self.execution_paused[execution_id] = True
+            self.execution_cancelled[execution_id] = True
             
+            # STEP 2: Wait for LangGraph interrupt_node to save complete state
+            logger.info(f"⏳ Waiting for LangGraph interrupt_node to save state...")
+            interrupt_state = None
+            try:
+                import asyncio
+                from ..chains.langgraph_flow import get_execution_final_state
+                
+                # Wait up to 5 seconds for LangGraph interrupt_node to complete
+                lg_state = {}
+                for attempt in range(50):  # 50 * 0.1s = 5s max
+                    await asyncio.sleep(0.1)
+                    lg_state = get_execution_final_state(execution_id) or {}
+                    # Check if we have meaningful state (not just empty dict)
+                    if lg_state and any(lg_state.get(k) for k in ["user_input", "query_type", "sql_task_type", "structured_data", "chart_config"]):
+                        logger.info(f"✅ Found LangGraph state after {(attempt + 1) * 0.1:.1f}s: {list(lg_state.keys())}")
+                        # Use LangGraph state as the primary source
+                        interrupt_state = lg_state.copy()
+                        break
+                
+                # If we didn't get LangGraph state, fall back to execution_state
+                if not interrupt_state:
+                    logger.warning(f"⚠️ LangGraph state not ready after 5s, using execution_state as fallback")
+                    interrupt_state = {
+                        "execution_id": execution_id,
+                        "user_input": execution_state.get("user_input", ""),
+                        "current_node": execution_state.get("current_node"),
+                        "status": execution_state.get("status"),
+                        "structured_data": execution_state.get("structured_data"),
+                        "chart_config": execution_state.get("chart_config"),
+                        "query_type": execution_state.get("query_type"),
+                        "sql_task_type": execution_state.get("sql_task_type"),
+                        "answer": execution_state.get("answer", ""),
+                        "error": execution_state.get("error"),
+                        "quality_score": execution_state.get("quality_score", 0),
+                    }
+                
+                # Prefer node-level fields for accurate panel initialization
+                try:
+                    preferred_snapshot = {}
+                    if isinstance(lg_state.get("interrupt_node"), dict):
+                        preferred_snapshot = lg_state.get("interrupt_node") or {}
+                    elif node_name and isinstance(lg_state.get(node_name), dict):
+                        preferred_snapshot = lg_state.get(node_name) or {}
+
+                    for k in ["query_type", "sql_task_type", "structured_data", "chart_config", "answer", "datasource"]:
+                        v = preferred_snapshot.get(k)
+                        if v is not None and v != "":
+                            interrupt_state[k] = v
+                except Exception as merge_err:
+                    logger.debug(f"Skip merging node-level fields: {merge_err}")
+
+                # Add HITL metadata
+                interrupt_state["execution_id"] = execution_id
+                interrupt_state["timestamp"] = message.get("timestamp")
+                interrupt_state["hitl_node"] = node_name
+                interrupt_state["hitl_paused"] = node_name
+                if node_name:
+                    interrupt_state["current_node"] = node_name
+                
+                logger.info(f"📊 Final interrupt_state keys: {list(interrupt_state.keys())}")
+                logger.info(f"📊 query_type: {interrupt_state.get('query_type', 'NOT_SET')}")
+                logger.info(f"📊 sql_task_type: {interrupt_state.get('sql_task_type', 'NOT_SET')}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error waiting for LangGraph state: {e}")
+                # Create minimal interrupt_state
+                interrupt_state = {
+                    "execution_id": execution_id,
+                    "timestamp": message.get("timestamp"),
+                    "hitl_node": node_name,
+                    "hitl_paused": node_name,
+                    "error": str(e)
+                }
+
             # Make all state values JSON serializable
             interrupt_state = self.make_serializable(interrupt_state)
-            
-            # Store interrupt state in database
-            success = hitl_state_manager.interrupt_execution(execution_id, interrupt_state, node_name, reason)
-            
-            if success:
-                self.hitl_interrupted_executions[execution_id] = interrupt_state
-                self.execution_cancelled[execution_id] = True
-                
-                # Notify client with current state
-                await self.send_to_client(client_id, {
-                    "type": "hitl_interrupted", 
-                    "execution_id": execution_id,
-                    "node_name": node_name,
-                    "reason": reason,
-                    "current_state": interrupt_state,
-                    "timestamp": message.get("timestamp")
-                })
-                
-                logger.info(f"Execution {execution_id} interrupted at node {node_name}")
-            else:
-                await self.send_error(client_id, f"Failed to interrupt execution {execution_id}")
+
+            # Store checkpoint in memory only
+            self.hitl_interrupted_executions[execution_id] = interrupt_state
+
+            # Notify client
+            await self.send_to_client(client_id, {
+                "type": "hitl_interrupted",
+                "execution_id": execution_id,
+                "node_name": node_name,
+                "reason": reason,
+                "current_state": interrupt_state,
+                "timestamp": message.get("timestamp")
+            })
+            logger.info(f"✅ Execution {execution_id} interrupted at node {node_name}")
                 
         except Exception as e:
-            logger.error(f"Error interrupting execution {execution_id}: {e}")
+            logger.error(f"❌ Error interrupting execution {execution_id}: {e}")
             await self.send_error(client_id, f"Error interrupting execution: {str(e)}")
     
     async def resume_execution(self, client_id: str, execution_id: str, message: Dict[str, Any]):
-        """Resume paused or interrupted execution"""
+        """Resume interrupted execution from memory checkpoint"""
         logger.info(f"🔄 [BACKEND-WS] resume_execution called")
         logger.info(f"📥 [BACKEND-WS] resume_execution input params: client_id={client_id}, execution_id={execution_id}, message={message}")
         
         try:
-            from ..utils.hitl_state_manager import hitl_state_manager
-            
             parameters = message.get("parameters", {})
             execution_type = message.get("execution_type", "interrupt")  # Only "interrupt" now
             
             logger.info(f"📊 [BACKEND-WS] resume_execution parameters: {parameters}")
             logger.info(f"📊 [BACKEND-WS] resume_execution execution_type: {execution_type}")
             
-            # Restore state for interrupt
-            logger.info(f"🔄 [BACKEND-WS] resume_execution calling hitl_state_manager.restore_interrupt")
-            restored_state = hitl_state_manager.restore_interrupt(execution_id, parameters)
-            logger.info(f"📊 [BACKEND-WS] resume_execution hitl_state_manager.restore_interrupt result: {restored_state}")
+            # Restore state from memory
+            base_state = self.hitl_interrupted_executions.get(execution_id)
+            if not base_state:
+                base_state = self.execution_states.get(execution_id, {}).copy()
+            else:
+                base_state = base_state.copy()
+            if base_state is None:
+                await self.send_error(client_id, f"No checkpoint found for {execution_id}")
+                return
+            # Enrich from LangGraph final state
+            try:
+                from ..chains.langgraph_flow import get_execution_final_state
+                lg_state = get_execution_final_state(execution_id) or {}
+                for k in ["datasource", "user_input", "query_type", "sql_task_type", "structured_data", "chart_config", "answer"]:
+                    if (base_state.get(k) in (None, "", {})) and lg_state.get(k) not in (None, ""):
+                        base_state[k] = lg_state.get(k)
+            except Exception:
+                pass
+            # Merge non-empty parameters
+            for k, v in (parameters or {}).items():
+                if v is not None and v != "":
+                    base_state[k] = v
+            restored_state = base_state
             
             if execution_id in self.hitl_interrupted_executions:
                 del self.hitl_interrupted_executions[execution_id]
@@ -462,7 +533,8 @@ class WebSocketManager:
                 
                 # Restart workflow execution from the restored state
                 logger.info(f"🔄 [BACKEND-WS] resume_execution calling restart_workflow_execution")
-                await self.restart_workflow_execution(execution_id, restored_state)
+                paused_node = restored_state.get("hitl_paused") or restored_state.get("hitl_node") or ""
+                await self.restart_workflow_execution(execution_id, {**restored_state, "hitl_paused": paused_node})
                 logger.info(f"✅ [BACKEND-WS] resume_execution restart_workflow_execution completed")
                 
             else:
@@ -563,6 +635,83 @@ class WebSocketManager:
             "message": error_message,
             "timestamp": time.time()
         })
+
+    async def broadcast_execution_update(self, execution_id: str, state: Dict[str, Any]):
+        """Broadcast a state snapshot to the client during resume/replay.
+
+        This complements event-based updates by sending a consolidated snapshot
+        (e.g., structured_data/chart_config/answer) so the frontend can render
+        charts/answers immediately after resume.
+        """
+        try:
+            client_id = self.execution_to_client.get(execution_id)
+            if not client_id:
+                logger.warning(f"No client mapped for execution {execution_id}; skip execution_update broadcast")
+                return
+
+            # Merge important fields into in-memory execution state for consistency
+            if execution_id not in self.execution_states:
+                self.execution_states[execution_id] = {}
+            exec_state = self.execution_states[execution_id]
+            for k in [
+                "structured_data",
+                "chart_config",
+                "chart_image",
+                "answer",
+                "datasource",
+                "query_type",
+                "sql_task_type",
+                "error",
+                "chart_type",
+                "chart_data",
+            ]:
+                if k in state:
+                    exec_state[k] = state.get(k)
+
+            # Enrich chart_config with data if missing
+            try:
+                snapshot_chart_config = state.get("chart_config")
+                snapshot_chart_data = state.get("chart_data") or state.get("structured_data", {}).get("rows")
+                if isinstance(snapshot_chart_config, dict) and snapshot_chart_config is not None:
+                    if "data" not in snapshot_chart_config and snapshot_chart_data:
+                        # Do not mutate original state ref; copy then assign
+                        state = state.copy()
+                        new_cfg = snapshot_chart_config.copy()
+                        new_cfg["data"] = snapshot_chart_data
+                        # If data are x/y pairs but pie expects angleField/colorField, remap
+                        try:
+                            if isinstance(new_cfg.get("data"), list) and new_cfg.get("type") == "pie":
+                                sample = (new_cfg["data"][0] or {}) if new_cfg["data"] else {}
+                                if isinstance(sample, dict) and ("x" in sample or "y" in sample):
+                                    color_field = new_cfg.get("colorField") or new_cfg.get("seriesField") or "category"
+                                    angle_field = new_cfg.get("angleField") or new_cfg.get("yField") or "value"
+                                    remapped = []
+                                    for d in new_cfg["data"]:
+                                        if not isinstance(d, dict):
+                                            continue
+                                        remapped.append({
+                                            color_field: d.get("x", d.get(color_field)),
+                                            angle_field: d.get("y", d.get(angle_field))
+                                        })
+                                    new_cfg["data"] = remapped
+                        except Exception as _:
+                            pass
+                        state["chart_config"] = new_cfg
+                        exec_state["chart_config"] = new_cfg
+            except Exception as enrich_err:
+                logger.debug(f"Skip enriching chart_config: {enrich_err}")
+
+            # Send serializable snapshot
+            payload = {
+                "type": "execution_update",
+                "execution_id": execution_id,
+                "state": self.make_serializable(state),
+                "timestamp": time.time(),
+            }
+            await self.send_to_client(client_id, payload)
+            logger.info(f"Broadcasted execution_update to client {client_id} for execution {execution_id}")
+        except Exception as e:
+            logger.error(f"Error broadcasting execution_update for {execution_id}: {e}")
 
 # Create a singleton instance
 websocket_manager = WebSocketManager() 

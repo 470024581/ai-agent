@@ -240,6 +240,22 @@ const workflowSlice = createSlice({
         }
       }
     },
+
+    // Merge generic execution update snapshot into current execution
+    mergeExecutionUpdate: (state, action) => {
+      const { executionId, snapshot } = action.payload;
+      if (!state.executions[executionId]) return;
+      const exec = state.executions[executionId];
+      exec.result = {
+        ...exec.result,
+        ...snapshot,
+      };
+      // Also expose top-level commonly used fields for UI convenience
+      if (snapshot?.chart_config) exec.chart_config = snapshot.chart_config;
+      if (snapshot?.chart_image) exec.chart_image = snapshot.chart_image;
+      if (snapshot?.structured_data) exec.structured_data = snapshot.structured_data;
+      if (snapshot?.answer) exec.finalAnswer = snapshot.answer;
+    },
   },
 });
 

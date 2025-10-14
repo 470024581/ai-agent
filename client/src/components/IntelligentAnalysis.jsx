@@ -62,7 +62,7 @@ import { Switch } from './ui/switch';
 import { ChevronsUpDown, Lightbulb, ChevronDown, ChevronRight, Clock, Database, FileText, AlertCircle } from 'lucide-react';
 import { AnimatedWorkflowDiagram } from './AnimatedWorkflowDiagram';
 import { HITLParameterPanel } from './HITLParameterPanel';
-import { HistoryRestoreDialog } from './HistoryRestoreDialog';
+// import { HistoryRestoreDialog } from './HistoryRestoreDialog';
 
 function IntelligentAnalysis() {
   const { t } = useTranslation();
@@ -279,24 +279,14 @@ function IntelligentAnalysis() {
     }
   };
 
+  // Disabled: History restore is not available without DB
   const handleRestoreFromHistory = async () => {
-    try {
-      setShowHistoryDialog(true);
-    } catch (error) {
-      console.error('Error opening history dialog:', error);
-      setError('打开历史对话框失败: ' + error.message);
-    }
+    setError('History restore is disabled (no DB storage).');
   };
 
+  // Disabled: no DB-backed history
   const handleRestoreTask = async (task) => {
-    try {
-      // TODO: Implement actual task restoration logic
-      console.log('Restoring task:', task);
-      setError('任务恢复功能正在开发中...');
-    } catch (error) {
-      console.error('Error restoring task:', error);
-      setError('任务恢复失败: ' + error.message);
-    }
+    setError('History restore is disabled (no DB storage).');
   };
 
   const handleCancelTask = async (task) => {
@@ -1269,58 +1259,30 @@ function IntelligentAnalysis() {
               {renderLangGraphDiagram()}
                </div>
                
-               {/* HITL Control Panel */}
+               {/* HITL Control Panel (simplified) */}
                <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
                  <div className="bg-gradient-to-r from-yellow-50/80 to-orange-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-4 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                   <div className="flex items-center justify-between mb-3">
+                   <div className="flex items-center justify-between">
                      <div className="flex items-center">
                        <FaCogs className="h-4 w-4 text-yellow-500 mr-2" />
                        <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                          Human-in-the-Loop (HITL)
                        </Label>
-          </div>
-        </div>
-
-                   <div className="space-y-4">
-                     <p className="text-xs text-gray-600 dark:text-gray-400">
-                       Enable interrupt controls during workflow execution
-                     </p>
-                       
-                     {/* Interrupt Control Group */}
-                     <div className="space-y-2">
-                       <div className="flex items-center gap-2">
-                         <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                         <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                           Interrupt Control
-                         </Label>
-                       </div>
-                       <p className="text-xs text-gray-500 dark:text-gray-400 ml-4">
-                         Interrupt execution and save to history
-                       </p>
-                       <div className="flex gap-2 ml-4">
-                        <Button
-                           size="sm"
-                           variant="outline"
-                           onClick={() => handleInterruptExecution(currentNode || 'unknown', executionId)}
-                          disabled={!executionId}
-                           className="flex items-center gap-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
-                         >
-                           <FaStop className="h-3 w-3" />
-                           Interrupt
-                         </Button>
-                         
-                         <Button
-                           size="sm"
-                           variant="outline"
-                           onClick={() => handleRestoreFromHistory()}
-                           disabled={loading}
-                           className="flex items-center gap-1 text-purple-600 hover:text-purple-700 border-purple-200 hover:border-purple-300"
-                         >
-                           <FaRedo className="h-3 w-3" />
-                           Restore from History
-                         </Button>
-                       </div>
                      </div>
+                     <Button
+                       size="sm"
+                       variant="destructive"
+                       onClick={() => handleInterruptExecution(currentNode || 'unknown', executionId)}
+                       disabled={
+                         !executionId ||
+                         (currentExecutionData && currentExecutionData.status !== 'running') ||
+                         (currentExecutionData && currentExecutionData.result && typeof currentExecutionData.result.end_node !== 'undefined')
+                       }
+                       className="flex items-center gap-1"
+                     >
+                       <FaStop className="h-3 w-3" />
+                       Interrupt
+                     </Button>
                    </div>
                  </div>
                </div>
@@ -1395,21 +1357,13 @@ function IntelligentAnalysis() {
 
                   {/* Chart section - prefer interactive config, fallback to image */}
                     {chartConfig && (
-                    <div className="bg-gradient-to-r from-green-50/80 to-teal-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                        <FaChartLine className="h-5 w-5 text-green-500 mr-2" />
-                        Chart Visualization
-                      </h3>
+                    <div className="">
                       <InteractiveChart chartConfig={chartConfig} structuredData={structuredData} />
                     </div>
                     )}
 
                     {!chartConfig && chartImage && (
-                    <div className="bg-gradient-to-r from-green-50/80 to-teal-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-6 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                      <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center">
-                        <FaChartLine className="h-5 w-5 text-green-500 mr-2" />
-                        Chart Visualization
-                      </h3>
+                    <div className="">
                       <div className="flex justify-center">
                         <img 
                           src={chartImage} 
@@ -1458,13 +1412,7 @@ function IntelligentAnalysis() {
         executionType={hitlPanel.executionType}
       />
 
-      {/* History Restore Dialog */}
-      <HistoryRestoreDialog
-        isOpen={showHistoryDialog}
-        onClose={() => setShowHistoryDialog(false)}
-        onRestoreTask={handleRestoreTask}
-        onCancelTask={handleCancelTask}
-      />
+      {/* History Restore Dialog disabled without DB */}
     </div>
   );
 }

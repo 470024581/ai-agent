@@ -142,6 +142,7 @@ def main():
     parser.add_argument("--no-reload", action="store_true", help="Disable hot reload")
     parser.add_argument("--prod", action="store_true", help="Production mode")
     parser.add_argument("--workers", type=int, default=1, help="Number of worker processes")
+    parser.add_argument("--debug", action="store_true", help="Enable debugpy and wait for debugger attach")
     
     args = parser.parse_args()
     
@@ -207,6 +208,19 @@ def main():
             logging.getLogger(name).setLevel(getattr(logging, log_level, logging.INFO))
         
         print(f"🔧 Python logging configured - Level: {log_level}")
+
+        # Optional debug attach
+        if args.debug:
+            try:
+                import debugpy
+                debug_host = os.environ.get("DEBUGPY_HOST", "127.0.0.1")
+                debug_port = int(os.environ.get("DEBUGPY_PORT", "5678"))
+                print(f"🐞 Waiting for debugger attach on {debug_host}:{debug_port} ...")
+                debugpy.listen((debug_host, debug_port))
+                debugpy.wait_for_client()
+                print("🐞 Debugger attached.")
+            except Exception as e:
+                print(f"⚠️  debugpy attach failed: {e}")
         
         start_server(reload=args.reload)
     except KeyboardInterrupt:

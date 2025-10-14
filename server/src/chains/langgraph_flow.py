@@ -579,6 +579,8 @@ async def sql_chart_node(state: GraphState) -> GraphState:
                 **state,
                 "structured_data": structured_data,
                 "answer": result["answer"],
+                "query_type": state.get("query_type"),  # Preserve query_type
+                "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "sql_chart": {
@@ -598,6 +600,8 @@ async def sql_chart_node(state: GraphState) -> GraphState:
             return {
                 **state,
                 "error": error_msg,
+                "query_type": state.get("query_type"),  # Preserve query_type
+                "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "sql_chart": {
@@ -613,6 +617,8 @@ async def sql_chart_node(state: GraphState) -> GraphState:
         return {
             **state,
             "error": error_msg,
+            "query_type": state.get("query_type"),  # Preserve query_type
+            "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
             "node_outputs": {
                 **state.get("node_outputs", {}),
                 "sql_chart": {
@@ -636,11 +642,18 @@ def chart_config_node(state: GraphState) -> GraphState:
         return {
             **state, 
             "chart_config": chart_config,
-            "structured_data": structured_data  # Ensure structured_data is passed through
+            "structured_data": structured_data,  # Ensure structured_data is passed through
+            "query_type": state.get("query_type"),  # Preserve query_type
+            "sql_task_type": state.get("sql_task_type")  # Preserve sql_task_type
         }
     except Exception as e:
         logger.error(f"Chart config node error: {e}")
-        return {**state, "error": str(e)}
+        return {
+            **state, 
+            "error": str(e),
+            "query_type": state.get("query_type"),  # Preserve query_type
+            "sql_task_type": state.get("sql_task_type")  # Preserve sql_task_type
+        }
 
 async def rag_query_node(state: GraphState) -> GraphState:
     """RAG query node"""
@@ -1825,9 +1838,6 @@ async def resume_workflow_from_paused_state(
     try:
         logger.info(f"Resuming workflow execution {execution_id} from paused node {paused_node}")
         
-        # Get the workflow app
-        app = get_compiled_app()
-        
         # Use the paused state as initial state
         initial_state = paused_state.copy()
         initial_state["execution_id"] = execution_id
@@ -1838,25 +1848,63 @@ async def resume_workflow_from_paused_state(
         # initial_state.pop("hitl_paused", None)
         initial_state.pop("hitl_reason", None)
         
-        # Create config for execution
-        config = {"configurable": {"thread_id": execution_id}}
-        
-        # Resume from the paused node
-        # We need to continue from where we left off
+        # Strictly continue from the paused node without re-running upstream nodes
         logger.info(f"Resuming execution from node {paused_node} with state keys: {list(initial_state.keys())}")
-        
-        # Use LangGraph's ability to continue from a specific state
-        # The initial_state already contains the paused state, so we can continue from there
-        
-        # Stream the resumed execution starting from the paused state
-        final_state = None
-        async for state in app.astream(initial_state, config):
-            final_state = state
-            # Send state updates to WebSocket clients
-            await websocket_manager.broadcast_execution_update(execution_id, state)
-        
-        logger.info(f"Workflow execution {execution_id} resumed and completed successfully")
-        return final_state or initial_state
+
+        state: Dict[str, Any] = initial_state
+
+        # Helper to broadcast snapshot
+        async def _emit(snapshot: Dict[str, Any]):
+            await websocket_manager.broadcast_execution_update(execution_id, snapshot)
+
+        try:
+            if paused_node == "sql_chart_node":
+                # Continue to chart_config → chart_rendering → llm_processing
+                state = chart_config_node(state)
+                await _emit(state)
+
+                state = chart_rendering_node(state)
+                await _emit(state)
+
+                state = await llm_processing_node(state)
+                await _emit(state)
+
+            elif paused_node == "sql_query_node":
+                # Continue directly to llm_processing
+                state = await llm_processing_node(state)
+                await _emit(state)
+
+            elif paused_node == "router_node":
+                # Edge case: decide branch from existing state without re-running router
+                branch = state.get("query_type")
+                if branch == "sql":
+                    # We assume classifier result already exists; route accordingly
+                    task = state.get("sql_task_type")
+                    if task == "chart":
+                        state = chart_config_node(state)
+                        await _emit(state)
+                        state = chart_rendering_node(state)
+                        await _emit(state)
+                        state = await llm_processing_node(state)
+                        await _emit(state)
+                    else:
+                        state = await llm_processing_node(state)
+                        await _emit(state)
+                else:
+                    # rag path: continue to llm_processing directly
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+            else:
+                # Fallback: if we don't recognize the node, do minimal safe continuation
+                state = await llm_processing_node(state)
+                await _emit(state)
+
+            set_execution_final_state(execution_id, state)
+            logger.info(f"Workflow execution {execution_id} resumed and completed successfully")
+            return state
+        except Exception:
+            # Re-raise to outer handler
+            raise
         
     except Exception as e:
         logger.error(f"Error resuming workflow execution {execution_id}: {e}")

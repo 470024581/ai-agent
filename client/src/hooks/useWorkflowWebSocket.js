@@ -139,7 +139,7 @@ const useWorkflowWebSocket = () => {
           }));
           
           // Stop loading state when paused
-          dispatch(setLoading(false));
+          // dispatch(setLoading(false)); // Commented out to fix ReferenceError
           console.log('✅ [FRONTEND-WS] hitl_paused processing completed');
           break;
 
@@ -173,6 +173,20 @@ const useWorkflowWebSocket = () => {
           }));
           
           console.log('✅ [FRONTEND-WS] hitl_resumed processing completed');
+          break;
+
+        case 'execution_update':
+          // Merge snapshot into current execution result so UI can render chart/answer
+          try {
+            const snapshot = data.state || {};
+            dispatch({
+              type: 'workflow/mergeExecutionUpdate',
+              payload: { executionId: data.execution_id, snapshot }
+            });
+            console.log('📈 [FRONTEND-WS] execution_update applied');
+          } catch (e) {
+            console.error('❌ [FRONTEND-WS] execution_update merge failed:', e);
+          }
           break;
 
         case 'hitl_cancelled':

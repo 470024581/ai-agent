@@ -123,6 +123,11 @@ export function HITLParameterPanel({
       console.log('📤 [FRONTEND-HITL] handleResume sending modified parameters:', modifiedParams);
       await onResume(executionId, modifiedParams, executionType);
       onClose();
+      // Prevent users from interrupting immediately after resume
+      const interruptBtn = document.querySelector('button:has(svg.h-3.w-3)');
+      if (interruptBtn) {
+        interruptBtn.setAttribute('disabled', 'true');
+      }
       console.log('✅ [FRONTEND-HITL] handleResume completed successfully');
     } catch (error) {
       console.error('❌ [FRONTEND-HITL] handleResume failed:', error);
