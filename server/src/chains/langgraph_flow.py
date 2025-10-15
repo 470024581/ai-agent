@@ -1987,66 +1987,47 @@ async def process_intelligent_query(
     final_state = None
     
     try:
-        # Use both astream_events for real-time updates and astream for final state
-        events_task = None
-        async def track_events():
-            try:
-                async for event in app.astream_events(initial_state, config, version="v1"):
-                    kind = event["event"]
-                    
-                    if kind == "on_chain_start":
-                        node_name = event.get("name", "")
-                        logger.info(f"Node started: {node_name}")
-                        await emit_event("node_started", node_id=node_name)
-                    
-                    elif kind == "on_chain_end":
-                        node_name = event.get("name", "")
-                        logger.info(f"Node completed: {node_name}")
-                        await emit_event("node_completed", node_id=node_name, data=event.get("data"))
-                    
-                    elif kind == "on_chain_error":
-                        node_name = event.get("name", "")
-                        logger.error(f"Node error: {node_name} - {event.get('data')}")
-                        await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
-                        
-            except Exception as e:
-                # Check if it's a HITL exception
-                if "HITLPausedException" in str(type(e)) or "HITLInterruptedException" in str(type(e)):
-                    logger.info(f"HITL event tracking terminated due to {type(e).__name__}: {e}")
-                else:
-                    logger.error(f"Unexpected error in event tracking: {e}")
-        
         # Check if execution is interrupted BEFORE starting the workflow
         if execution_id in websocket_manager.execution_cancelled or execution_id in websocket_manager.hitl_interrupted_executions:
             logger.info(f"🎯 Execution {execution_id} was interrupted before workflow start, raising exception")
             from .exceptions import HITLInterruptedException
             raise HITLInterruptedException(execution_id, "preworkflow", "preworkflow_interrupted", {"user_input": user_input})
-        
-        # Start event tracking in background and get final state
-        events_task = asyncio.create_task(track_events())
-        
-        # Get the complete final state using astream
-        # We need to accumulate the state throughout the execution
+
+        # Single-run: stream events and accumulate final state simultaneously to avoid duplicate execution
         accumulated_state = initial_state.copy()
         try:
-            async for state in app.astream(initial_state, config):
-                if isinstance(state, dict):
-                    accumulated_state.update(state)
-                else:
-                    # Handle AddableUpdatesDict or similar types
-                    for key, value in state.items():
-                        accumulated_state[key] = value
-        
+            async for event in app.astream_events(initial_state, config, version="v1"):
+                kind = event.get("event")
+                node_name = event.get("name", "")
+
+                if kind == "on_chain_start":
+                    logger.info(f"Node started: {node_name}")
+                    await emit_event("node_started", node_id=node_name)
+
+                elif kind == "on_chain_end":
+                    logger.info(f"Node completed: {node_name}")
+                    data = event.get("data")
+                    # Accumulate any state-like data emitted by nodes
+                    if isinstance(data, dict):
+                        for key, value in data.items():
+                            accumulated_state[key] = value
+                    await emit_event("node_completed", node_id=node_name, data=data)
+
+                elif kind == "on_chain_error":
+                    logger.error(f"Node error: {node_name} - {event.get('data')}")
+                    await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
+
+            # After events stream finishes, treat accumulated_state as final_state
             final_state = accumulated_state
-            
+
             # Save execution state for HITL operations
             set_execution_final_state(execution_id, final_state)
-            
+
             # Check if final state indicates interrupted status
             if final_state.get("hitl_status") == "interrupted":
                 logger.info(f"🎯 Workflow detected interrupted state in final state for execution {execution_id}")
                 await websocket_manager.send_to_client(
-                    websocket_manager.execution_to_client.get(execution_id, ""), 
+                    websocket_manager.execution_to_client.get(execution_id, ""),
                     {
                         "type": "hitl_interrupted",
                         "execution_id": execution_id,
@@ -2064,12 +2045,12 @@ async def process_intelligent_query(
                     "hitl_reason": final_state.get("hitl_reason"),
                     **final_state
                 }
-            
+
             # Check if execution is currently paused (even if not in final state)
             if execution_id in websocket_manager.execution_paused or execution_id in websocket_manager.hitl_interrupted_executions:
                 logger.info(f"🎯 Execution {execution_id} is currently paused, sending pause notification")
                 await websocket_manager.send_to_client(
-                    websocket_manager.execution_to_client.get(execution_id, ""), 
+                    websocket_manager.execution_to_client.get(execution_id, ""),
                     {
                         "type": "hitl_paused",
                         "execution_id": execution_id,
@@ -2087,7 +2068,7 @@ async def process_intelligent_query(
                     "hitl_reason": "paused_during_execution",
                     **final_state
                 }
-                
+
         except Exception as e:
             # Check if it's a HITL exception
             if "HITLPausedException" in str(type(e)) or "HITLInterruptedException" in str(type(e)):
@@ -2100,13 +2081,6 @@ async def process_intelligent_query(
             else:
                 # Re-raise non-HITL exceptions
                 raise
-        
-        # Wait for events to complete
-        if events_task:
-            try:
-                await events_task
-            except Exception as e:
-                logger.warning(f"Event tracking completed with exception: {e}")
         
         # final_state should now be the complete final state
         if not isinstance(final_state, dict):

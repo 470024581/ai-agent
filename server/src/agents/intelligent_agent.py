@@ -499,10 +499,14 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         6. Order results appropriately
         7. Limit results to a reasonable number (LIMIT 50 by default)
 
+        CRITICAL SQLITE NOTE:
+        - Do NOT use unsupported functions like strtofloat. To convert text to numbers, use CAST(column AS REAL) or (column * 1.0).
+
         **IMPORTANT**: 
         - Return results in a format that matches the query intent
         - Use column names exactly as they appear in the schema
         - Ensure all referenced tables and columns exist in the schema
+        - Use SQLite-compatible date functions. Prefer strftime over MySQL functions like DATE_FORMAT or FORMAT. Do NOT use FORMAT/DATE_FORMAT.
 
         Only return the SQL query, no explanations or other text.
         """
@@ -885,10 +889,14 @@ async def get_query_from_sqltable_datasource(
         6. Order results appropriately
         7. Limit results to a reasonable number (LIMIT 50 by default)
 
+        CRITICAL SQLITE NOTE:
+        - Do NOT use unsupported functions like strtofloat. To convert text to numbers, use CAST(column AS REAL) or (column * 1.0).
+
         **IMPORTANT**: 
         - Return results in a format that matches the query intent
         - Use column names exactly as they appear in the schema
         - Ensure all referenced tables and columns exist in the schema
+        - Use SQLite-compatible date functions. Prefer strftime over MySQL functions like DATE_FORMAT or FORMAT. Do NOT use FORMAT/DATE_FORMAT.
 
         Only return the SQL query, no explanations or other text.
         """
@@ -1033,13 +1041,29 @@ def _apply_sqlite_fixes(sql: str) -> str:
     - Fix patterns like: saledate LIKE '%%%Y-%%-%m-%%' → strftime('%Y-%m', saledate) = strftime('%Y-%m','now')
     """
     try:
-        # Generic: any column name that contains 'date' surrounded by word chars
-        # Match excessive % with %Y and %m placeholders in quotes
-        pattern = re.compile(r"(?i)(\b\w*date\w*\b)\s+LIKE\s+'%+%Y%*-?%+%m%*%+'")
+        # 1) DATE_FORMAT(col,'fmt') -> strftime('fmt', col)
+        date_format_pattern = re.compile(r"(?i)DATE_FORMAT\s*\(\s*([^,]+?)\s*,\s*'([^']+)'\s*\)")
+        patched = re.sub(date_format_pattern, r"strftime('\2', \1)", sql)
+
+        # 2) Remove stray MySQL-style FORMAT '%m' tokens
+        patched = re.sub(re.compile(r"(?i)\s+FORMAT\s+'[^']+'"), "", patched)
+
+        # 3) LIKE with strftime-style placeholders (e.g., '%Y-%m-%', '%- %d -%') -> filter current month
+        #    Match any date-like column name followed by LIKE '...%[Ymd]...'
+        generic_like_placeholder = re.compile(r"(?i)(\b\w*date\w*\b)\s+LIKE\s+'[^']*%[Ymd][^']*'")
         def replace_like_current_month(match: re.Match) -> str:
             col = match.group(1)
             return f"strftime('%Y-%m', {col}) = strftime('%Y-%m','now')"
-        patched = re.sub(pattern, replace_like_current_month, sql)
+        patched = re.sub(generic_like_placeholder, replace_like_current_month, patched)
+
+        # 4) Specific legacy pattern: %Y and %m placeholders with excessive %
+        legacy_pattern = re.compile(r"(?i)(\b\w*date\w*\b)\s+LIKE\s+'%+%Y%*-?%+%m%*%+'")
+        patched = re.sub(legacy_pattern, replace_like_current_month, patched)
+
+        # Replace unsupported strtofloat(...) with CAST(... AS REAL)
+        # Handles cases like AVG(strtofloat(column)) or strtofloat(trim(column))
+        float_pattern = re.compile(r"(?i)strtofloat\s*\(\s*([^)]+?)\s*\)")
+        patched = re.sub(float_pattern, r"CAST(\1 AS REAL)", patched)
         return patched
     except Exception:
         # If anything goes wrong, return original SQL

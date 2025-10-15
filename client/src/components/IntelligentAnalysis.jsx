@@ -1298,13 +1298,44 @@ function IntelligentAnalysis() {
               const actualResult = result || currentExecutionData?.result;
               // Safely extract chart image and answer from the workflow result
               console.log('Extracting data from actualResult:', actualResult);
-              const chartImage = actualResult?.chart_rendering_node?.chart_image || actualResult?.chart_image;
-              const chartConfig = actualResult?.chart_rendering_node?.chart_config || actualResult?.chart_config;
-              const structuredData = actualResult?.structured_data || actualResult?.data;
+              // Helpers: fallback search inside input/output arrays when backend only emits event snapshots
+              const getFromOutput = (key) => {
+                const out = actualResult?.output;
+                if (Array.isArray(out)) {
+                  for (const item of out) {
+                    if (item?.chart_rendering_node?.[key]) return item.chart_rendering_node[key];
+                    if (item?.llm_processing_node?.[key]) return item.llm_processing_node[key];
+                    if (item?.sql_chart_node?.[key]) return item.sql_chart_node[key];
+                  }
+                }
+                return null;
+              };
+
+              const chartImage = actualResult?.chart_rendering_node?.chart_image 
+                || actualResult?.chart_image 
+                || actualResult?.input?.chart_image
+                || getFromOutput('chart_image')
+                || currentExecutionData?.chart_image;
+              const chartConfig = actualResult?.chart_rendering_node?.chart_config 
+                || actualResult?.chart_config 
+                || actualResult?.input?.chart_config
+                || getFromOutput('chart_config')
+                || currentExecutionData?.chart_config;
+              const structuredData = actualResult?.structured_data 
+                || actualResult?.data 
+                || actualResult?.input?.structured_data
+                || getFromOutput('structured_data')
+                || currentExecutionData?.structured_data;
               
               // Priority: streaming answer > final answer > static answer
               const streamingAnswer = currentExecutionData?.streamingAnswer;
-              const finalAnswer = currentExecutionData?.finalAnswer || actualResult?.llm_processing_node?.answer || actualResult?.sql_execution_node?.answer || actualResult?.answer;
+              const finalAnswer = currentExecutionData?.finalAnswer 
+                || actualResult?.llm_processing_node?.answer 
+                || actualResult?.sql_execution_node?.answer 
+                || actualResult?.answer 
+                || getFromOutput('answer')
+                || actualResult?.input?.answer
+                || currentExecutionData?.answer;
               const isStreaming = currentExecutionData?.isStreaming || false;
               const displayAnswer = streamingAnswer || finalAnswer;
               
