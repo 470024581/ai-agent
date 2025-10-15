@@ -1023,7 +1023,27 @@ def _clean_sql_statement(sql: str) -> str:
     # Clean whitespace
     sql = ' '.join(sql.split())
     
+    # Apply SQLite-specific fixes (date filters, placeholders)
+    sql = _apply_sqlite_fixes(sql)
+    
     return sql
+
+def _apply_sqlite_fixes(sql: str) -> str:
+    """Patch common SQL issues produced by LLM for SQLite.
+    - Fix patterns like: saledate LIKE '%%%Y-%%-%m-%%' → strftime('%Y-%m', saledate) = strftime('%Y-%m','now')
+    """
+    try:
+        # Generic: any column name that contains 'date' surrounded by word chars
+        # Match excessive % with %Y and %m placeholders in quotes
+        pattern = re.compile(r"(?i)(\b\w*date\w*\b)\s+LIKE\s+'%+%Y%*-?%+%m%*%+'")
+        def replace_like_current_month(match: re.Match) -> str:
+            col = match.group(1)
+            return f"strftime('%Y-%m', {col}) = strftime('%Y-%m','now')"
+        patched = re.sub(pattern, replace_like_current_month, sql)
+        return patched
+    except Exception:
+        # If anything goes wrong, return original SQL
+        return sql
 
 def _validate_sql_statement(sql: str, schema_info: str) -> bool:
     """Validate SQL statement against schema and basic rules"""
@@ -1128,7 +1148,12 @@ def _parse_string_query_result(result: str, table_name: str = None) -> Optional[
                     # Convert tuples to dictionaries with meaningful column names
                     parsed_data = []
                     for tuple_item in parsed_tuples:
-                        if len(tuple_item) == 2:
+                        if len(tuple_item) == 1:
+                            # Single value result from aggregation like SUM/COUNT
+                            parsed_data.append({
+                                "value": tuple_item[0]
+                            })
+                        elif len(tuple_item) == 2:
                             # Common case: (category, value) pairs - use descriptive names
                             parsed_data.append({
                                 "category": str(tuple_item[0]),
