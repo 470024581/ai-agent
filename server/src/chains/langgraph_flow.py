@@ -1757,8 +1757,22 @@ def get_compiled_app():
     workflow.add_node("sql_query_node", sql_query_node)  # New node for SQL queries
     workflow.add_node("sql_chart_node", sql_chart_node)  # Renamed from sql_execution_node
     workflow.add_node("rag_query_node", rag_query_node)
-    workflow.add_node("chart_config_node", chart_config_node)
-    workflow.add_node("chart_rendering_node", chart_rendering_node)
+    # Merge Chart Config + Render as a single node
+    def chart_process_node(state: GraphState) -> GraphState:
+        """Generate chart config then render chart in one step."""
+        try:
+            # Step 1: build config
+            cfg_state = chart_config_node(state)
+            if cfg_state.get("error"):
+                return cfg_state
+            # Step 2: render
+            rendered_state = chart_rendering_node(cfg_state)
+            return rendered_state
+        except Exception as e:
+            logger.error(f"Chart process node error: {e}")
+            return {**state, "error": str(e)}
+
+    workflow.add_node("chart_process_node", chart_process_node)
     workflow.add_node("llm_processing_node", llm_processing_node)
     workflow.add_node("interrupt_node", interrupt_node)  # Add interrupt node
     workflow.add_node("end_node", lambda state: {"success": True})
@@ -1799,19 +1813,18 @@ def get_compiled_app():
         }
     )
 
-    # Connect SQL Chart node to Chart Config with interrupt check
+    # Connect SQL Chart node to Chart Process with interrupt check
     workflow.add_conditional_edges(
         "sql_chart_node",
         check_interrupt_status,
         {
-            "continue": "chart_config_node",
+            "continue": "chart_process_node",
             "interrupt": "interrupt_node"
         }
     )
 
-    # Rest of the edges remain the same
-    workflow.add_edge("chart_config_node", "chart_rendering_node")
-    workflow.add_edge("chart_rendering_node", "llm_processing_node")
+    # Chart process goes directly to LLM processing
+    workflow.add_edge("chart_process_node", "llm_processing_node")
     workflow.add_edge("rag_query_node", "llm_processing_node")
     
     # LLM processing goes directly to end node (validation & retry removed)
@@ -1859,11 +1872,14 @@ async def resume_workflow_from_paused_state(
 
         try:
             if paused_node == "sql_chart_node":
-                # Continue to chart_config → chart_rendering → llm_processing
-                state = chart_config_node(state)
-                await _emit(state)
+                # Continue to chart_process → llm_processing
+                def chart_process_node_local(s: Dict[str, Any]) -> Dict[str, Any]:
+                    t1 = chart_config_node(s)
+                    if t1.get("error"):
+                        return t1
+                    return chart_rendering_node(t1)
 
-                state = chart_rendering_node(state)
+                state = chart_process_node_local(state)
                 await _emit(state)
 
                 state = await llm_processing_node(state)
@@ -1881,9 +1897,12 @@ async def resume_workflow_from_paused_state(
                     # We assume classifier result already exists; route accordingly
                     task = state.get("sql_task_type")
                     if task == "chart":
-                        state = chart_config_node(state)
-                        await _emit(state)
-                        state = chart_rendering_node(state)
+                        def chart_process_node_local2(s: Dict[str, Any]) -> Dict[str, Any]:
+                            t1 = chart_config_node(s)
+                            if t1.get("error"):
+                                return t1
+                            return chart_rendering_node(t1)
+                        state = chart_process_node_local2(state)
                         await _emit(state)
                         state = await llm_processing_node(state)
                         await _emit(state)

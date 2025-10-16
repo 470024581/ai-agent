@@ -58,10 +58,16 @@ export const AnimatedBeam = ({
         const endY =
           rectB.top - containerRect.top + rectB.height / 2 + endYOffset;
 
-        const controlY = startY - curvature;
-        const d = `M ${startX},${startY} Q ${
-          (startX + endX) / 2
-        },${controlY} ${endX},${endY}`;
+        let d;
+        if (curvature === 0) {
+          // Draw a straight line when curvature is zero
+          d = `M ${startX},${startY} L ${endX},${endY}`;
+        } else {
+          // Quadratic curve with a vertical offset control point
+          const midX = (startX + endX) / 2;
+          const midY = (startY + endY) / 2 - curvature;
+          d = `M ${startX},${startY} Q ${midX},${midY} ${endX},${endY}`;
+        }
         setPathD(d);
       }
     };
@@ -98,6 +104,11 @@ export const AnimatedBeam = ({
     endXOffset,
     endYOffset,
   ]);
+
+  // Avoid rendering before we have a valid path and dimensions
+  if (!pathD || svgDimensions.width === 0 || svgDimensions.height === 0) {
+    return null;
+  }
 
   return (
     <svg

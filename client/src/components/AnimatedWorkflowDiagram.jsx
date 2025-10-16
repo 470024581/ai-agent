@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, forwardRef } from 'react';
+import React, { useRef, useEffect, useState, forwardRef } from 'react';
 import { cn } from '@/lib/utils';
 import { AnimatedBeam } from './magicui/animated-beam';
 
@@ -109,11 +109,21 @@ export function AnimatedWorkflowDiagram({
 }) {
   const containerRef = useRef(null);
   const nodeRefs = useRef({});
+  // Stable refs to the absolute-positioned node containers
+  const nodeContainerRefs = useRef({});
+  // Track container size to trigger re-renders on resize (so positions/lines recompute deterministically)
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  // Delay edge rendering to avoid (0,0) initial positions causing stray lines in the top-left
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [edgeCoords, setEdgeCoords] = useState({});
 
   // Create refs for all nodes
   nodes.forEach(node => {
     if (!nodeRefs.current[node.id]) {
       nodeRefs.current[node.id] = React.createRef();
+    }
+    if (!nodeContainerRefs.current[node.id]) {
+      nodeContainerRefs.current[node.id] = React.createRef();
     }
   });
 
@@ -135,7 +145,7 @@ export function AnimatedWorkflowDiagram({
     const width = rect.width;
     const height = rect.height;
     const paddingX = 40; // left/right padding for layout
-    const paddingY = 30; // top/bottom padding for layout
+    const paddingY = 0; // top/bottom padding for layout (reduced to increase vertical spacing)
 
     // Group nodes by layer if layer is provided
     const layers = new Map();
@@ -158,21 +168,22 @@ export function AnimatedWorkflowDiagram({
 
     const sortedLayers = Array.from(layers.keys()).sort((a, b) => a - b);
     const layerCount = sortedLayers.length;
+    // For left-to-right layout: spread layers along X axis, and nodes within a layer along Y axis
+    const availableWidth = Math.max(1, width - paddingX * 2);
     const availableHeight = Math.max(1, height - paddingY * 2);
-    const layerGap = layerCount > 1 ? availableHeight / (layerCount - 1) : availableHeight / 2;
+    const layerGap = layerCount > 1 ? availableWidth / (layerCount - 1) : availableWidth / 2;
 
     const positions = {};
     sortedLayers.forEach((layerIdx, li) => {
       const layerNodes = layers.get(layerIdx) || [];
-      const colCount = layerNodes.length;
-      const y = paddingY + li * layerGap;
+      const rowCount = layerNodes.length;
+      const x = paddingX + li * layerGap; // fixed x per layer
 
       layerNodes.forEach((node, indexInLayer) => {
-        // If node.col provided, use it (1-based), else spread evenly
-        const col = node.col != null ? Number(node.col) - 1 : indexInLayer;
-        const totalCols = node.totalCols != null ? Number(node.totalCols) : colCount;
-        const availableWidth = Math.max(1, width - paddingX * 2);
-        const x = paddingX + (availableWidth * (col + 1)) / (totalCols + 1);
+        // If node.col provided, treat it as row index (1-based); else spread evenly
+        const row = node.col != null ? Number(node.col) - 1 : indexInLayer;
+        const totalRows = node.totalCols != null ? Number(node.totalCols) : rowCount;
+        const y = paddingY + (availableHeight * (row + 1)) / (totalRows + 1);
         
         // Ensure x and y are within bounds
         const clampedX = Math.max(paddingX, Math.min(width - paddingX, x));
@@ -187,8 +198,27 @@ export function AnimatedWorkflowDiagram({
 
   const responsivePositions = computePositions();
 
+  useEffect(() => {
+    // Schedule edge rendering on the next animation frame so nodes have been laid out
+    let raf = requestAnimationFrame(() => setLayoutReady(true));
+    return () => cancelAnimationFrame(raf);
+    // Re-run when the node/edge list changes
+  }, [nodes, edges]);
+
+  // Observe container size only to trigger re-render -> positions and line endpoints recompute from pure data
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const ro = new ResizeObserver(entries => {
+      const entry = entries[0];
+      const cr = entry.contentRect;
+      setContainerSize(prev => (prev.width !== cr.width || prev.height !== cr.height) ? { width: cr.width, height: cr.height } : prev);
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <div className="relative w-full h-full min-h-[300px] max-h-[500px] flex items-center justify-center overflow-hidden bg-transparent rounded-xl p-3" ref={containerRef}>
+    <div className="relative w-full h-full min-h-[320px] max-h-[360px] flex items-center justify-center overflow-hidden bg-transparent rounded-xl p-3" ref={containerRef}>
       <style>{`
         @keyframes pulse-strong {
           0%, 100% {
@@ -227,6 +257,7 @@ export function AnimatedWorkflowDiagram({
               transform: 'translate(-50%, -50%)',
             }}
             className="flex flex-col items-center gap-1.5 transition-all duration-300"
+            ref={nodeContainerRefs.current[node.id]}
           >
             <Circle
               ref={nodeRefs.current[node.id]}
@@ -265,67 +296,69 @@ export function AnimatedWorkflowDiagram({
         );
       })}
 
-      {/* Animated Beams */}
-      {edges.map((edge, index) => {
-        const fromRef = nodeRefs.current[edge.from];
-        const toRef = nodeRefs.current[edge.to];
-        
-        if (!fromRef || !toRef) return null;
+      {/* Static SVG straight lines computed from layout positions (no DOM measurements) */}
+      {layoutReady && (
+        <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none">
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,8 L8,4 z" fill="#94a3b8" />
+            </marker>
+          </defs>
+          {edges.map((edge, index) => {
+            const key = `${edge.from}-${edge.to}-${index}`;
+            const fromPos = (nodes.find(n => n.id === edge.from)?.position) || responsivePositions[edge.from];
+            const toPos = (nodes.find(n => n.id === edge.to)?.position) || responsivePositions[edge.to];
+            if (!fromPos || !toPos) return null;
 
-        const colorMap = {
-          emerald: '#10b981',
-          blue: '#3b82f6',
-          purple: '#8b5cf6',
-          cyan: '#06b6d4',
-          green: '#10b981',
-          orange: '#f59e0b',
-          amber: '#f59e0b',
-          violet: '#8b5cf6',
-        };
+            const colorMap = {
+              emerald: '#10b981',
+              blue: '#3b82f6',
+              purple: '#8b5cf6',
+              cyan: '#06b6d4',
+              green: '#22c55e',
+              orange: '#f59e0b',
+              amber: '#f59e0b',
+              violet: '#8b5cf6',
+            };
+            const stroke = colorMap[edge.color] || '#64748b';
+            const isActive = isEdgeActive(edge.from, edge.to);
 
-        const pathColor = colorMap[edge.color] || '#3b82f6';
-        const isActive = isEdgeActive(edge.from, edge.to);
+            // Calculate offsets so the line touches the circle edges, not centers
+            const fromNode = nodes.find(n => n.id === edge.from);
+            const toNode = nodes.find(n => n.id === edge.to);
+            const defaultRadius = 24; // h-12 => 48px diameter
+            const smallRadius = 16;   // h-8  => 32px diameter
+            const fromRadius = (fromNode?.type === 'start' || fromNode?.type === 'end') ? smallRadius : defaultRadius;
+            const toRadius = (toNode?.type === 'start' || toNode?.type === 'end') ? smallRadius : defaultRadius;
+            const dx = toPos.x - fromPos.x;
+            const dy = toPos.y - fromPos.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            const startX = fromPos.x + ux * fromRadius;
+            const startY = fromPos.y + uy * fromRadius;
+            const endX = toPos.x - ux * toRadius;
+            const endY = toPos.y - uy * toRadius;
+            const lineYOffset = -10; // raise lines slightly to align visually with circle centers
 
-        return (
-          <AnimatedBeam
-            key={`${edge.from}-${edge.to}-${index}`}
-            containerRef={containerRef}
-            fromRef={fromRef}
-            toRef={toRef}
-            pathColor={pathColor}
-            pathWidth={isActive ? 5 : 2}
-            pathOpacity={isActive ? 0.5 : 0.2}
-            duration={isActive ? 1.5 : 5}
-            curvature={20}
-            startXOffset={0}
-            startYOffset={0}
-            endXOffset={0}
-            endYOffset={0}
-            gradientStartColor={pathColor}
-            gradientStopColor={pathColor}
-            reverse={false}
-          />
-        );
-      })}
+            return (
+              <line
+                key={key}
+                x1={startX}
+                y1={startY + lineYOffset}
+                x2={endX}
+                y2={endY + lineYOffset}
+                stroke={stroke}
+                strokeWidth={isActive ? 4 : 2}
+                strokeOpacity={isActive ? 0.6 : 0.25}
+                markerEnd="url(#arrow)"
+              />
+            );
+          })}
+        </svg>
+      )}
 
-      {/* Legend */}
-      <div className="absolute bottom-2 left-2 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-md p-2 shadow-lg border border-gray-200 dark:border-gray-700">
-        <div className="text-[9px] font-bold mb-1.5 text-gray-800 dark:text-gray-200 uppercase tracking-wide">Status</div>
-        <div className="flex flex-col gap-1 text-[9px]">
-          <div className="flex items-center gap-1.5">
-            <div className="h-2 w-2 rounded-full bg-blue-500 ring-1 ring-blue-400 ring-opacity-50 shadow-md" style={{ animation: 'pulse-strong 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}></div>
-            <span className="text-gray-700 dark:text-gray-300 font-medium">Active</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-2 w-2 rounded-full bg-green-500 shadow-md"></div>
-            <span className="text-gray-700 dark:text-gray-300 font-medium">Completed</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600"></div>
-            <span className="text-gray-700 dark:text-gray-300 font-medium">Pending</span>
-          </div>
-        </div>
-      </div>
+      {/* Legend removed per requirement */}
     </div>
   );
 }

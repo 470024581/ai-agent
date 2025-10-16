@@ -22,6 +22,21 @@ export function HITLParameterPanel({
   const [validationErrors, setValidationErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Map internal node ids to friendly display names
+  const getDisplayNodeName = (id) => {
+    const map = {
+      chart_process_node: 'Chart Build',
+      sql_chart_node: 'SQL Chart',
+      sql_query_node: 'SQL Query',
+      router_node: 'Router',
+      rag_query_node: 'RAG Query',
+      llm_processing_node: 'LLM Process',
+      start_node: 'Start',
+      end_node: 'Complete',
+    };
+    return map[id] || id || '';
+  };
+
   // Debug: Log all props
   console.log('HITLParameterPanel props:', {
     isOpen,
@@ -41,19 +56,34 @@ export function HITLParameterPanel({
       console.log('📥 [FRONTEND-HITL] HITLParameterPanel currentState received:', currentState);
       console.log('📥 [FRONTEND-HITL] HITLParameterPanel currentState keys:', currentState ? Object.keys(currentState) : 'null');
       
-      // Initialize parameters with current state values - use complete state
+      // Robust extraction helpers
+      const pick = (obj, paths, fallback = undefined) => {
+        for (const p of paths) {
+          try {
+            const val = p.split('.').reduce((o, k) => (o ? o[k] : undefined), obj);
+            if (val !== undefined && val !== null && val !== '') return val;
+          } catch (_) { /* ignore */ }
+        }
+        return fallback;
+      };
+
+      // Derive sensible defaults when backend snapshot misses fields (common on interrupts)
+      const derivedQueryType = pick(currentState, ['query_type', 'input.query_type'],
+        nodeName === 'chart_process_node' || nodeName === 'sql_query_node' || nodeName === 'sql_chart_node' ? 'sql' : (nodeName === 'rag_query_node' ? 'rag' : ''));
+      const derivedSqlTaskType = pick(currentState, ['sql_task_type', 'input.sql_task_type'],
+        nodeName === 'chart_process_node' ? 'chart' : (nodeName === 'sql_query_node' ? 'query' : ''));
+
       const initialParams = {
-        user_input: currentState?.user_input || currentState?.query || '',
-        query_type: currentState?.query_type || '',
-        sql_task_type: currentState?.sql_task_type || '',
-        structured_data: currentState?.structured_data || null,
-        chart_config: currentState?.chart_config || null,
-        answer: currentState?.answer || '',
-        datasource: currentState?.datasource || null,
-        // Add any other fields that might be useful for debugging
-        execution_id: currentState?.execution_id || executionId || '',
-        hitl_status: currentState?.hitl_status || '',
-        hitl_node: currentState?.hitl_node || nodeName || '',
+        user_input: pick(currentState, ['user_input', 'query', 'input.user_input'], ''),
+        query_type: derivedQueryType,
+        sql_task_type: derivedSqlTaskType,
+        structured_data: pick(currentState, ['structured_data', 'input.structured_data', 'output.structured_data'], null),
+        chart_config: pick(currentState, ['chart_config', 'input.chart_config', 'output.chart_config'], null),
+        answer: pick(currentState, ['answer', 'input.answer', 'output.answer'], ''),
+        datasource: pick(currentState, ['datasource'], null),
+        execution_id: pick(currentState, ['execution_id'], executionId || ''),
+        hitl_status: pick(currentState, ['hitl_status'], ''),
+        hitl_node: pick(currentState, ['hitl_node'], nodeName || ''),
       };
       
       console.log('📊 [FRONTEND-HITL] HITLParameterPanel initialParams:', initialParams);
@@ -152,8 +182,8 @@ export function HITLParameterPanel({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
+      <Card className="w-full max-w-2xl max-h-[92vh]">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -171,27 +201,27 @@ export function HITLParameterPanel({
           </div>
         </CardHeader>
         
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-4 overflow-y-auto">
           {/* Execution Info */}
-          <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+          <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
             <div>
               <Label className="text-sm font-medium text-gray-600 dark:text-gray-400">Execution ID</Label>
               <p className="text-sm font-mono">{executionId}</p>
             </div>
             <div>
               <Label className="text-sm font-medium text-gray-600 dark:text-gray-400">Node</Label>
-              <p className="text-sm">{nodeName}</p>
+              <p className="text-sm">{getDisplayNodeName(nodeName)}</p>
             </div>
           </div>
 
           <Separator />
 
           {/* Parameter Adjustments */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <h3 className="text-lg font-semibold">Parameter Adjustments</h3>
             
             {/* User Input */}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="user_input">User Input</Label>
               <Textarea
                 id="user_input"
@@ -199,7 +229,7 @@ export function HITLParameterPanel({
                 onChange={(e) => handleParameterChange('user_input', e.target.value)}
                 placeholder="Enter your query..."
                 className={validationErrors.user_input ? 'border-red-500' : ''}
-                rows={3}
+                rows={2}
               />
               {validationErrors.user_input && (
                 <p className="text-sm text-red-500 flex items-center gap-1">
@@ -210,7 +240,7 @@ export function HITLParameterPanel({
             </div>
 
             {/* Query Type */}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="query_type">Query Type</Label>
               <select
                 id="query_type"
@@ -232,7 +262,7 @@ export function HITLParameterPanel({
 
             {/* SQL Task Type */}
             {parameters.query_type === 'sql' && (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="sql_task_type">SQL Task Type</Label>
                 <select
                   id="sql_task_type"
@@ -254,7 +284,7 @@ export function HITLParameterPanel({
             )}
 
             {/* Additional Parameters */}
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label htmlFor="additional_params">Additional Parameters (JSON)</Label>
               <Textarea
                 id="additional_params"
@@ -268,7 +298,7 @@ export function HITLParameterPanel({
                   }
                 }}
                 placeholder='{"key": "value"}'
-                rows={4}
+                rows={3}
                 className="font-mono text-sm"
               />
             </div>

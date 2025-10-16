@@ -115,42 +115,53 @@ function IntelligentAnalysis() {
   
   // LangGraph nodes and edges definition - optimized layout for better visual flow
   const langGraphNodes = [
-    // Layer 1: Start
-    { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 1, totalCols: 1, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
+    // Row 2 (middle): Start
+    { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 2, totalCols: 3, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
     
-    // Layer 2: Router
-    { id: 'router_node', name: 'Router', type: 'decision', layer: 2, col: 1, totalCols: 1, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
+    // Row 2 (middle): Router
+    { id: 'router_node', name: 'Router', type: 'decision', layer: 2, col: 2, totalCols: 3, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
     
-    // Layer 3: Path Split
-    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', layer: 3, col: 1, totalCols: 2, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
-    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 2, totalCols: 2, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
+    // Row 1 (top): SQL Classifier 与 Router 同层对齐
+    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', layer: 2, col: 1, totalCols: 3, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
     
-    // Layer 4: SQL Execution
-    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', layer: 4, col: 1, totalCols: 2, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
-    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 4, col: 2, totalCols: 2, description: 'Execute database query', icon: FaDatabase, color: 'green' },
+    // Row 3 (bottom): RAG Query
+    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 3, totalCols: 3, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
     
-    // Layer 5: Chart Processing
-    { id: 'chart_config_node', name: 'Chart Config', type: 'process', layer: 5, col: 1, totalCols: 2, description: 'Generate chart configuration', icon: FaCogs, color: 'amber' },
-    { id: 'chart_rendering_node', name: 'Chart Render', type: 'process', layer: 5, col: 2, totalCols: 2, description: 'Call QuickChart API', icon: FaChartLine, color: 'orange' },
+    // Row 1 (top): SQL Chart（与 SQL Query、RAG Query 同列）
+    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', layer: 3, col: 1, totalCols: 3, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
     
-    // Layer 6: LLM Convergence
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 6, col: 1, totalCols: 1, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
+    // Row 2 (middle): SQL Query（与 SQL Chart、RAG Query 同列）
+    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 3, col: 2, totalCols: 3, description: 'Execute database query', icon: FaDatabase, color: 'green' },
     
-    // Layer 7: End
-    { id: 'end_node', name: 'Complete', type: 'end', layer: 7, col: 1, totalCols: 1, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
+    // Row 1 (top): Chart Build（合并）
+    { id: 'chart_process_node', name: 'Chart Build', type: 'process', layer: 4, col: 1, totalCols: 3, description: 'Generate config and render chart', icon: FaChartLine, color: 'orange' },
+    
+    // Row 2 (middle): LLM Process
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 4, col: 2, totalCols: 3, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
+    
+    // Row 2 (middle): End
+    { id: 'end_node', name: 'Complete', type: 'end', layer: 5, col: 2, totalCols: 3, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
   ];
 
   const langGraphEdges = [
+    // Center lane
     { from: 'start_node', to: 'router_node', label: 'Initialize', color: 'emerald' },
+
+    // Lane 1 (SQL Chart flow)
     { from: 'router_node', to: 'sql_classifier_node', label: 'SQL Path', color: 'blue' },
-    { from: 'router_node', to: 'rag_query_node', label: 'RAG Path', color: 'purple' },
     { from: 'sql_classifier_node', to: 'sql_chart_node', label: 'Chart', color: 'orange' },
+    { from: 'sql_chart_node', to: 'chart_process_node', label: 'Build', color: 'orange' },
+    { from: 'chart_process_node', to: 'llm_processing_node', label: 'Result', color: 'orange' },
+
+    // Lane 2 (SQL Query flow)
     { from: 'sql_classifier_node', to: 'sql_query_node', label: 'Query', color: 'green' },
-    { from: 'sql_chart_node', to: 'chart_config_node', label: 'Config', color: 'amber' },
     { from: 'sql_query_node', to: 'llm_processing_node', label: 'Result', color: 'green' },
-    { from: 'chart_config_node', to: 'chart_rendering_node', label: 'Render', color: 'orange' },
-    { from: 'chart_rendering_node', to: 'llm_processing_node', label: 'Image', color: 'orange' },
+
+    // Lane 3 (RAG flow)
+    { from: 'router_node', to: 'rag_query_node', label: 'RAG Path', color: 'purple' },
     { from: 'rag_query_node', to: 'llm_processing_node', label: 'Documents', color: 'purple' },
+
+    // Converge to end
     { from: 'llm_processing_node', to: 'end_node', label: 'Response', color: 'emerald' }
   ];
 
@@ -1084,10 +1095,10 @@ function IntelligentAnalysis() {
          {/* Main content area - Two rows layout */}
         <div className="flex flex-col w-full gap-6" style={{height: 'calc(100vh - 2rem)'}}>
           {/* Top row: Query Input and Workflow Diagram - 1:2 ratio on large screens */}
-           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 flex-1">
+           <div className="grid grid-cols-1 lg:grid-cols-7 gap-6 flex-1">
              
              {/* Left: Query Input */}
-             <div className="space-y-4 h-full flex flex-col lg:col-span-2">
+            <div className="space-y-4 h-full flex flex-col lg:col-span-3">
                <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl flex-1">
              <CardContent className="px-6 pt-1 pb-6 space-y-6 h-full overflow-y-auto">
                              {/* Current data source display and switching */}
@@ -1243,7 +1254,7 @@ function IntelligentAnalysis() {
 
          
         {/* Right: Workflow Diagram */}
-         <div className="space-y-4 h-full flex flex-col lg:col-span-3">
+         <div className="space-y-4 h-full flex flex-col lg:col-span-4">
           {/* Flow chart */}
            <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl flex-1">
              <CardContent className="p-6 h-full flex flex-col">
@@ -1303,6 +1314,7 @@ function IntelligentAnalysis() {
                 const out = actualResult?.output;
                 if (Array.isArray(out)) {
                   for (const item of out) {
+                    if (item?.chart_process_node?.[key]) return item.chart_process_node[key];
                     if (item?.chart_rendering_node?.[key]) return item.chart_rendering_node[key];
                     if (item?.llm_processing_node?.[key]) return item.llm_processing_node[key];
                     if (item?.sql_chart_node?.[key]) return item.sql_chart_node[key];
@@ -1311,12 +1323,14 @@ function IntelligentAnalysis() {
                 return null;
               };
 
-              const chartImage = actualResult?.chart_rendering_node?.chart_image 
+              const chartImage = actualResult?.chart_process_node?.chart_image 
+                || actualResult?.chart_rendering_node?.chart_image 
                 || actualResult?.chart_image 
                 || actualResult?.input?.chart_image
                 || getFromOutput('chart_image')
                 || currentExecutionData?.chart_image;
-              const chartConfig = actualResult?.chart_rendering_node?.chart_config 
+              const chartConfig = actualResult?.chart_process_node?.chart_config 
+                || actualResult?.chart_rendering_node?.chart_config 
                 || actualResult?.chart_config 
                 || actualResult?.input?.chart_config
                 || getFromOutput('chart_config')
