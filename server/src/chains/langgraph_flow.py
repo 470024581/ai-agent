@@ -457,9 +457,20 @@ async def sql_query_node(state: GraphState) -> GraphState:
                 }
             }
         
+        # Force SQL branch to use built-in DEFAULT datasource (ID=1)
+        if datasource.get("type") != "default":
+            try:
+                from ..database.db_operations import get_datasource
+                builtin_ds = await get_datasource(1)
+                if builtin_ds:
+                    datasource = builtin_ds
+                    logger.info("SQL branch: switched to built-in DEFAULT datasource (ID=1)")
+            except Exception as _e:
+                logger.warning(f"SQL branch: failed to switch to DEFAULT datasource: {_e}")
+
         # Call SQL query logic with improved error handling
         result = await get_query_from_sqltable_datasource(
-            user_input, 
+            user_input,
             datasource
         )
         
@@ -551,6 +562,17 @@ async def sql_chart_node(state: GraphState) -> GraphState:
         user_input = state["user_input"]
         datasource = state["datasource"]
         
+        # Force SQL chart branch to use built-in DEFAULT datasource (ID=1)
+        if datasource.get("type") != "default":
+            try:
+                from ..database.db_operations import get_datasource
+                builtin_ds = await get_datasource(1)
+                if builtin_ds:
+                    datasource = builtin_ds
+                    logger.info("SQL chart branch: switched to built-in DEFAULT datasource (ID=1)")
+            except Exception as _e:
+                logger.warning(f"SQL chart branch: failed to switch to DEFAULT datasource: {_e}")
+
         # Call existing SQL query logic with chart context
         result = await get_answer_from_sqltable_datasource(user_input, datasource)
         
@@ -920,7 +942,7 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     else:
                         formatted_value = f"{value:,}"
                     
-                    response_lines.append(f"�?{category}: {formatted_value}")
+                    response_lines.append(f"• {category}: {formatted_value}")
                 
                 # Add insights for average/price queries
                 if 'average' in query_lower and 'price' in query_lower:
@@ -928,11 +950,11 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     highest = sorted_rows[0]
                     lowest = sorted_rows[-1]
                     response_lines.append(f"\nKey insights:")
-                    response_lines.append(f"�?Highest average price: {highest['category']} (${highest['value']:.2f})")
-                    response_lines.append(f"�?Lowest average price: {lowest['category']} (${lowest['value']:.2f})")
+                    response_lines.append(f"• Highest average price: {highest['category']} (${highest['value']:.2f})")
+                    response_lines.append(f"• Lowest average price: {lowest['category']} (${lowest['value']:.2f})")
                     
                     price_diff = highest['value'] - lowest['value']
-                    response_lines.append(f"�?Price range: ${price_diff:.2f}")
+                    response_lines.append(f"• Price range: ${price_diff:.2f}")
                 
                 result = "\n".join(response_lines)
                 logger.info(f"Category-value response generated: {result[:200]}...")
@@ -1075,12 +1097,38 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             return generate_fallback_chart_config(data, user_input)
         
         # Generate chart configuration based on LLM analysis results
+        # Fallback chart type detection if LLM didn't specify correctly
+        detected_type = chart_analysis.get("chart_type", "bar")
+        user_input_lower = user_input.lower()
+        
+        if "pie chart" in user_input_lower or "pie" in user_input_lower:
+            detected_type = "pie"
+        elif "line chart" in user_input_lower or "line" in user_input_lower:
+            detected_type = "line"
+        elif "bar chart" in user_input_lower or "bar" in user_input_lower:
+            detected_type = "bar"
+        
+        # Intelligent Y-axis label detection
+        y_axis_label = chart_analysis.get("y_axis_label", "Value")
+        if not y_axis_label or y_axis_label == "Value":
+            # Try to infer meaningful Y-axis label from user query and data
+            if "sales" in user_input_lower and ("trend" in user_input_lower or "monthly" in user_input_lower):
+                y_axis_label = "Sales Amount ($)"
+            elif "sales" in user_input_lower and "proportion" in user_input_lower:
+                y_axis_label = "Sales Proportion (%)"
+            elif "count" in user_input_lower or "number" in user_input_lower:
+                y_axis_label = "Count"
+            elif "amount" in user_input_lower or "revenue" in user_input_lower:
+                y_axis_label = "Amount ($)"
+            elif "price" in user_input_lower:
+                y_axis_label = "Price ($)"
+        
         chart_config = {
-            "type": chart_analysis.get("chart_type", "bar"),
+            "type": detected_type,
             "data": {
                 "labels": [],
                 "datasets": [{
-                    "label": chart_analysis.get("y_axis_label", "Data"),
+                    "label": y_axis_label,
                     "data": [],
                     "backgroundColor": [
                         "rgba(54, 162, 235, 0.6)",
@@ -1127,7 +1175,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
                         "beginAtZero": True,
                         "title": {
                             "display": True,
-                            "text": chart_analysis.get("y_axis_label", "Value")
+                            "text": y_axis_label
                         }
                     },
                     "x": {
@@ -1692,12 +1740,37 @@ def format_time_label(time_key: str, time_grouping: str) -> str:
 
 def generate_fallback_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, Any]:
     """Generate fallback chart configuration (simplified version)"""
+    
+    # Detect chart type from user input
+    user_input_lower = user_input.lower()
+    chart_type = "bar"  # default
+    
+    if "pie chart" in user_input_lower or "pie" in user_input_lower:
+        chart_type = "pie"
+    elif "line chart" in user_input_lower or "line" in user_input_lower:
+        chart_type = "line"
+    elif "bar chart" in user_input_lower or "bar" in user_input_lower:
+        chart_type = "bar"
+    
+    # Intelligent Y-axis label detection for fallback
+    y_axis_label = "Data"
+    if "sales" in user_input_lower and ("trend" in user_input_lower or "monthly" in user_input_lower):
+        y_axis_label = "Sales Amount ($)"
+    elif "sales" in user_input_lower and "proportion" in user_input_lower:
+        y_axis_label = "Sales Proportion (%)"
+    elif "count" in user_input_lower or "number" in user_input_lower:
+        y_axis_label = "Count"
+    elif "amount" in user_input_lower or "revenue" in user_input_lower:
+        y_axis_label = "Amount ($)"
+    elif "price" in user_input_lower:
+        y_axis_label = "Price ($)"
+    
     chart_config = {
-        "type": "bar",
+        "type": chart_type,
         "data": {
             "labels": ["No Data"],
             "datasets": [{
-                "label": "Data",
+                "label": y_axis_label,
                 "data": [0],
                 "backgroundColor": ["rgba(54, 162, 235, 0.6)"],
                 "borderColor": ["rgba(54, 162, 235, 1)"],

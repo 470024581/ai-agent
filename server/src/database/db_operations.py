@@ -38,6 +38,103 @@ def initialize_database_schema():
     cursor = conn.cursor()
     
     try:
+        # Helper: ensure a column exists, if not then add it
+        def ensure_column(table: str, column: str, add_sql: str):
+            try:
+                cursor.execute(f"PRAGMA table_info({table})")
+                cols = [row[1] for row in cursor.fetchall()]
+                if column not in cols:
+                    cursor.execute(add_sql)
+            except Exception as _e:
+                print(f"[DB-SQLite] Warning ensuring column {table}.{column}: {_e}")
+
+        # Create ERP business tables first
+        # Customers table: Stores customer information
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS customers (
+                customer_id TEXT PRIMARY KEY,           -- Customer unique identifier
+                customer_name TEXT NOT NULL,            -- Customer company/person name
+                contact_person TEXT,                    -- Primary contact person name
+                phone TEXT,                             -- Contact phone number
+                email TEXT,                             -- Contact email address
+                address TEXT,                           -- Customer address
+                customer_type TEXT NOT NULL DEFAULT 'regular', -- Customer type: VIP, regular, wholesale
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Customer registration date
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP  -- Last update timestamp
+            )
+        ''')
+
+        # Backfill missing columns for legacy databases
+        ensure_column("customers", "updated_at", "ALTER TABLE customers ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        
+        # Products table: Stores product information
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                product_id TEXT PRIMARY KEY,            -- Product unique identifier
+                product_name TEXT NOT NULL,             -- Product name
+                category TEXT NOT NULL,                 -- Product category
+                subcategory TEXT,                       -- Product subcategory
+                unit_price REAL NOT NULL,               -- Unit price in currency
+                cost_price REAL,                        -- Cost price for profit calculation
+                description TEXT,                       -- Product description
+                supplier TEXT,                          -- Product supplier
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Product creation date
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP  -- Last update timestamp
+            )
+        ''')
+        
+        # Orders table: Stores order information
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id TEXT PRIMARY KEY,              -- Order unique identifier
+                customer_id TEXT NOT NULL,              -- Customer ID (foreign key)
+                order_date DATETIME NOT NULL,           -- Order placement date
+                total_amount REAL NOT NULL,             -- Total order amount
+                status TEXT NOT NULL DEFAULT 'pending', -- Order status: pending, confirmed, shipped, delivered, cancelled
+                payment_method TEXT,                    -- Payment method: cash, card, transfer, etc.
+                shipping_address TEXT,                 -- Shipping address
+                notes TEXT,                             -- Order notes
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Order creation timestamp
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Last update timestamp
+                FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
+            )
+        ''')
+        
+        # Sales table: Stores sales transaction records (enhanced with order and customer links)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sales (
+                sale_id TEXT PRIMARY KEY,               -- Sale unique identifier
+                order_id TEXT,                          -- Order ID (foreign key)
+                customer_id TEXT,                       -- Customer ID (foreign key)
+                product_id TEXT NOT NULL,               -- Product ID (foreign key)
+                product_name TEXT NOT NULL,             -- Product name (denormalized for performance)
+                quantity_sold INTEGER NOT NULL,         -- Quantity sold
+                price_per_unit REAL NOT NULL,           -- Price per unit at time of sale
+                total_amount REAL NOT NULL,             -- Total amount for this sale line
+                sale_date DATETIME NOT NULL,            -- Sale transaction date
+                salesperson TEXT,                       -- Salesperson name
+                discount_amount REAL DEFAULT 0,         -- Discount applied
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Sale creation timestamp
+                FOREIGN KEY (order_id) REFERENCES orders (order_id),
+                FOREIGN KEY (customer_id) REFERENCES customers (customer_id),
+                FOREIGN KEY (product_id) REFERENCES products (product_id)
+            )
+        ''')
+        
+        # Inventory table: Stores current stock levels
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS inventory (
+                product_id TEXT PRIMARY KEY,            -- Product ID (foreign key)
+                stock_level INTEGER NOT NULL DEFAULT 0, -- Current stock quantity
+                min_stock_level INTEGER DEFAULT 10,     -- Minimum stock level for reorder
+                max_stock_level INTEGER DEFAULT 1000,   -- Maximum stock level
+                last_updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Last stock update
+                last_restocked DATETIME,                -- Last restock date
+                warehouse_location TEXT,                 -- Warehouse location
+                FOREIGN KEY (product_id) REFERENCES products (product_id)
+            )
+        ''')
+        
         # Create datasources table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS datasources (
@@ -95,17 +192,79 @@ def initialize_database_schema():
                 UNIQUE(datasource_id, table_name)
             )
         ''')
+
+        # HITL tables (ensure create or backfill missing columns before creating indexes)
         
-        # Create indexes for better performance
+        # Create HITL tables
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hitl_interrupts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id TEXT NOT NULL UNIQUE,
+                user_input TEXT NOT NULL,
+                datasource_id INTEGER,
+                interrupt_node TEXT NOT NULL,
+                interrupt_reason TEXT,
+                state_data TEXT NOT NULL, -- JSON serialized complete state
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                status TEXT NOT NULL DEFAULT 'interrupted', -- interrupted, resumed, cancelled
+                FOREIGN KEY (datasource_id) REFERENCES datasources(id)
+            )
+        ''')
+
+        # Backfill missing columns on legacy hitl_interrupts
+        ensure_column("hitl_interrupts", "created_at", "ALTER TABLE hitl_interrupts ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        ensure_column("hitl_interrupts", "updated_at", "ALTER TABLE hitl_interrupts ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        ensure_column("hitl_interrupts", "status", "ALTER TABLE hitl_interrupts ADD COLUMN status TEXT NOT NULL DEFAULT 'interrupted'")
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hitl_parameter_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                interrupt_id INTEGER NOT NULL,
+                parameter_name TEXT NOT NULL,
+                old_value TEXT,
+                new_value TEXT NOT NULL,
+                adjustment_reason TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (interrupt_id) REFERENCES hitl_interrupts(id) ON DELETE CASCADE
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hitl_execution_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                execution_id TEXT NOT NULL,
+                operation_type TEXT NOT NULL, -- pause, interrupt, resume, cancel
+                node_name TEXT,
+                parameters TEXT, -- JSON serialized parameters
+                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                user_action TEXT, -- user_initiated, system_initiated
+                FOREIGN KEY (execution_id) REFERENCES hitl_interrupts(execution_id)
+            )
+        ''')
+        
+        # Create indexes for better performance (guarded)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_files_datasource_id ON files(datasource_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_vector_chunks_file_id ON vector_chunks(file_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasources_is_active ON datasources(is_active)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasource_tables_datasource_id ON datasource_tables(datasource_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_execution_id ON hitl_interrupts(execution_id)')
+        try:
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_status ON hitl_interrupts(status)')
+        except Exception as _e:
+            print(f"[DB-SQLite] Warning creating index on hitl_interrupts.status: {_e}")
+        try:
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_created_at ON hitl_interrupts(created_at)')
+        except Exception as _e:
+            print(f"[DB-SQLite] Warning creating index on hitl_interrupts.created_at: {_e}")
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_parameter_adjustments_interrupt_id ON hitl_parameter_adjustments(interrupt_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_execution_history_execution_id ON hitl_execution_history(execution_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_execution_history_timestamp ON hitl_execution_history(timestamp)')
         
         # Insert default datasource if not exists
         cursor.execute('''
             INSERT OR IGNORE INTO datasources (id, name, description, type, is_active, file_count)
-            VALUES (1, 'Default', 'Default system data (products, inventory, sales)', 'default', 1, 0)
+            VALUES (1, 'Default ERP System', 'Built-in ERP system with customers, products, orders, sales, and inventory data', 'default', 1, 0)
         ''')
         
         conn.commit()
@@ -286,8 +445,9 @@ async def delete_datasource(datasource_id: int) -> bool:
             except Exception as e:
                 print(f"[DB-SQLite] Error deleting physical file {file_path}: {e}")
         
-        # If this is a SQL_TABLE_FROM_FILE datasource, we should also drop the dynamically created table(s)
-        if datasource['type'] == DataSourceType.SQL_TABLE_FROM_FILE:
+        # Legacy support: if this was a SQL_TABLE_FROM_FILE datasource, drop its dynamic tables
+        ds_type_str = str(datasource.get('type', '')).lower()
+        if ds_type_str == 'sql_table_from_file':
             tables = await get_datasource_tables(datasource_id)
             for table_name in tables:
                 try:
@@ -880,11 +1040,132 @@ def cleanup_old_hitl_data(max_age_hours: int = 24) -> int:
 # ================== Initialization Function ==================
 
 def initialize_database():
-    """Main database initialization function"""
+    """Initialize the database with schema and demo data."""
+    print("[DB-SQLite] Starting database initialization...")
+    
+    # Initialize schema first
+    initialize_database_schema()
+    
+    # Check if demo data already exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
     try:
-        print("[DB-SQLite] Starting database initialization...")
-        initialize_database_schema()
+        # Check if customers table has data
+        cursor.execute("SELECT COUNT(*) FROM customers")
+        customer_count = cursor.fetchone()[0]
+        
+        if customer_count == 0:
+            print("[DB-SQLite] No demo data found, generating demo data...")
+            
+            # Import and run the demo data generation script
+            import subprocess
+            import sys
+            from pathlib import Path
+            
+            # Get the path to the demo data generation script
+            script_path = Path(__file__).resolve().parent.parent.parent / "scripts" / "generate_demo_data.py"
+            
+            if script_path.exists():
+                try:
+                    # Run the demo data generation script
+                    result = subprocess.run([sys.executable, str(script_path)], 
+                                         capture_output=True, text=True, cwd=str(script_path.parent.parent))
+                    
+                    if result.returncode == 0:
+                        print("[DB-SQLite] Demo data generated successfully")
+                        print(result.stdout)
+                    else:
+                        print(f"[DB-SQLite] Error generating demo data: {result.stderr}")
+                        # Fallback: create minimal demo data
+                        create_minimal_demo_data(cursor)
+                except Exception as e:
+                    print(f"[DB-SQLite] Error running demo data script: {e}")
+                    # Fallback: create minimal demo data
+                    create_minimal_demo_data(cursor)
+            else:
+                print("[DB-SQLite] Demo data script not found, creating minimal demo data...")
+                create_minimal_demo_data(cursor)
+        else:
+            print(f"[DB-SQLite] Demo data already exists ({customer_count} customers)")
+        
+        conn.commit()
         print("[DB-SQLite] Database initialization completed successfully")
+        
     except Exception as e:
         print(f"[DB-SQLite] Error during database initialization: {e}")
-        raise 
+        conn.rollback()
+    finally:
+        conn.close()
+
+def create_minimal_demo_data(cursor):
+    """Create minimal demo data as fallback."""
+    print("[DB-SQLite] Creating minimal demo data...")
+    
+    # Insert sample customers
+    customers = [
+        ('CUST_001', 'ABC Corporation', 'John Smith', '+1-555-0101', 'john@abc.com', '123 Main St, New York, NY', 'VIP'),
+        ('CUST_002', 'XYZ Ltd', 'Jane Doe', '+1-555-0102', 'jane@xyz.com', '456 Oak Ave, Los Angeles, CA', 'regular'),
+        ('CUST_003', 'Tech Solutions Inc', 'Bob Johnson', '+1-555-0103', 'bob@tech.com', '789 Pine St, Chicago, IL', 'wholesale')
+    ]
+    
+    cursor.executemany('''
+        INSERT OR REPLACE INTO customers 
+        (customer_id, customer_name, contact_person, phone, email, address, customer_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [(c[0], c[1], c[2], c[3], c[4], c[5], c[6], '2022-01-01 00:00:00') for c in customers])
+    
+    # Insert sample products
+    products = [
+        ('PROD_001', 'iPhone Pro', 'Electronics', 'Smartphones', 999.99, 600.00, 'Latest iPhone model', 'Apple Inc'),
+        ('PROD_002', 'MacBook Pro', 'Electronics', 'Laptops', 1999.99, 1200.00, 'Professional laptop', 'Apple Inc'),
+        ('PROD_003', 'Windows 11 Pro', 'Software', 'Operating Systems', 199.99, 50.00, 'Professional OS', 'Microsoft Corp')
+    ]
+    
+    cursor.executemany('''
+        INSERT OR REPLACE INTO products 
+        (product_id, product_name, category, subcategory, unit_price, cost_price, description, supplier, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], '2022-01-01 00:00:00') for p in products])
+    
+    # Insert sample orders
+    orders = [
+        ('ORD_001', 'CUST_001', '2022-06-15 10:30:00', 2999.98, 'delivered', 'Credit Card', '123 Main St, New York, NY', 'Priority shipping'),
+        ('ORD_002', 'CUST_002', '2022-07-20 14:15:00', 199.99, 'shipped', 'Bank Transfer', '456 Oak Ave, Los Angeles, CA', 'Standard shipping'),
+        ('ORD_003', 'CUST_003', '2022-08-10 09:45:00', 999.99, 'confirmed', 'Check', '789 Pine St, Chicago, IL', 'Bulk order')
+    ]
+    
+    cursor.executemany('''
+        INSERT OR REPLACE INTO orders 
+        (order_id, customer_id, order_date, total_amount, status, payment_method, shipping_address, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[2], o[2]) for o in orders])
+    
+    # Insert sample sales
+    sales = [
+        ('SALE_001', 'ORD_001', 'CUST_001', 'PROD_001', 'iPhone Pro', 1, 999.99, 999.99, '2022-06-15 10:30:00', 'Alice Johnson', 0.00),
+        ('SALE_002', 'ORD_001', 'CUST_001', 'PROD_002', 'MacBook Pro', 1, 1999.99, 1999.99, '2022-06-15 10:30:00', 'Alice Johnson', 0.00),
+        ('SALE_003', 'ORD_002', 'CUST_002', 'PROD_003', 'Windows 11 Pro', 1, 199.99, 199.99, '2022-07-20 14:15:00', 'Bob Smith', 0.00),
+        ('SALE_004', 'ORD_003', 'CUST_003', 'PROD_001', 'iPhone Pro', 1, 999.99, 999.99, '2022-08-10 09:45:00', 'Carol Davis', 0.00)
+    ]
+    
+    cursor.executemany('''
+        INSERT OR REPLACE INTO sales 
+        (sale_id, order_id, customer_id, product_id, product_name, quantity_sold, price_per_unit, total_amount, sale_date, salesperson, discount_amount, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[8]) for s in sales])
+    
+    # Insert sample inventory
+    inventory = [
+        ('PROD_001', 50, 10, 100, '2022-01-01 00:00:00', '2022-01-01 00:00:00', 'Warehouse 1'),
+        ('PROD_002', 25, 5, 50, '2022-01-01 00:00:00', '2022-01-01 00:00:00', 'Warehouse 1'),
+        ('PROD_003', 1000, 100, 2000, '2022-01-01 00:00:00', '2022-01-01 00:00:00', 'Warehouse 2')
+    ]
+    
+    cursor.executemany('''
+        INSERT OR REPLACE INTO inventory 
+        (product_id, stock_level, min_stock_level, max_stock_level, last_updated, last_restocked, warehouse_location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', inventory)
+    
+    print("[DB-SQLite] Minimal demo data created successfully") 

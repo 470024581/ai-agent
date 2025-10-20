@@ -27,21 +27,19 @@ function DataSourceManager() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [alert, setAlertMessage] = useState(null);
   const [pollingFileId, setPollingFileId] = useState(null);
-  const [sampleFiles, setSampleFiles] = useState([]);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const [newDatasource, setNewDatasource] = useState({
-    name: '',
-    description: '',
-    type: 'hybrid'
+  const [newDatasource, setNewDatasource] = useState({ 
+    name: '', 
+    description: '', 
+    type: 'knowledge_base' 
   });
 
   const dismissAlert = () => setAlertMessage(null);
 
   useEffect(() => {
     loadDatasources();
-    loadSampleFiles();
   }, []);
 
   const loadDatasources = async () => {
@@ -60,22 +58,6 @@ function DataSourceManager() {
       setAlertMessage({ type: 'danger', message: t('networkErrorRetry') });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadSampleFiles = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/sample-data-files`);
-      const response = await res.json();
-      if (response.success) {
-        setSampleFiles(response.data || []);
-      } else {
-        console.error("Failed to load sample files:", response.error);
-        setAlertMessage({ type: 'warning', message: t('sampleFiles.loadFailed') });
-      }
-    } catch (error) {
-      console.error("Network error loading sample files:", error);
-      setAlertMessage({ type: 'warning', message: t('sampleFiles.networkError') });
     }
   };
 
@@ -218,16 +200,10 @@ function DataSourceManager() {
     }
 
     const fileExtension = file.name.split('.').pop().toLowerCase();
-    let allowedTypes = [];
-    let typeErrorMessage = '';
-
-    if (selectedDatasource.type === 'sql_table_from_file') {
-        allowedTypes = ['csv', 'xlsx'];
-        typeErrorMessage = t('unsupportedFileTypeSQL', { allowedTypes: allowedTypes.join(', ') });
-    } else { // For knowledge_base and other potential future types that allow uploads
-        allowedTypes = ['pdf', 'txt', 'docx', 'csv', 'xlsx'];
-        typeErrorMessage = t('unsupportedFileType', { allowedTypes: allowedTypes.join(', ') });
-    }
+    
+    // Only document types are supported now
+    const allowedTypes = ['pdf', 'txt', 'docx'];
+    const typeErrorMessage = t('unsupportedFileTypeDoc', { allowedTypes: allowedTypes.join(', ') });
     
     if (!allowedTypes.includes(fileExtension)) {
       setAlertMessage({ 
@@ -381,15 +357,15 @@ function DataSourceManager() {
   
   const getTypeLabel = (type) => {
     switch (type) {
+      case 'knowledge_base':
+        return t('dataSourceType.knowledgeBase');
       case 'hybrid':
         return t('dataSourceType.hybrid');
+      case 'default':
+        return t('dataSourceType.default');
       default:
         return t('unknownType');
     }
-  };
-
-  const handleDownloadSampleFile = (filename) => {
-    window.location.href = `${API_BASE_URL}/sample-data-files/${filename}`;
   };
 
   if (loading) {
@@ -404,13 +380,13 @@ function DataSourceManager() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold flex items-center bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-          <FaDatabase className="mr-3 text-purple-300" />
+        <h2 className="text-3xl font-bold flex items-center text-gray-800">
+          <FaDatabase className="mr-3 text-indigo-500" />
           {t('dataSourceManagement')}
         </h2>
         <Button 
           onClick={() => { dismissAlert(); setShowCreateModal(true); }}
-          className="bg-gradient-to-r from-purple-300 to-pink-300 hover:from-purple-400 hover:to-pink-400 text-white shadow-lg transition-all duration-300 transform hover:scale-105"
+          className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-colors duration-200"
         >
           <FaPlus className="mr-2 h-4 w-4" />
           {t('createDataSource')}
@@ -431,8 +407,8 @@ function DataSourceManager() {
         </Alert>
       )}
 
-      <Card className="shadow-xl border-0 bg-gradient-to-br from-purple-50 to-pink-50">
-        <CardHeader className="bg-gradient-to-r from-purple-200 to-pink-200 text-gray-700 rounded-t-lg">
+      <Card className="shadow-xl border border-gray-100 bg-white/70">
+        <CardHeader className="bg-white/80 text-gray-700 rounded-t-lg border-b border-gray-100">
           <CardTitle className="flex items-center text-xl">
             <FaDatabase className="mr-3 h-7 w-7" />
             {t('dataSourceList')}
@@ -519,40 +495,13 @@ function DataSourceManager() {
       </Card>
 
       {/* Sample Data Files Section */}
-      {sampleFiles.length > 0 && (
-        <Card className="shadow-xl border-0 bg-gradient-to-br from-orange-50 to-yellow-50">
-          <CardHeader className="bg-gradient-to-r from-orange-200 to-yellow-200 text-gray-700 rounded-t-lg">
-            <CardTitle className="flex items-center text-xl">
-              <FaFile className="mr-3 h-7 w-7" />
-              {t('sampleFiles.title')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-6">
-            <p className="text-gray-600 mb-4 text-base">{t('sampleFiles.description')}</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-              {sampleFiles.map(file => (
-                <Button 
-                  key={file.filename}
-                  variant="outline" 
-                  className="w-full border-orange-200 text-orange-500 hover:bg-orange-50 hover:border-orange-300 transition-all" 
-                  onClick={() => handleDownloadSampleFile(file.filename)}
-                >
-                  <FaFile className="mr-2 h-4 w-4" />
-                  {t('sampleFiles.downloadButton', { year: file.year })}
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <Dialog open={showCreateModal} onOpenChange={(open) => { if (!open) { setShowCreateModal(false); dismissAlert(); } }}>
         <DialogPortal>
           <DialogOverlay className="bg-black/50 backdrop-blur-sm" />
-          <DialogContent className="sm:max-w-[600px] bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50">
+          <DialogContent className="sm:max-w-[600px] bg-white/90">
             <DialogHeader className="border-b border-purple-200 pb-6">
-              <DialogTitle className="text-2xl font-bold flex items-center text-transparent bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text">
-                <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center mr-3">
+              <DialogTitle className="text-2xl font-bold flex items-center text-gray-800">
+                <div className="w-8 h-8 bg-gray-200 rounded-lg flex items-center justify-center mr-3">
                   <FaPlus className="h-4 w-4 text-white" />
                 </div>
                 {t('createNewDataSource')}
@@ -603,32 +552,8 @@ function DataSourceManager() {
                     className="border-2 border-purple-200 focus:border-purple-400 focus:ring-purple-300 rounded-xl text-base transition-all duration-200"
                   />
                 </div>
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-2">
-                    <FaCheck className="h-4 w-4 text-purple-500" />
-                    <Label htmlFor="datasourceType" className="text-base font-semibold text-gray-700">{t('type')}</Label>
-                    <span className="text-red-500">*</span>
-                  </div>
-                  <Select value={newDatasource.type} onValueChange={(value) => setNewDatasource({ ...newDatasource, type: value })}>
-                    <SelectTrigger className="border-2 border-purple-200 focus:border-purple-400 focus:ring-purple-300 rounded-xl h-12 text-base transition-all duration-200">
-                      <SelectValue placeholder={t('selectType')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="hybrid">{t('dataSourceType.hybrid')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  
-                  <div className="mt-4 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl shadow-sm">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <FaLightbulb className="h-4 w-4 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-gray-800 mb-2">{t('hybridDataSourceDescription')}</h4>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                {/* RAG only: hide type selection and intro */}
+                <input type="hidden" value={newDatasource.type} />
                 <DialogFooter className="pt-6 border-t border-purple-200 space-x-3">
                   <Button 
                     variant="outline" 
@@ -639,12 +564,15 @@ function DataSourceManager() {
                   </Button>
                   <Button 
                     type="submit"
-                    className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white px-8 py-2 rounded-xl shadow-lg transition-all duration-200 transform hover:scale-105"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-2 rounded-xl shadow-lg transition-all duration-200"
                   >
                     <FaPlus className="mr-2 h-4 w-4" />
                     {t('createDataSource')}
                   </Button>
                 </DialogFooter>
+                <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                  {t('dataSource.ragHintShort') || 'Document RAG data source. Upload PDF/DOCX/TXT and query via RAG.'}
+                </div>
               </form>
             </div>
           </DialogContent>
@@ -655,12 +583,12 @@ function DataSourceManager() {
         <DialogPortal>
           <DialogOverlay className="bg-black/50 backdrop-blur-sm" />
           <DialogContent 
-            className="!max-w-none w-[60vw] h-[80vh] flex flex-col bg-gradient-to-br from-orange-50 to-yellow-50 p-0" 
+            className="!max-w-none w-[60vw] h-[80vh] flex flex-col bg-white p-0 border border-gray-100" 
             style={{ width: '60vw', maxWidth: 'none', height: '80vh' }}
           >
-            <DialogHeader className="flex-shrink-0 border-b border-orange-200 pb-4 px-6 pt-6">
-              <DialogTitle className="text-xl font-bold flex items-center text-transparent bg-gradient-to-r from-orange-600 to-yellow-600 bg-clip-text">
-                <div className="w-6 h-6 bg-gradient-to-r from-orange-500 to-yellow-500 rounded-lg flex items-center justify-center mr-3">
+            <DialogHeader className="flex-shrink-0 border-b border-gray-100 pb-4 px-6 pt-6 bg-white/80">
+              <DialogTitle className="text-xl font-bold flex items-center text-gray-800">
+                <div className="w-6 h-6 bg-gray-200 rounded-lg flex items-center justify-center mr-3">
                   <FaFile className="h-4 w-4 text-white" />
                 </div>
                 {t('manageFilesFor')} {selectedDatasource ? `"${selectedDatasource.name}"` : ''}
@@ -788,10 +716,10 @@ function DataSourceManager() {
       <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
         <DialogPortal>
           <DialogOverlay className="bg-black/50 backdrop-blur-sm" />
-          <DialogContent className="sm:max-w-[500px] bg-gradient-to-br from-red-50 to-pink-50">
+          <DialogContent className="sm:max-w-[500px] bg-white/90">
             <DialogHeader className="border-b border-red-200 pb-6">
               <DialogTitle className="text-xl font-bold flex items-center text-red-600">
-                <div className="w-8 h-8 bg-gradient-to-r from-red-500 to-red-600 rounded-lg flex items-center justify-center mr-3">
+                <div className="w-8 h-8 bg-gray-200 rounded-lg flex items-center justify-center mr-3">
                   <FaExclamationTriangle className="h-4 w-4 text-white" />
                 </div>
                 {deleteTarget?.type === 'datasource' ? t('deleteConfirmation.datasourceTitle') : t('deleteConfirmation.fileTitle')}
@@ -814,7 +742,7 @@ function DataSourceManager() {
                       : t('deleteConfirmation.fileMessage', { name: deleteTarget?.name })
                     }
                   </p>
-                  <div className="p-4 bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-200 rounded-xl">
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
                     <div className="flex items-center">
                       <FaExclamationTriangle className="h-5 w-5 text-yellow-600 mr-3" />
                       <span className="text-sm text-yellow-800 font-medium">

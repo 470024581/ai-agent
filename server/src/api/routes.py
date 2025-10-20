@@ -53,52 +53,11 @@ router = APIRouter(tags=["Smart  API"])
 UPLOAD_DIR = DATA_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-SAMPLE_DATA_DIR = DATA_DIR / "sample_sales"
-# Ensure sample data directory exists (though generator script also does this)
-SAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 class IntelligentAnalysisRequest(BaseModel):
     """Request model for intelligent analysis endpoint"""
     query: str
     datasource_id: int
     client_id: str
-
-# ==================== Sample Data API ======================
-
-@router.get("/api/v1/sample-data-files", summary="List Sample Sales Data CSV Files")
-async def list_sample_data_files():
-    """Lists available sample sales data CSV files."""
-    try:
-        files = []
-        if SAMPLE_DATA_DIR.exists() and SAMPLE_DATA_DIR.is_dir():
-            for item in os.listdir(SAMPLE_DATA_DIR):
-                if item.startswith("sample_sales_") and item.endswith(".csv"):
-                    files.append({
-                        "filename": item,
-                        "year": item.replace("sample_sales_", "").replace(".csv", "")
-                    })
-        # Sort by year if possible
-        files.sort(key=lambda x: x.get("year", ""))
-        return {"success": True, "data": files}
-    except Exception as e:
-        return {"success": False, "error": f"Failed to list sample data files: {str(e)}", "data": []}
-
-@router.get("/api/v1/sample-data-files/{filename}", summary="Download Sample Sales Data CSV File")
-async def download_sample_data_file(filename: str):
-    """Downloads a specific sample sales data CSV file."""
-    try:
-        if not (filename.startswith("sample_sales_") and filename.endswith(".csv") and ".." not in filename):
-            raise HTTPException(status_code=400, detail="Invalid filename requested.")
-            
-        file_path = SAMPLE_DATA_DIR / filename
-        if not file_path.is_file():
-            raise HTTPException(status_code=404, detail="Sample data file not found.")
-        
-        return FileResponse(file_path, media_type='text/csv', filename=filename)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not download file: {str(e)}")
 
 # ==================== Data Source Management API ====================
 
@@ -358,14 +317,11 @@ async def upload_file(
             content = await file.read()
             await f.write(content)
 
-        # Determine file type
+        # Determine file type (only document types supported)
         file_type_mapping = {
             '.pdf': FileType.PDF,
             '.docx': FileType.DOCX,
             '.doc': FileType.DOCX,
-            '.csv': FileType.CSV,
-            '.xlsx': FileType.XLSX,
-            '.xls': FileType.XLSX,
             '.txt': FileType.TEXT
         }
         
@@ -478,15 +434,15 @@ async def query_endpoint(request: QueryRequest):
         ds_id_for_response = active_datasource_dict['id'] if active_datasource_dict else 1
         
         query_type_for_agent = intent['type']
-        # Default routing logic based on intent and datasource type
-        if active_datasource_dict and active_datasource_dict['type'] != DataSourceType.DEFAULT.value:
-            # If custom data source is active, prioritize RAG or SQL Agent based on its type
-            if active_datasource_dict['type'] == DataSourceType.SQL_TABLE_FROM_FILE.value:
-                query_type_for_agent = "sql_agent"
-            else: # KNOWLEDGE_BASE or other future non-default types
-                query_type_for_agent = "rag"
-        elif intent['type'] not in ["sales", "inventory", "report"]:
-             # If default  and intent is unclear, fallback to general  / sales
+        # Intelligent routing logic based on intent
+        if intent['type'] in ["sales", "inventory", "product", "order", "customer", "report"]:
+            # Business data queries use built-in ERP database
+            query_type_for_agent = "sales"  # Use sales agent for all business data queries
+        elif active_datasource_dict and active_datasource_dict['type'] in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value]:
+            # Document queries use active document datasource
+            query_type_for_agent = "rag"
+        else:
+            # Default fallback to sales for business queries
             query_type_for_agent = "sales"
 
         result = await get_answer_from(request.query, query_type_for_agent, active_datasource=active_datasource_dict)
@@ -526,27 +482,12 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
         ds_type = datasource.get('type')
         ds_name = datasource.get('name', 'Unknown')
         
-        # If it's a DEFAULT datasource without proper configuration, provide guidance
+        # If it's a DEFAULT datasource, use built-in ERP data
         if ds_type == DataSourceType.DEFAULT.value:
-            # Default datasources should not be used for SQL queries anymore
-            error_msg = (
-                f"The active data source '{ds_name}' is a default data source that doesn't support queries. "
-                "Please create a new data source by uploading CSV/Excel files for SQL queries or "
-                "TXT/PDF/Word documents for knowledge-based queries, then activate it."
-            )
-            raise HTTPException(status_code=400, detail=error_msg)
-        
-        # For SQL_TABLE_FROM_FILE datasources, check if they have a proper table
-        if ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value and not datasource.get('db_table_name'):
-            error_msg = (
-                f"The active data source '{ds_name}' is configured for SQL queries but doesn't have "
-                "an associated database table. Please upload a CSV or Excel file to this data source "
-                "and wait for processing to complete."
-            )
-            raise HTTPException(status_code=400, detail=error_msg)
-        
-        # For HYBRID datasources, check if they have any processed files
-        if ds_type == DataSourceType.HYBRID.value:
+            # Built-in ERP datasource is always available for SQL queries
+            pass
+        # For KNOWLEDGE_BASE and HYBRID datasources, check if they have processed files
+        elif ds_type in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value]:
             # Get files for this datasource to check if any are completed
             from ..database.db_operations import get_files_by_datasource
             files = await get_files_by_datasource(datasource['id'])
@@ -554,11 +495,16 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
             
             if not completed_files:
                 error_msg = (
-                    f"The active data source '{ds_name}' is a hybrid data source but doesn't have "
-                    "any processed files. Please upload CSV/Excel files for SQL queries or "
-                    "TXT/PDF/Word documents for knowledge-based queries, and wait for processing to complete."
+                    f"The active data source '{ds_name}' is a document data source but doesn't have "
+                    "any processed files. Please upload PDF, DOCX, or TXT documents and wait for processing to complete."
                 )
                 raise HTTPException(status_code=400, detail=error_msg)
+        else:
+            error_msg = (
+                f"The active data source '{ds_name}' has an unsupported type '{ds_type}'. "
+                "Please create a document data source (knowledge_base or hybrid) for document queries."
+            )
+            raise HTTPException(status_code=400, detail=error_msg)
             
         # Run the analysis
         result = await process_intelligent_query(

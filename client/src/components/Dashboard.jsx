@@ -72,6 +72,45 @@ function Dashboard() {
         ))}
       </Row>
 
+      {/* 内置ERP系统信息面板 */}
+      <Card className="mb-4 shadow-sm">
+        <Card.Header className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
+          <h5 className="mb-0">
+            <FaBoxes className="me-2" />
+            内置ERP系统数据库
+          </h5>
+        </Card.Header>
+        <Card.Body>
+          <Row>
+            <Col md={6}>
+              <h6 className="text-primary mb-3">数据库表结构</h6>
+              <ul className="list-unstyled">
+                <li><Badge bg="info" className="me-2">customers</Badge> 客户信息表</li>
+                <li><Badge bg="info" className="me-2">products</Badge> 产品信息表</li>
+                <li><Badge bg="info" className="me-2">orders</Badge> 订单信息表</li>
+                <li><Badge bg="info" className="me-2">sales</Badge> 销售记录表</li>
+                <li><Badge bg="info" className="me-2">inventory</Badge> 库存信息表</li>
+              </ul>
+            </Col>
+            <Col md={6}>
+              <h6 className="text-primary mb-3">示例查询</h6>
+              <ul className="list-unstyled">
+                <li><FaLightbulb className="me-2 text-warning" />"本月销售额是多少？"</li>
+                <li><FaLightbulb className="me-2 text-warning" />"哪些产品库存不足？"</li>
+                <li><FaLightbulb className="me-2 text-warning" />"VIP客户有哪些？"</li>
+                <li><FaLightbulb className="me-2 text-warning" />"显示销售排行榜"</li>
+              </ul>
+            </Col>
+          </Row>
+          <Alert variant="info" className="mt-3 mb-0">
+            <small>
+              <strong>说明：</strong>内置ERP系统包含2022-2024年的演示数据，支持客户、产品、订单、销售、库存等业务数据的智能查询和分析。
+              结构化数据查询将自动使用此内置数据库，无需额外配置。
+            </small>
+          </Alert>
+        </Card.Body>
+      </Card>
+
       {/* 功能介绍 */}
       <Row>
         <Col>

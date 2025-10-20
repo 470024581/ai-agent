@@ -13,9 +13,10 @@ from ..database.db_operations import (
     initialize_database,  # Changed: initialize_app_database -> initialize_database
     get_files_by_datasource, # Added to get files for RAG
     get_active_datasource, # Added to get active datasource
+    update_file_processing_status, # Added for file status updates
     DATABASE_PATH # Import DATABASE_PATH
 )
-from ..models.data_models import DataSourceType # Import DataSourceType
+from ..models.data_models import DataSourceType, ProcessingStatus # Import DataSourceType and ProcessingStatus
 from dotenv import load_dotenv
 from pathlib import Path # Added Path
 import logging # Added logging
@@ -221,6 +222,7 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
             }
 
         all_docs = []
+        valid_files = []
         # 2. Load and parse file content
         for file_info in completed_files:
             file_path = UPLOAD_DIR / file_info['filename']
@@ -232,7 +234,18 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
 
             if not file_path.exists():
                 logger.warning(f"File not found: {file_path} for file_info: {original_filename}")
+                # Mark file as failed in database since it doesn't exist
+                try:
+                    await update_file_processing_status(
+                        file_info['id'], 
+                        status=ProcessingStatus.FAILED.value, 
+                        error_message="File not found on disk"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update file status: {e}")
                 continue
+            
+            valid_files.append(file_info)
             
             try:
                 if file_type == 'txt':
@@ -263,10 +276,19 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
                 # Optionally, update file status to 'failed' here if processing fails at this stage
                 # await update_file_processing_status(file_info['id'], status=ProcessingStatus.FAILED.value, error_message=f"Content extraction failed: {str(e)}")
 
-        if not all_docs:
-             return {
+        if not valid_files:
+            logger.warning("No valid files found. Cannot proceed with RAG.")
+            return {
                 "query": query, "query_type": "rag", "success": True,
-                "answer": f"No processable (TXT, PDF, DOCX, CSV, XLSX) file content found in data source '{datasource['name']}'.",
+                "answer": f"No valid files found in data source '{datasource['name']}'. Please check file uploads and processing status.",
+                "data": {"source_datasource_id": datasource['id'], "source_datasource_name": datasource['name'], "retrieved_documents": []}
+            }
+        
+        if not all_docs:
+            logger.warning("No documents were loaded from files. Cannot proceed with RAG.")
+            return {
+                "query": query, "query_type": "rag", "success": True,
+                "answer": f"No processable content found in files from data source '{datasource['name']}'.",
                 "data": {"source_datasource_id": datasource['id'], "source_datasource_name": datasource['name'], "retrieved_documents": []}
             }
 
@@ -430,20 +452,29 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
             "error": "LLM not initialized for SQL Agent."
         }
 
+    ds_type = active_datasource.get("type")
     db_table_name = active_datasource.get("db_table_name")
-    if not db_table_name:
-        logger.error(f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.")
-        return {
-            "query": query, "query_type": "sql_agent", "success": False,
-            "answer": f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.",
-            "data": {"source_datasource_id": active_datasource['id'], "source_datasource_name": active_datasource['name']},
-            "error": "Missing db_table_name for SQL_TABLE_FROM_FILE datasource."
-        }
 
     try:
-        logger.info(f"Initializing SQLDatabase for table: {db_table_name} using URI: {DB_URI}")
-        # SQLDatabase will connect to the main smart.db, but we tell it to only include the specific table.
-        db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=3)
+        # Initialize SQLDatabase
+        if ds_type == DataSourceType.DEFAULT.value:
+            # Built-in ERP: expose core tables to the agent
+            builtin_tables = [
+                "customers", "products", "orders", "sales", "inventory"
+            ]
+            logger.info(f"Initializing SQLDatabase for built-in ERP tables: {builtin_tables} using URI: {DB_URI}")
+            db = SQLDatabase.from_uri(DB_URI, include_tables=builtin_tables, sample_rows_in_table_info=3)
+        else:
+            if not db_table_name:
+                logger.error(f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.")
+                return {
+                    "query": query, "query_type": "sql_agent", "success": False,
+                    "answer": f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.",
+                    "data": {"source_datasource_id": active_datasource['id'], "source_datasource_name": active_datasource['name']},
+                    "error": "Missing db_table_name for SQL_TABLE_FROM_FILE datasource."
+                }
+            logger.info(f"Initializing SQLDatabase for table: {db_table_name} using URI: {DB_URI}")
+            db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=3)
         
         # Get schema info for validation
         schema_info = db.get_table_info()
@@ -468,6 +499,12 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
         Available tables: {available_tables}
         Table schema: {schema_info}
 
+        **CRITICAL SQLITE DATABASE**: This is SQLite, NOT MySQL. Use SQLite-specific functions:
+        - For year filtering: strftime('%Y', date_column) = '2024' (NOT YEAR(date_column) = 2024)
+        - For month filtering: strftime('%Y-%m', date_column) = '2024-01' (NOT MONTH(date_column) = 1)
+        - For date grouping: strftime('%Y-%m', date_column) (NOT YEAR(date_column), MONTH(date_column))
+        - NEVER use YEAR(), MONTH(), DAY() functions - they don't exist in SQLite
+
         NOTE: Ignore any year in the table name; data may span multiple years. Always filter using the date column to satisfy the query.\n        
         **CRITICAL ANALYSIS**: This query appears to be a {'TIME SERIES/TREND' if is_trend_query else 'STANDARD'} query.
 
@@ -485,6 +522,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                  COUNT(*) as count, 
                  SUM(value_column) as total 
           FROM table_name 
+          WHERE strftime('%Y', date_column) = '2024'
           GROUP BY period 
           ORDER BY period
             
@@ -545,7 +583,16 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 if isinstance(query_result, str):
                     # If result is a string, it might be an error or a single value
                     logger.warning(f"Query returned string result: {query_result}")
-                    
+
+                    # Empty string means no data – surface as failure for upstream to handle
+                    if not query_result.strip():
+                        return {
+                            "success": False,
+                            "error": "Query returned empty result. Please adjust your question or time range.",
+                            "query": processed_query,
+                            "executed_sql": clean_sql
+                        }
+
                     # Try to parse if it's a string representation of data
                     parsed_data = _parse_string_query_result(query_result, db_table_name)
                     if parsed_data:
@@ -556,18 +603,17 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                             "rows": parsed_data,
                             "columns": actual_columns if actual_columns else list(parsed_data[0].keys()),
                             "executed_sql": clean_sql,
-                            "queried_table": db_table_name
+                            "queried_table": db_table_name or "builtin_erp"
                         }
                         logger.info(f"Successfully converted string result to structured data with {len(parsed_data)} rows")
                     else:
-                        # Fallback: treat as raw result
-                        structured_data = {
-                            "rows": [{"result": query_result}],
-                            "columns": ["result"],
-                            "executed_sql": clean_sql,
-                            "queried_table": db_table_name
+                        # Non‑tabular result – mark as not chartable
+                        return {
+                            "success": False,
+                            "error": "Query returned non-tabular text. Please ask for a numerical breakdown (e.g., sales by category).",
+                            "query": processed_query,
+                            "executed_sql": clean_sql
                         }
-                        logger.warning("Failed to parse string result, using fallback format")
                 else:
                     # Normal case: result is a list of dictionaries
                     if not query_result:
@@ -586,7 +632,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                         "rows": query_result,
                         "columns": list(query_result[0].keys()) if query_result else [],
                         "executed_sql": clean_sql,
-                        "queried_table": db_table_name
+                        "queried_table": db_table_name or "builtin_erp"
                     }
                 
                 return {
@@ -665,27 +711,31 @@ async def get_answer_from(query: str, query_type: str = "sales", active_datasour
 
     logger.info(f"Routing query. Datasource type: {ds_type}, Datasource name: {ds_name}")
 
-    if ds_type == DataSourceType.SQL_TABLE_FROM_FILE.value:
-        logger.info(f"Routing to SQL Agent for datasource: {ds_name}")
-        if not active_datasource or not active_datasource.get("db_table_name"):
-            logger.error(f"SQL_TABLE_FROM_FILE datasource '{ds_name}' is missing 'db_table_name'.")
-            return {
-                "query": query, "query_type": "sql_agent", "success": False,
-                "answer": f"Data source '{ds_name}' is not fully configured. Unable to perform SQL query.",
-                "data": {"source_datasource_name": ds_name},
-                "error": "Missing db_table_name."
-            }
+    # Business queries always use built-in DEFAULT DB (ignore legacy SQL_TABLE_FROM_FILE)
+    if query_type in ["sales", "inventory", "product", "order", "customer", "report"]:
+        try:
+            from ..database.db_operations import get_datasource
+            builtin_ds = await get_datasource(1)
+            if builtin_ds:
+                return await get_answer_from_sqltable_datasource(query, builtin_ds)
+        except Exception as e:
+            logger.warning(f"Falling back to active datasource for SQL due to error: {e}")
         return await get_answer_from_sqltable_datasource(query, active_datasource)
-    
-    elif ds_type == DataSourceType.HYBRID.value:
-        logger.info(f"Routing to Hybrid Agent for datasource: {ds_name}")
-        return await get_answer_from_hybrid_datasource(query, active_datasource)
-    
-    elif ds_type == DataSourceType.KNOWLEDGE_BASE.value: # Knowledge base uses RAG
+
+    # Document queries use RAG on current active document datasource
+    if ds_type in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value]:
         logger.info(f"Routing to RAG for datasource: {ds_name}")
-        if not active_datasource: # Should not happen if ds_type is not DEFAULT, but good check
-             return {"answer": "Error: Attempting to use RAG without specifying a custom data source."}
         return await perform_rag_query(query, active_datasource)
+
+    # Default fallback: try built-in DB
+    try:
+        from ..database.db_operations import get_datasource
+        builtin_ds = await get_datasource(1)
+        if builtin_ds:
+            return await get_answer_from_sqltable_datasource(query, builtin_ds)
+    except Exception:
+        pass
+    return await get_answer_from_sqltable_datasource(query, active_datasource)
 
 async def attempt_direct_query_fallback(query: str, db, table_name: str, active_datasource: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
@@ -820,20 +870,28 @@ async def get_query_from_sqltable_datasource(
         }
 
     try:
-        # Get table name from datasource
-        table_name = active_datasource.get('db_table_name')
-        if not table_name:
-            logger.error(f"Missing db_table_name for datasource: {active_datasource['name']}")
-            return {
-                "success": False,
-                "error": "Missing table name in datasource configuration",
-                "query": query
-            }
-            
-        logger.info(f"Initializing SQLDatabase for query: {table_name}")
+        # Handle built-in DEFAULT datasource differently
+        if active_datasource['type'] == DataSourceType.DEFAULT.value:
+            # Use built-in ERP tables for DEFAULT datasource
+            tables_to_include = [
+                "customers", "products", "orders", "sales", "inventory"
+            ]
+            logger.info(f"Initializing SQLDatabase for built-in ERP tables: {tables_to_include}")
+        else:
+            # Get table name from datasource for other types
+            table_name = active_datasource.get('db_table_name')
+            if not table_name:
+                logger.error(f"Missing db_table_name for datasource: {active_datasource['name']}")
+                return {
+                    "success": False,
+                    "error": "Missing table name in datasource configuration",
+                    "query": query
+                }
+            tables_to_include = [table_name]
+            logger.info(f"Initializing SQLDatabase for query: {table_name}")
         
         # Initialize database connection
-        db = SQLDatabase.from_uri(DB_URI, include_tables=[table_name])
+        db = SQLDatabase.from_uri(DB_URI, include_tables=tables_to_include)
         
         # Get schema info for validation
         schema_info = db.get_table_info()
@@ -858,6 +916,12 @@ async def get_query_from_sqltable_datasource(
         Available tables: {available_tables}
         Table schema: {schema_info}
 
+        **CRITICAL SQLITE DATABASE**: This is SQLite, NOT MySQL. Use SQLite-specific functions:
+        - For year filtering: strftime('%Y', date_column) = '2024' (NOT YEAR(date_column) = 2024)
+        - For month filtering: strftime('%Y-%m', date_column) = '2024-01' (NOT MONTH(date_column) = 1)
+        - For date grouping: strftime('%Y-%m', date_column) (NOT YEAR(date_column), MONTH(date_column))
+        - NEVER use YEAR(), MONTH(), DAY() functions - they don't exist in SQLite
+
         NOTE: Ignore any year in the table name; data may span multiple years. Always filter using the date column to satisfy the query.\n        
         **CRITICAL ANALYSIS**: This query appears to be a {'TIME SERIES/TREND' if is_trend_query else 'STANDARD'} query.
 
@@ -875,6 +939,7 @@ async def get_query_from_sqltable_datasource(
                  COUNT(*) as count, 
                  SUM(value_column) as total 
           FROM table_name 
+          WHERE strftime('%Y', date_column) = '2024'
           GROUP BY period 
           ORDER BY period
             
@@ -934,16 +999,16 @@ async def get_query_from_sqltable_datasource(
                     logger.warning(f"Query returned string result: {query_result}")
                     
                     # Try to parse if it's a string representation of data
-                    parsed_data = _parse_string_query_result(query_result, table_name)
+                    parsed_data = _parse_string_query_result(query_result, tables_to_include[0] if len(tables_to_include) == 1 else None)
                     if parsed_data:
                         # Get actual column names from database
-                        actual_columns = _get_table_columns(table_name)
+                        actual_columns = _get_table_columns(tables_to_include[0]) if len(tables_to_include) == 1 else None
                         # Successfully parsed tuple list string
                         structured_data = {
                             "rows": parsed_data,
                             "columns": actual_columns if actual_columns else list(parsed_data[0].keys()),
                             "executed_sql": clean_sql,
-                            "queried_table": table_name
+                            "queried_table": tables_to_include[0] if len(tables_to_include) == 1 else "builtin_erp"
                         }
                         logger.info(f"Successfully converted string result to structured data with {len(parsed_data)} rows")
                     else:
@@ -952,7 +1017,7 @@ async def get_query_from_sqltable_datasource(
                             "rows": [{"result": query_result}],
                             "columns": ["result"],
                             "executed_sql": clean_sql,
-                            "queried_table": table_name
+                            "queried_table": tables_to_include[0] if len(tables_to_include) == 1 else "builtin_erp"
                         }
                         logger.warning("Failed to parse string result, using fallback format")
                 else:
@@ -973,7 +1038,7 @@ async def get_query_from_sqltable_datasource(
                         "rows": query_result,
                         "columns": list(query_result[0].keys()) if query_result else [],
                         "executed_sql": clean_sql,
-                        "queried_table": table_name
+                        "queried_table": tables_to_include[0] if len(tables_to_include) == 1 else "builtin_erp"
                     }
                 
                 return {
@@ -1174,27 +1239,78 @@ def _parse_string_query_result(result: str, table_name: str = None) -> Optional[
                     for tuple_item in parsed_tuples:
                         if len(tuple_item) == 1:
                             # Single value result from aggregation like SUM/COUNT
-                            parsed_data.append({
-                                "value": tuple_item[0]
-                            })
+                            single_val = tuple_item[0]
+                            if isinstance(single_val, (int, float)) and single_val > 1000:
+                                # Large numbers suggest monetary values
+                                parsed_data.append({
+                                    "total_sales": f"${float(single_val):,.2f}"
+                                })
+                            else:
+                                parsed_data.append({
+                                    "value": single_val
+                                })
                         elif len(tuple_item) == 2:
-                            # Common case: (category, value) pairs - use descriptive names
-                            parsed_data.append({
-                                "category": str(tuple_item[0]),
-                                "value": float(tuple_item[1]) if isinstance(tuple_item[1], (int, float)) else tuple_item[1]
-                            })
+                            # Common case: (category, value) pairs - use intelligent naming based on context
+                            first_val = tuple_item[0]
+                            second_val = tuple_item[1]
+                            
+                            # Intelligent field naming based on data characteristics
+                            if isinstance(first_val, (int, float)) and isinstance(second_val, (int, float)):
+                                # Both numeric: likely aggregation results
+                                if second_val > 1000:  # Large numbers suggest monetary values
+                                    parsed_data.append({
+                                        "metric": "Total Sales",
+                                        "amount": f"${float(first_val):,.2f}" if first_val > 1000 else f"{float(first_val):,.2f}",
+                                        "avg_value": f"${float(second_val):,.2f}" if second_val > 1000 else f"{float(second_val):,.2f}"
+                                    })
+                                else:
+                                    parsed_data.append({
+                                        "metric": "Count",
+                                        "value": float(first_val),
+                                        "average": float(second_val)
+                                    })
+                            else:
+                                # Mixed types: category-value pairs
+                                parsed_data.append({
+                                    "category": str(first_val),
+                                    "value": float(second_val) if isinstance(second_val, (int, float)) else second_val
+                                })
                         else:
-                            # Multiple columns: use actual column names from database
+                            # Multiple columns: use actual column names from database or intelligent naming
                             row_dict = {}
                             actual_columns = _get_table_columns(table_name) if table_name else None
                             
-                            for i, value in enumerate(tuple_item):
-                                if actual_columns and i < len(actual_columns):
-                                    # Use actual column name from database
-                                    row_dict[actual_columns[i]] = value
+                            # For complex queries, try to infer meaningful column names
+                            if not actual_columns and len(tuple_item) == 3:
+                                # Common pattern: (date, count, amount) for sales trends
+                                if isinstance(tuple_item[0], str) and '-' in str(tuple_item[0]):
+                                    # Looks like a date, assume it's a sales trend query
+                                    row_dict["month"] = tuple_item[0]
+                                    row_dict["order_count"] = tuple_item[1]
+                                    row_dict["sales_amount"] = tuple_item[2]
+                                elif isinstance(tuple_item[0], str) and tuple_item[0].startswith('PROD_'):
+                                    # Product-related query: (product_id, product_name, stock_level)
+                                    row_dict["product_id"] = tuple_item[0]
+                                    row_dict["product_name"] = tuple_item[1]
+                                    row_dict["stock_level"] = tuple_item[2]
+                                elif isinstance(tuple_item[0], str) and isinstance(tuple_item[2], (int, float)):
+                                    # Generic 3-column pattern: (id, name, value)
+                                    row_dict["id"] = tuple_item[0]
+                                    row_dict["name"] = tuple_item[1]
+                                    row_dict["value"] = tuple_item[2]
                                 else:
-                                    # Fallback to generic column names
-                                    row_dict[f"col_{i}"] = value
+                                    # Generic fallback with meaningful names
+                                    row_dict["column_1"] = tuple_item[0]
+                                    row_dict["column_2"] = tuple_item[1]
+                                    row_dict["column_3"] = tuple_item[2]
+                            else:
+                                for i, value in enumerate(tuple_item):
+                                    if actual_columns and i < len(actual_columns):
+                                        # Use actual column name from database
+                                        row_dict[actual_columns[i]] = value
+                                    else:
+                                        # Fallback to meaningful column names
+                                        row_dict[f"column_{i+1}"] = value
                             parsed_data.append(row_dict)
                     
                     logger.info(f"Successfully parsed {len(parsed_data)} rows from string result")

@@ -382,24 +382,25 @@ function IntelligentAnalysis() {
       category: 'SQL Chart',
       color: 'blue',
       examples: [
-        'Generate a monthly sales trend chart for 2025.',
-        'The pie chart shows the sales proportion of each product.'
+        'Show monthly sales trend for 2024.',
+        'Generate a pie chart of sales proportion by product category for July to September 2024.'
       ]
     },
     {
       category: 'SQL Query',
       color: 'green',
       examples: [
-        "What's the average price of each product category?",
-        'What are the sales this month?'
+        "List top 10 products by total sales in 2024.",
+        'What are the total sales and average order value for 2024?',
+        'Which products are below minimum stock level?'
       ]
     },
     {
       category: 'RAG Query',
       color: 'purple',
       examples: [
-        'Do you know any software developers?',
-        'Who is Longliang?'
+        'Who is LongLiang?',
+        'Explain the key points of the uploaded document.'
       ]
     }
   ];
@@ -1120,7 +1121,7 @@ function IntelligentAnalysis() {
                        )}
                      </div>
                     <div className="relative">
-                      <Select onValueChange={(val) => val && handleDataSourceChange(parseInt(val))} disabled={loading}>
+                      <Select value={activeDataSource ? String(activeDataSource.id) : undefined} onValueChange={(val) => val && handleDataSourceChange(parseInt(val))} disabled={loading}>
                         <SelectTrigger className="w-full h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-0 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500/50 overflow-hidden">
                           <div className="flex items-center w-full text-gray-800 dark:text-gray-200 min-w-0">
                             <div className="p-2 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-lg shadow-md mr-3">

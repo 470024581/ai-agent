@@ -14,18 +14,15 @@ class BaseResponse(BaseModel):
 # ================== Data Source Management Models ==================
 
 class DataSourceType(str, Enum):
-    DEFAULT = "default"  # Default  data source (formatted, predefined tables)
-    KNOWLEDGE_BASE = "knowledge_base"  # Knowledge base/document collection (unstructured RAG, local embeddings)
-    SQL_TABLE_FROM_FILE = "sql_table_from_file"  # Data source for SQL tables created from files (formatted, dynamic tables)
-    HYBRID = "hybrid"  # Hybrid data source: CSV/Excel -> SQL, TXT/PDF/Word -> RAG
+    DEFAULT = "default"  # Built-in ERP system data source (customers, products, orders, sales, inventory)
+    KNOWLEDGE_BASE = "knowledge_base"  # Document knowledge base for RAG queries (PDF, DOCX, TXT)
+    HYBRID = "hybrid"  # Hybrid data source: supports both document uploads and RAG processing
 
 class FileType(str, Enum):
     PDF = "pdf"
     TXT = "txt"
     TEXT = "txt"  # Alias for TXT
     DOCX = "docx"
-    CSV = "csv"
-    XLSX = "xlsx"
     UNKNOWN = "unknown"
 
 class ProcessingStatus(str, Enum):
