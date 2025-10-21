@@ -1,435 +1,426 @@
-# DWS Layer (Data Warehouse Summary) Schema Design - Optimized for Wide Table DWD
+# DWS Layer (Data Warehouse Summary) Schema Design - Data Cube Approach
 
 ## Overview
-The DWS layer provides pre-aggregated summary tables optimized for the new wide table DWD design. This layer focuses on high-performance analytical queries and business intelligence reporting, leveraging the optimized DWD structure for maximum efficiency.
+The DWS layer adopts a **data cube design** optimized for analytical queries, featuring 2 core cube tables that directly correspond to the DWD wide tables. This design performs light aggregation of cross-dimensional metrics without further splitting, ensuring flexibility for the application layer while avoiding dimension explosion.
 
 ## Design Philosophy
 
 ### Core Principles
-- **Aggregation Optimization**: Pre-calculate common business metrics
-- **Performance First**: Optimize for analytical query performance
-- **Business Focus**: Align with business intelligence requirements
-- **Scalable Aggregation**: Support multiple aggregation levels and time periods
+- **Data Cube Design**: Pre-calculate cross-dimensional aggregations
+- **Avoid Dimension Explosion**: Only core business dimensions, time dimensions calculated at application layer
+- **Light Aggregation**: Focus on essential metrics without complex derivations
+- **Application Layer Flexibility**: Support dynamic time dimension calculations
+- **Permanent Storage**: Business data is permanently stored without retention periods
 
-### Design Benefits
-- **Query Performance**: Pre-aggregated data reduces computation overhead
-- **Business Intelligence**: Ready-to-use metrics for reporting and dashboards
-- **Consistency**: Standardized business metrics across the organization
-- **Flexibility**: Support for various analytical patterns and time periods
+### Why This Design?
+
+#### 1. **Performance Optimization**
+- **Pre-calculated Aggregations**: Reduce computation overhead for common analytical queries
+- **Fast BI Queries**: Optimized for business intelligence tools and dashboards
+- **Reduced JOINs**: Minimize complex joins in analytical queries
+- **Better Caching**: Cohesive datasets improve cache hit rates
+
+#### 2. **Avoid Dimension Explosion**
+- **Core Dimensions Only**: Focus on essential business dimensions
+- **Dynamic Time Calculation**: Year/month/quarter calculated at application layer
+- **Storage Efficiency**: Reduce cube storage requirements
+- **Maintenance Simplicity**: Fewer dimension combinations to maintain
+
+#### 3. **Application Layer Flexibility**
+- **Dynamic Time Granularity**: Support any time dimension calculation
+- **Custom Aggregations**: Allow application-specific metric calculations
+- **Query Flexibility**: Enable various analytical patterns
+- **Future-Proof**: Accommodate new analytical requirements
 
 ---
 
 ## DWS Table Structure
 
-### Customer Analytics Summary
+### Core Cube Tables
 
-#### Table: dws_customer_summary
-**Purpose**: Comprehensive customer analytics and behavior summary
-**Source**: dwd_transaction_detail + dwd_customer_dimension
+#### Table: dws_sales_cube
+**Purpose**: Sales data cube with core dimension aggregations
+**Source**: dwd_sales_detail
 **Update Frequency**: Daily
-**Retention**: 7 years
+**Design Rationale**: Single source for all sales-related analytical queries
 
 ##### Structure
 | Column | Type | Constraints | Description | Calculation Logic |
 |--------|------|-------------|-------------|-------------------|
-| customer_id | TEXT | PRIMARY KEY | Customer identifier | dwd_customer_dimension.customer_id |
-| customer_name | VARCHAR(200) | NOT NULL | Customer name | dwd_customer_dimension.customer_name |
-| customer_type | VARCHAR(20) | NOT NULL | Customer type | dwd_customer_dimension.customer_type |
-| region | VARCHAR(50) | NULL | Geographic region | dwd_customer_dimension.region |
-| total_transactions | INTEGER | NOT NULL | Total transaction count | COUNT(dwd_transaction_detail.sale_id) |
-| total_spent | DECIMAL(15,2) | NOT NULL | Total amount spent | SUM(dwd_transaction_detail.total_amount) |
-| avg_transaction_value | DECIMAL(12,2) | NOT NULL | Average transaction value | AVG(dwd_transaction_detail.total_amount) |
-| max_transaction_value | DECIMAL(12,2) | NOT NULL | Maximum transaction value | MAX(dwd_transaction_detail.total_amount) |
-| min_transaction_value | DECIMAL(12,2) | NOT NULL | Minimum transaction value | MIN(dwd_transaction_detail.total_amount) |
-| total_quantity_purchased | INTEGER | NOT NULL | Total quantity purchased | SUM(dwd_transaction_detail.quantity_sold) |
-| first_transaction_date | DATE | NOT NULL | First transaction date | MIN(dwd_transaction_detail.sale_date) |
-| last_transaction_date | DATE | NOT NULL | Last transaction date | MAX(dwd_transaction_detail.sale_date) |
-| days_since_last_transaction | INTEGER | NULL | Days since last transaction | DATEDIFF(DAY, last_transaction_date, GETDATE()) |
-| transaction_frequency_days | DECIMAL(8,2) | NULL | Average days between transactions | Calculated |
-| customer_lifetime_days | INTEGER | NOT NULL | Customer lifetime in days | DATEDIFF(DAY, first_transaction_date, last_transaction_date) |
-| is_active_customer | BOOLEAN | NOT NULL | Active customer flag | days_since_last_transaction <= 90 |
-| customer_value_tier | VARCHAR(20) | NOT NULL | Customer value tier | Derived from total_spent |
+| sale_date | DATE | PRIMARY KEY | Sale date (only date dimension) | dwd_sales_detail.sale_date |
+| customer_id | TEXT | PRIMARY KEY | Customer foreign key | dwd_sales_detail.customer_id |
+| customer_type | VARCHAR(20) | PRIMARY KEY | Customer type | Derived from dim_customer |
+| region | VARCHAR(50) | PRIMARY KEY | Geographic region | Derived from dim_customer |
+| product_id | TEXT | PRIMARY KEY | Product foreign key | dwd_sales_detail.product_id |
+| category | VARCHAR(100) | PRIMARY KEY | Product category | Derived from dim_product |
+| price_range | VARCHAR(20) | PRIMARY KEY | Price range | Derived from dim_product |
+| sale_value_range | VARCHAR(20) | PRIMARY KEY | Sale value range | dwd_sales_detail.sale_value_range |
+| transaction_count | INTEGER | NOT NULL | Number of transactions | COUNT(*) |
+| total_revenue | DECIMAL(15,2) | NOT NULL | Total revenue | SUM(total_amount) |
+| total_quantity | INTEGER | NOT NULL | Total quantity sold | SUM(quantity_sold) |
+| avg_transaction_value | DECIMAL(12,2) | NOT NULL | Average transaction value | AVG(total_amount) |
+| max_transaction_value | DECIMAL(12,2) | NOT NULL | Maximum transaction value | MAX(total_amount) |
+| min_transaction_value | DECIMAL(12,2) | NOT NULL | Minimum transaction value | MIN(total_amount) |
 | etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
 | etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
 
 ##### Business Rules
-- Customer value tiers: Bronze (<1000), Silver (1000-5000), Gold (5000-20000), Platinum (>20000)
-- Active customer: Last transaction within 90 days
-- Transaction frequency: Average days between transactions
-- Customer lifetime: Days between first and last transaction
+- Sale value ranges: Low (<100), Medium (100-500), High (500-1000), Premium (>1000)
+- Price ranges: Low (<50), Medium (50-200), High (200-1000), Premium (>1000)
+- Customer types: Individual, Corporate, VIP
+- Regions: North, South, East, West, Central
+
+##### Analytics Capabilities
+- **Sales Analysis**: Revenue and quantity analysis by all dimensions
+- **Customer Analysis**: Customer behavior and segmentation
+- **Product Analysis**: Product performance across categories
+- **Geographic Analysis**: Regional sales performance
+- **Value Analysis**: Transaction value distribution analysis
 
 ---
 
-### Product Performance Summary
-
-#### Table: dws_product_summary
-**Purpose**: Comprehensive product performance and inventory summary
-**Source**: dwd_transaction_detail + dwd_inventory_snapshot + dwd_product_dimension
+#### Table: dws_inventory_cube
+**Purpose**: Inventory data cube with core dimension aggregations
+**Source**: dwd_inventory_detail
 **Update Frequency**: Daily
-**Retention**: 7 years
+**Design Rationale**: Single source for all inventory-related analytical queries
 
 ##### Structure
 | Column | Type | Constraints | Description | Calculation Logic |
 |--------|------|-------------|-------------|-------------------|
-| product_id | TEXT | PRIMARY KEY | Product identifier | dwd_product_dimension.product_id |
-| product_name | VARCHAR(200) | NOT NULL | Product name | dwd_product_dimension.product_name |
-| category | VARCHAR(100) | NOT NULL | Product category | dwd_product_dimension.category |
-| unit_price | DECIMAL(12,2) | NOT NULL | Current unit price | dwd_product_dimension.unit_price |
-| price_range | VARCHAR(20) | NOT NULL | Price range | dwd_product_dimension.price_range |
-| total_sales_count | INTEGER | NOT NULL | Total sales count | COUNT(dwd_transaction_detail.sale_id) |
-| total_quantity_sold | INTEGER | NOT NULL | Total quantity sold | SUM(dwd_transaction_detail.quantity_sold) |
-| total_revenue | DECIMAL(15,2) | NOT NULL | Total revenue | SUM(dwd_transaction_detail.total_amount) |
-| avg_sale_price | DECIMAL(12,2) | NOT NULL | Average sale price | AVG(dwd_transaction_detail.price_per_unit) |
-| max_sale_price | DECIMAL(12,2) | NOT NULL | Maximum sale price | MAX(dwd_transaction_detail.price_per_unit) |
-| min_sale_price | DECIMAL(12,2) | NOT NULL | Minimum sale price | MIN(dwd_transaction_detail.price_per_unit) |
-| avg_quantity_per_sale | DECIMAL(8,2) | NOT NULL | Average quantity per sale | AVG(dwd_transaction_detail.quantity_sold) |
-| first_sale_date | DATE | NOT NULL | First sale date | MIN(dwd_transaction_detail.sale_date) |
-| last_sale_date | DATE | NOT NULL | Last sale date | MAX(dwd_transaction_detail.sale_date) |
-| days_since_last_sale | INTEGER | NULL | Days since last sale | DATEDIFF(DAY, last_sale_date, GETDATE()) |
-| current_stock_level | INTEGER | NOT NULL | Current stock level | dwd_inventory_snapshot.stock_level |
-| current_stock_value | DECIMAL(15,2) | NOT NULL | Current stock value | dwd_inventory_snapshot.stock_value |
-| stock_status | VARCHAR(20) | NOT NULL | Current stock status | dwd_inventory_snapshot.stock_status |
-| is_low_stock | BOOLEAN | NOT NULL | Low stock flag | dwd_inventory_snapshot.is_low_stock |
-| turnover_ratio | DECIMAL(8,4) | NULL | Inventory turnover ratio | total_quantity_sold / current_stock_level |
-| product_performance_tier | VARCHAR(20) | NOT NULL | Performance tier | Derived from total_revenue |
+| last_updated_date | DATE | PRIMARY KEY | Last update date (only date dimension) | dwd_inventory_detail.last_updated |
+| product_id | TEXT | PRIMARY KEY | Product foreign key | dwd_inventory_detail.product_id |
+| category | VARCHAR(100) | PRIMARY KEY | Product category | Derived from dim_product |
+| price_range | VARCHAR(20) | PRIMARY KEY | Price range | Derived from dim_product |
+| stock_status | VARCHAR(20) | PRIMARY KEY | Stock status | dwd_inventory_detail.stock_status |
+| is_low_stock | BOOLEAN | PRIMARY KEY | Low stock flag | dwd_inventory_detail.is_low_stock |
+| is_stale_data | BOOLEAN | PRIMARY KEY | Stale data flag | dwd_inventory_detail.is_stale_data |
+| product_count | INTEGER | NOT NULL | Number of products | COUNT(*) |
+| total_stock_level | INTEGER | NOT NULL | Total stock level | SUM(stock_level) |
+| total_stock_value | DECIMAL(15,2) | NOT NULL | Total stock value | SUM(stock_value) |
+| avg_stock_level | DECIMAL(8,2) | NOT NULL | Average stock level | AVG(stock_level) |
+| avg_stock_value | DECIMAL(12,2) | NOT NULL | Average stock value | AVG(stock_value) |
+| avg_turnover_ratio | DECIMAL(8,4) | NOT NULL | Average turnover ratio | AVG(turnover_ratio) |
 | etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
 | etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
 
 ##### Business Rules
-- Performance tiers: Low (<1000), Medium (1000-10000), High (10000-50000), Top (>50000)
-- Turnover ratio: Total quantity sold / current stock level
+- Stock status: In Stock (>10), Low Stock (1-10), Out of Stock (0)
+- Price ranges: Low (<50), Medium (50-200), High (200-1000), Premium (>1000)
 - Low stock: Stock level below reorder point
-- Price range: Low (<50), Medium (50-200), High (200-1000), Premium (>1000)
+- Stale data: Data not updated for more than 7 days
+
+##### Analytics Capabilities
+- **Inventory Management**: Stock level monitoring and optimization
+- **Supply Chain**: Reorder point and turnover analysis
+- **Financial**: Stock value analysis and valuation
+- **Operational**: Low stock alerts and stale data monitoring
 
 ---
 
-### Sales Analytics Summary
+## Application Layer Time Dimension Calculation
 
-#### Table: dws_sales_summary_daily
-**Purpose**: Daily sales performance summary
-**Source**: dwd_transaction_detail
-**Update Frequency**: Daily
-**Retention**: 3 years
+### Dynamic Time Aggregation Examples
 
-##### Structure
-| Column | Type | Constraints | Description | Calculation Logic |
-|--------|------|-------------|-------------|-------------------|
-| sale_date | DATE | PRIMARY KEY | Sale date | dwd_transaction_detail.sale_date |
-| sale_year | INTEGER | NOT NULL | Sale year | YEAR(sale_date) |
-| sale_month | INTEGER | NOT NULL | Sale month | MONTH(sale_date) |
-| sale_quarter | INTEGER | NOT NULL | Sale quarter | QUARTER(sale_date) |
-| sale_week | INTEGER | NOT NULL | Sale week | WEEK(sale_date) |
-| sale_day_of_week | INTEGER | NOT NULL | Day of week | DAYOFWEEK(sale_date) |
-| total_transactions | INTEGER | NOT NULL | Total transactions | COUNT(dwd_transaction_detail.sale_id) |
-| total_quantity_sold | INTEGER | NOT NULL | Total quantity sold | SUM(dwd_transaction_detail.quantity_sold) |
-| total_revenue | DECIMAL(15,2) | NOT NULL | Total revenue | SUM(dwd_transaction_detail.total_amount) |
-| avg_transaction_value | DECIMAL(12,2) | NOT NULL | Average transaction value | AVG(dwd_transaction_detail.total_amount) |
-| max_transaction_value | DECIMAL(12,2) | NOT NULL | Maximum transaction value | MAX(dwd_transaction_detail.total_amount) |
-| min_transaction_value | DECIMAL(12,2) | NOT NULL | Minimum transaction value | MIN(dwd_transaction_detail.total_amount) |
-| unique_customers | INTEGER | NOT NULL | Unique customers | COUNT(DISTINCT dwd_transaction_detail.customer_id) |
-| unique_products | INTEGER | NOT NULL | Unique products | COUNT(DISTINCT dwd_transaction_detail.product_id) |
-| revenue_per_customer | DECIMAL(12,2) | NULL | Revenue per customer | total_revenue / unique_customers |
-| revenue_per_product | DECIMAL(12,2) | NULL | Revenue per product | total_revenue / unique_products |
-| etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
-| etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
+#### Monthly Sales Analysis
+```sql
+-- Application layer: Monthly sales aggregation
+SELECT 
+    YEAR(sale_date) as sale_year,
+    MONTH(sale_date) as sale_month,
+    customer_type,
+    category,
+    SUM(total_revenue) as monthly_revenue,
+    SUM(total_quantity) as monthly_quantity,
+    SUM(transaction_count) as monthly_transactions,
+    AVG(avg_transaction_value) as monthly_avg_transaction_value
+FROM dws_sales_cube
+WHERE sale_date >= '2024-01-01' AND sale_date < '2025-01-01'
+GROUP BY YEAR(sale_date), MONTH(sale_date), customer_type, category
+ORDER BY sale_year, sale_month, monthly_revenue DESC;
+```
 
----
+#### Quarterly Performance Analysis
+```sql
+-- Application layer: Quarterly performance analysis
+SELECT 
+    YEAR(sale_date) as sale_year,
+    QUARTER(sale_date) as sale_quarter,
+    region,
+    SUM(total_revenue) as quarterly_revenue,
+    SUM(transaction_count) as quarterly_transactions,
+    COUNT(DISTINCT customer_id) as unique_customers,
+    COUNT(DISTINCT product_id) as unique_products
+FROM dws_sales_cube
+WHERE sale_date >= '2024-01-01'
+GROUP BY YEAR(sale_date), QUARTER(sale_date), region
+ORDER BY sale_year, sale_quarter, quarterly_revenue DESC;
+```
 
-#### Table: dws_sales_summary_monthly
-**Purpose**: Monthly sales performance summary
-**Source**: dwd_transaction_detail
-**Update Frequency**: Monthly
-**Retention**: 5 years
+#### Weekly Inventory Analysis
+```sql
+-- Application layer: Weekly inventory analysis
+SELECT 
+    YEAR(last_updated_date) as update_year,
+    WEEK(last_updated_date) as update_week,
+    category,
+    stock_status,
+    SUM(total_stock_value) as weekly_stock_value,
+    AVG(avg_turnover_ratio) as weekly_avg_turnover,
+    COUNT(*) as product_count
+FROM dws_inventory_cube
+WHERE last_updated_date >= '2024-01-01'
+GROUP BY YEAR(last_updated_date), WEEK(last_updated_date), category, stock_status
+ORDER BY update_year, update_week, weekly_stock_value DESC;
+```
 
-##### Structure
-| Column | Type | Constraints | Description | Calculation Logic |
-|--------|------|-------------|-------------|-------------------|
-| sale_year | INTEGER | PRIMARY KEY | Sale year | YEAR(dwd_transaction_detail.sale_date) |
-| sale_month | INTEGER | PRIMARY KEY | Sale month | MONTH(dwd_transaction_detail.sale_date) |
-| sale_quarter | INTEGER | NOT NULL | Sale quarter | QUARTER(sale_date) |
-| total_transactions | INTEGER | NOT NULL | Total transactions | COUNT(dwd_transaction_detail.sale_id) |
-| total_quantity_sold | INTEGER | NOT NULL | Total quantity sold | SUM(dwd_transaction_detail.quantity_sold) |
-| total_revenue | DECIMAL(15,2) | NOT NULL | Total revenue | SUM(dwd_transaction_detail.total_amount) |
-| avg_transaction_value | DECIMAL(12,2) | NOT NULL | Average transaction value | AVG(dwd_transaction_detail.total_amount) |
-| unique_customers | INTEGER | NOT NULL | Unique customers | COUNT(DISTINCT dwd_transaction_detail.customer_id) |
-| unique_products | INTEGER | NOT NULL | Unique products | COUNT(DISTINCT dwd_transaction_detail.product_id) |
-| revenue_growth_rate | DECIMAL(8,4) | NULL | Revenue growth rate | Calculated vs previous month |
-| transaction_growth_rate | DECIMAL(8,4) | NULL | Transaction growth rate | Calculated vs previous month |
-| customer_growth_rate | DECIMAL(8,4) | NULL | Customer growth rate | Calculated vs previous month |
-| etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
-| etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
-
----
-
-### Inventory Management Summary
-
-#### Table: dws_inventory_summary
-**Purpose**: Inventory management and optimization summary
-**Source**: dwd_inventory_snapshot + dwd_product_dimension
-**Update Frequency**: Daily
-**Retention**: 3 years
-
-##### Structure
-| Column | Type | Constraints | Description | Calculation Logic |
-|--------|------|-------------|-------------|-------------------|
-| product_id | TEXT | PRIMARY KEY | Product identifier | dwd_inventory_snapshot.product_id |
-| product_name | VARCHAR(200) | NOT NULL | Product name | dwd_product_dimension.product_name |
-| category | VARCHAR(100) | NOT NULL | Product category | dwd_product_dimension.category |
-| current_stock_level | INTEGER | NOT NULL | Current stock level | dwd_inventory_snapshot.stock_level |
-| current_stock_value | DECIMAL(15,2) | NOT NULL | Current stock value | dwd_inventory_snapshot.stock_value |
-| stock_status | VARCHAR(20) | NOT NULL | Stock status | dwd_inventory_snapshot.stock_status |
-| is_low_stock | BOOLEAN | NOT NULL | Low stock flag | dwd_inventory_snapshot.is_low_stock |
-| reorder_point | INTEGER | NULL | Reorder point | dwd_inventory_snapshot.reorder_point |
-| days_since_update | INTEGER | NULL | Days since update | dwd_inventory_snapshot.days_since_update |
-| is_stale_data | BOOLEAN | NOT NULL | Stale data flag | dwd_inventory_snapshot.is_stale_data |
-| unit_price | DECIMAL(12,2) | NOT NULL | Unit price | dwd_product_dimension.unit_price |
-| price_range | VARCHAR(20) | NOT NULL | Price range | dwd_product_dimension.price_range |
-| inventory_turnover_ratio | DECIMAL(8,4) | NULL | Turnover ratio | Calculated from sales data |
-| stock_value_percentage | DECIMAL(8,4) | NULL | Stock value percentage | Calculated vs total inventory value |
-| etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
-| etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
-
----
-
-### Category Performance Summary
-
-#### Table: dws_category_performance
-**Purpose**: Product category performance analysis
-**Source**: dwd_transaction_detail + dwd_product_dimension
-**Update Frequency**: Daily
-**Retention**: 5 years
-
-##### Structure
-| Column | Type | Constraints | Description | Calculation Logic |
-|--------|------|-------------|-------------|-------------------|
-| category | VARCHAR(100) | PRIMARY KEY | Product category | dwd_product_dimension.category |
-| total_products | INTEGER | NOT NULL | Total products | COUNT(DISTINCT dwd_product_dimension.product_id) |
-| total_transactions | INTEGER | NOT NULL | Total transactions | COUNT(dwd_transaction_detail.sale_id) |
-| total_quantity_sold | INTEGER | NOT NULL | Total quantity sold | SUM(dwd_transaction_detail.quantity_sold) |
-| total_revenue | DECIMAL(15,2) | NOT NULL | Total revenue | SUM(dwd_transaction_detail.total_amount) |
-| avg_transaction_value | DECIMAL(12,2) | NOT NULL | Average transaction value | AVG(dwd_transaction_detail.total_amount) |
-| avg_sale_price | DECIMAL(12,2) | NOT NULL | Average sale price | AVG(dwd_transaction_detail.price_per_unit) |
-| revenue_per_product | DECIMAL(12,2) | NULL | Revenue per product | total_revenue / total_products |
-| transaction_per_product | DECIMAL(8,2) | NULL | Transactions per product | total_transactions / total_products |
-| category_performance_tier | VARCHAR(20) | NOT NULL | Performance tier | Derived from total_revenue |
-| market_share_percentage | DECIMAL(8,4) | NULL | Market share percentage | Calculated vs total revenue |
-| etl_batch_id | VARCHAR(50) | NOT NULL | ETL batch ID | Generated |
-| etl_timestamp | DATETIME | NOT NULL | ETL timestamp | CURRENT_TIMESTAMP |
+#### Year-over-Year Growth Analysis
+```sql
+-- Application layer: Year-over-year growth analysis
+WITH current_year AS (
+    SELECT 
+        customer_type,
+        SUM(total_revenue) as current_revenue,
+        SUM(transaction_count) as current_transactions
+    FROM dws_sales_cube
+    WHERE YEAR(sale_date) = 2024
+    GROUP BY customer_type
+),
+previous_year AS (
+    SELECT 
+        customer_type,
+        SUM(total_revenue) as previous_revenue,
+        SUM(transaction_count) as previous_transactions
+    FROM dws_sales_cube
+    WHERE YEAR(sale_date) = 2023
+    GROUP BY customer_type
+)
+SELECT 
+    c.customer_type,
+    c.current_revenue,
+    p.previous_revenue,
+    ((c.current_revenue - p.previous_revenue) / p.previous_revenue * 100) as revenue_growth_pct,
+    c.current_transactions,
+    p.previous_transactions,
+    ((c.current_transactions - p.previous_transactions) / p.previous_transactions * 100) as transaction_growth_pct
+FROM current_year c
+LEFT JOIN previous_year p ON c.customer_type = p.customer_type
+ORDER BY revenue_growth_pct DESC;
+```
 
 ---
 
 ## ETL Processing Logic
 
-### Customer Summary ETL
+### Sales Cube ETL
 ```python
-def process_customer_summary():
-    # Extract transaction data
-    transaction_data = extract_transaction_data()
-    customer_data = extract_customer_data()
+def process_sales_cube():
+    # Extract sales data from DWD
+    sales_data = extract_sales_detail_data()
     
-    # Group by customer
-    customer_summary = {}
-    for transaction in transaction_data:
-        customer_id = transaction.customer_id
-        if customer_id not in customer_summary:
-            customer_summary[customer_id] = {
-                'customer_id': customer_id,
-                'transactions': [],
-                'total_spent': 0,
-                'total_quantity': 0,
-                'first_date': transaction.sale_date,
-                'last_date': transaction.sale_date
-            }
-        
-        customer_summary[customer_id]['transactions'].append(transaction)
-        customer_summary[customer_id]['total_spent'] += transaction.total_amount
-        customer_summary[customer_id]['total_quantity'] += transaction.quantity_sold
-        
-        if transaction.sale_date < customer_summary[customer_id]['first_date']:
-            customer_summary[customer_id]['first_date'] = transaction.sale_date
-        if transaction.sale_date > customer_summary[customer_id]['last_date']:
-            customer_summary[customer_id]['last_date'] = transaction.sale_date
+    # Get dimension data for enrichment
+    customer_dim = extract_customer_dimension()
+    product_dim = extract_product_dimension()
     
-    # Calculate derived metrics
-    for customer_id, summary in customer_summary.items():
-        customer_info = get_customer_info(customer_id)
+    # Group by core dimensions
+    cube_data = {}
+    for sale in sales_data:
+        # Get dimension attributes
+        customer_info = customer_dim.get(sale.customer_id, {})
+        product_info = product_dim.get(sale.product_id, {})
         
-        summary_record = {
-            'customer_id': customer_id,
-            'customer_name': customer_info.customer_name,
-            'customer_type': customer_info.customer_type,
-            'region': customer_info.region,
-            'total_transactions': len(summary['transactions']),
-            'total_spent': summary['total_spent'],
-            'avg_transaction_value': summary['total_spent'] / len(summary['transactions']),
-            'total_quantity_purchased': summary['total_quantity'],
-            'first_transaction_date': summary['first_date'],
-            'last_transaction_date': summary['last_date'],
-            'days_since_last_transaction': (datetime.now() - summary['last_date']).days,
-            'customer_lifetime_days': (summary['last_date'] - summary['first_date']).days,
-            'is_active_customer': (datetime.now() - summary['last_date']).days <= 90,
-            'customer_value_tier': get_customer_tier(summary['total_spent']),
-            'etl_batch_id': get_current_batch_id(),
-            'etl_timestamp': datetime.now()
-        }
+        # Create cube key
+        cube_key = (
+            sale.sale_date.date(),
+            sale.customer_id,
+            customer_info.get('customer_type', 'Unknown'),
+            customer_info.get('region', 'Unknown'),
+            sale.product_id,
+            product_info.get('category', 'Unknown'),
+            product_info.get('price_range', 'Unknown'),
+            sale.sale_value_range
+        )
         
-        # Load to DWS
-        load_customer_summary(summary_record)
-```
-
-### Product Summary ETL
-```python
-def process_product_summary():
-    # Extract transaction and inventory data
-    transaction_data = extract_transaction_data()
-    inventory_data = extract_inventory_data()
-    product_data = extract_product_data()
-    
-    # Group by product
-    product_summary = {}
-    for transaction in transaction_data:
-        product_id = transaction.product_id
-        if product_id not in product_summary:
-            product_summary[product_id] = {
-                'product_id': product_id,
-                'transactions': [],
+        if cube_key not in cube_data:
+            cube_data[cube_key] = {
+                'sale_date': sale.sale_date.date(),
+                'customer_id': sale.customer_id,
+                'customer_type': customer_info.get('customer_type', 'Unknown'),
+                'region': customer_info.get('region', 'Unknown'),
+                'product_id': sale.product_id,
+                'category': product_info.get('category', 'Unknown'),
+                'price_range': product_info.get('price_range', 'Unknown'),
+                'sale_value_range': sale.sale_value_range,
+                'transaction_count': 0,
                 'total_revenue': 0,
                 'total_quantity': 0,
-                'prices': [],
-                'first_date': transaction.sale_date,
-                'last_date': transaction.sale_date
+                'transaction_values': []
             }
         
-        product_summary[product_id]['transactions'].append(transaction)
-        product_summary[product_id]['total_revenue'] += transaction.total_amount
-        product_summary[product_id]['total_quantity'] += transaction.quantity_sold
-        product_summary[product_id]['prices'].append(transaction.price_per_unit)
-        
-        if transaction.sale_date < product_summary[product_id]['first_date']:
-            product_summary[product_id]['first_date'] = transaction.sale_date
-        if transaction.sale_date > product_summary[product_id]['last_date']:
-            product_summary[product_id]['last_date'] = transaction.sale_date
+        # Aggregate metrics
+        cube_data[cube_key]['transaction_count'] += 1
+        cube_data[cube_key]['total_revenue'] += sale.total_amount
+        cube_data[cube_key]['total_quantity'] += sale.quantity_sold
+        cube_data[cube_key]['transaction_values'].append(sale.total_amount)
     
-    # Calculate derived metrics
-    for product_id, summary in product_summary.items():
-        product_info = get_product_info(product_id)
-        inventory_info = get_inventory_info(product_id)
-        
-        summary_record = {
-            'product_id': product_id,
-            'product_name': product_info.product_name,
-            'category': product_info.category,
-            'unit_price': product_info.unit_price,
-            'price_range': product_info.price_range,
-            'total_sales_count': len(summary['transactions']),
-            'total_quantity_sold': summary['total_quantity'],
-            'total_revenue': summary['total_revenue'],
-            'avg_sale_price': sum(summary['prices']) / len(summary['prices']),
-            'max_sale_price': max(summary['prices']),
-            'min_sale_price': min(summary['prices']),
-            'avg_quantity_per_sale': summary['total_quantity'] / len(summary['transactions']),
-            'first_sale_date': summary['first_date'],
-            'last_sale_date': summary['last_date'],
-            'days_since_last_sale': (datetime.now() - summary['last_date']).days,
-            'current_stock_level': inventory_info.stock_level,
-            'current_stock_value': inventory_info.stock_value,
-            'stock_status': inventory_info.stock_status,
-            'is_low_stock': inventory_info.is_low_stock,
-            'turnover_ratio': summary['total_quantity'] / inventory_info.stock_level if inventory_info.stock_level > 0 else 0,
-            'product_performance_tier': get_product_tier(summary['total_revenue']),
+    # Calculate derived metrics and load
+    for cube_key, data in cube_data.items():
+        cube_record = {
+            'sale_date': data['sale_date'],
+            'customer_id': data['customer_id'],
+            'customer_type': data['customer_type'],
+            'region': data['region'],
+            'product_id': data['product_id'],
+            'category': data['category'],
+            'price_range': data['price_range'],
+            'sale_value_range': data['sale_value_range'],
+            'transaction_count': data['transaction_count'],
+            'total_revenue': data['total_revenue'],
+            'total_quantity': data['total_quantity'],
+            'avg_transaction_value': data['total_revenue'] / data['transaction_count'],
+            'max_transaction_value': max(data['transaction_values']),
+            'min_transaction_value': min(data['transaction_values']),
             'etl_batch_id': get_current_batch_id(),
             'etl_timestamp': datetime.now()
         }
         
         # Load to DWS
-        load_product_summary(summary_record)
+        load_sales_cube(cube_record)
+```
+
+### Inventory Cube ETL
+```python
+def process_inventory_cube():
+    # Extract inventory data from DWD
+    inventory_data = extract_inventory_detail_data()
+    
+    # Get product dimension data
+    product_dim = extract_product_dimension()
+    
+    # Group by core dimensions
+    cube_data = {}
+    for inventory in inventory_data:
+        # Get product attributes
+        product_info = product_dim.get(inventory.product_id, {})
+        
+        # Create cube key
+        cube_key = (
+            inventory.last_updated.date(),
+            inventory.product_id,
+            product_info.get('category', 'Unknown'),
+            product_info.get('price_range', 'Unknown'),
+            inventory.stock_status,
+            inventory.is_low_stock,
+            inventory.is_stale_data
+        )
+        
+        if cube_key not in cube_data:
+            cube_data[cube_key] = {
+                'last_updated_date': inventory.last_updated.date(),
+                'product_id': inventory.product_id,
+                'category': product_info.get('category', 'Unknown'),
+                'price_range': product_info.get('price_range', 'Unknown'),
+                'stock_status': inventory.stock_status,
+                'is_low_stock': inventory.is_low_stock,
+                'is_stale_data': inventory.is_stale_data,
+                'product_count': 0,
+                'total_stock_level': 0,
+                'total_stock_value': 0,
+                'stock_levels': [],
+                'stock_values': [],
+                'turnover_ratios': []
+            }
+        
+        # Aggregate metrics
+        cube_data[cube_key]['product_count'] += 1
+        cube_data[cube_key]['total_stock_level'] += inventory.stock_level
+        cube_data[cube_key]['total_stock_value'] += inventory.stock_value
+        cube_data[cube_key]['stock_levels'].append(inventory.stock_level)
+        cube_data[cube_key]['stock_values'].append(inventory.stock_value)
+        cube_data[cube_key]['turnover_ratios'].append(inventory.turnover_ratio or 0)
+    
+    # Calculate derived metrics and load
+    for cube_key, data in cube_data.items():
+        cube_record = {
+            'last_updated_date': data['last_updated_date'],
+            'product_id': data['product_id'],
+            'category': data['category'],
+            'price_range': data['price_range'],
+            'stock_status': data['stock_status'],
+            'is_low_stock': data['is_low_stock'],
+            'is_stale_data': data['is_stale_data'],
+            'product_count': data['product_count'],
+            'total_stock_level': data['total_stock_level'],
+            'total_stock_value': data['total_stock_value'],
+            'avg_stock_level': data['total_stock_level'] / data['product_count'],
+            'avg_stock_value': data['total_stock_value'] / data['product_count'],
+            'avg_turnover_ratio': sum(data['turnover_ratios']) / len(data['turnover_ratios']),
+            'etl_batch_id': get_current_batch_id(),
+            'etl_timestamp': datetime.now()
+        }
+        
+        # Load to DWS
+        load_inventory_cube(cube_record)
 ```
 
 ---
 
 ## Query Performance Examples
 
-### Customer Analytics Query
+### Sales Analytics Query
 ```sql
--- Top customers by revenue (using DWS)
+-- Top performing products by category (using cube)
 SELECT 
-    customer_name,
-    customer_type,
-    region,
-    total_spent,
-    total_transactions,
-    avg_transaction_value,
-    customer_value_tier,
-    is_active_customer
-FROM dws_customer_summary
-ORDER BY total_spent DESC
-LIMIT 10;
+    category,
+    product_id,
+    SUM(total_revenue) as total_revenue,
+    SUM(total_quantity) as total_quantity,
+    SUM(transaction_count) as total_transactions,
+    AVG(avg_transaction_value) as avg_transaction_value
+FROM dws_sales_cube
+WHERE sale_date >= '2024-01-01'
+GROUP BY category, product_id
+ORDER BY category, total_revenue DESC;
 
 -- Customer segmentation analysis
 SELECT 
-    customer_value_tier,
-    COUNT(*) as customer_count,
-    AVG(total_spent) as avg_spent,
-    AVG(total_transactions) as avg_transactions,
-    SUM(total_spent) as total_revenue
-FROM dws_customer_summary
-GROUP BY customer_value_tier
+    customer_type,
+    region,
+    SUM(total_revenue) as total_revenue,
+    SUM(transaction_count) as total_transactions,
+    COUNT(DISTINCT customer_id) as unique_customers,
+    COUNT(DISTINCT product_id) as unique_products
+FROM dws_sales_cube
+WHERE sale_date >= '2024-01-01'
+GROUP BY customer_type, region
 ORDER BY total_revenue DESC;
 ```
 
-### Product Performance Query
+### Inventory Analytics Query
 ```sql
--- Top products by revenue (using DWS)
-SELECT 
-    product_name,
-    category,
-    total_revenue,
-    total_quantity_sold,
-    avg_sale_price,
-    current_stock_level,
-    turnover_ratio,
-    product_performance_tier
-FROM dws_product_summary
-ORDER BY total_revenue DESC
-LIMIT 10;
-
--- Category performance analysis
+-- Inventory status by category
 SELECT 
     category,
-    COUNT(*) as product_count,
-    SUM(total_revenue) as category_revenue,
-    AVG(turnover_ratio) as avg_turnover,
-    SUM(current_stock_value) as total_stock_value
-FROM dws_product_summary
-GROUP BY category
-ORDER BY category_revenue DESC;
-```
+    stock_status,
+    SUM(total_stock_value) as total_stock_value,
+    SUM(product_count) as product_count,
+    AVG(avg_turnover_ratio) as avg_turnover_ratio
+FROM dws_inventory_cube
+WHERE last_updated_date >= '2024-01-01'
+GROUP BY category, stock_status
+ORDER BY category, total_stock_value DESC;
 
-### Sales Trend Analysis
-```sql
--- Daily sales trends (using DWS)
+-- Low stock analysis
 SELECT 
-    sale_date,
-    total_revenue,
-    total_transactions,
-    unique_customers,
-    avg_transaction_value,
-    revenue_per_customer
-FROM dws_sales_summary_daily
-WHERE sale_date >= '2024-01-01'
-ORDER BY sale_date;
-
--- Monthly growth analysis
-SELECT 
-    sale_year,
-    sale_month,
-    total_revenue,
-    revenue_growth_rate,
-    transaction_growth_rate,
-    customer_growth_rate
-FROM dws_sales_summary_monthly
-WHERE sale_year >= 2024
-ORDER BY sale_year, sale_month;
+    category,
+    price_range,
+    SUM(product_count) as low_stock_products,
+    SUM(total_stock_value) as low_stock_value,
+    AVG(avg_turnover_ratio) as avg_turnover_ratio
+FROM dws_inventory_cube
+WHERE is_low_stock = true AND last_updated_date >= '2024-01-01'
+GROUP BY category, price_range
+ORDER BY low_stock_value DESC;
 ```
 
 ---
@@ -437,21 +428,27 @@ ORDER BY sale_year, sale_month;
 ## Benefits of This DWS Design
 
 ### 1. **Performance Benefits**
-- **Pre-aggregated Data**: Reduces computation overhead for common queries
-- **Optimized for Analytics**: Designed specifically for analytical workloads
-- **Fast Reporting**: Ready-to-use metrics for dashboards and reports
-- **Reduced Load**: Minimizes impact on DWD layer for complex queries
+- **Pre-calculated Aggregations**: Reduce computation overhead for analytical queries
+- **Fast BI Queries**: Optimized for business intelligence tools and dashboards
+- **Reduced JOINs**: Minimize complex joins in analytical queries
+- **Better Caching**: Cohesive datasets improve cache hit rates
 
-### 2. **Business Benefits**
-- **Standardized Metrics**: Consistent business metrics across the organization
-- **Quick Insights**: Fast access to key performance indicators
-- **Trend Analysis**: Built-in support for temporal analysis
-- **Segmentation**: Pre-calculated customer and product segments
+### 2. **Avoid Dimension Explosion**
+- **Core Dimensions Only**: Focus on essential business dimensions
+- **Dynamic Time Calculation**: Year/month/quarter calculated at application layer
+- **Storage Efficiency**: Reduce cube storage requirements
+- **Maintenance Simplicity**: Fewer dimension combinations to maintain
 
-### 3. **Operational Benefits**
-- **Maintenance**: Easier to maintain and update aggregated data
-- **Scalability**: Design scales with business growth
-- **Flexibility**: Support for various analytical patterns
-- **Consistency**: Ensures data consistency across different reports
+### 3. **Application Layer Flexibility**
+- **Dynamic Time Granularity**: Support any time dimension calculation
+- **Custom Aggregations**: Allow application-specific metric calculations
+- **Query Flexibility**: Enable various analytical patterns
+- **Future-Proof**: Accommodate new analytical requirements
 
-This optimized DWS design provides high-performance analytical capabilities while leveraging the benefits of the new wide table DWD architecture.
+### 4. **Business Benefits**
+- **Fast Insights**: Quick access to key performance indicators
+- **Comprehensive Analysis**: Support for various analytical patterns
+- **Data Consistency**: Standardized metrics across the organization
+- **Scalable Architecture**: Design scales with business growth
+
+This optimized DWS design provides high-performance analytical capabilities while avoiding dimension explosion and maintaining flexibility for the application layer.

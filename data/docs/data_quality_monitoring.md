@@ -1,4 +1,4 @@
-# Data Quality Monitoring and Management Framework - Wide Table Architecture
+# Data Quality Monitoring and Management Framework - Optimized Wide Table Architecture
 
 ## Overview
 This document describes the comprehensive data quality monitoring framework for the optimized wide table data warehouse architecture, including quality metrics, monitoring processes, alerting mechanisms, and remediation procedures.
@@ -49,15 +49,15 @@ class DataQualityMetrics:
 
 ---
 
-## Source Layer Data Quality Monitoring
+## DIM Layer Data Quality Monitoring
 
-### 1. Customer Data Quality Rules
+### 1. Customer Dimension Quality Rules
 
 #### Completeness Checks
 ```sql
 -- Check for missing required fields
 SELECT 
-    'customers' as table_name,
+    'dim_customer' as table_name,
     'completeness' as check_type,
     COUNT(*) as total_records,
     COUNT(*) - COUNT(customer_id) as missing_customer_id,
@@ -66,56 +66,32 @@ SELECT
     COUNT(*) - COUNT(created_at) as missing_created_at,
     COUNT(*) - COUNT(updated_at) as missing_updated_at,
     ROUND((COUNT(*) - COUNT(customer_id) - COUNT(customer_name) - COUNT(customer_type) - COUNT(created_at) - COUNT(updated_at)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM customers;
+FROM dim_customer;
 ```
 
 #### Accuracy Checks
 ```sql
 -- Check email format accuracy
 SELECT 
-    'customers' as table_name,
+    'dim_customer' as table_name,
     'email_format' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE WHEN email REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN 1 END) as valid_emails,
     COUNT(*) - COUNT(CASE WHEN email REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN 1 END) as invalid_emails,
     ROUND(COUNT(CASE WHEN email REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM customers
+FROM dim_customer
 WHERE email IS NOT NULL;
-
--- Check phone format accuracy
-SELECT 
-    'customers' as table_name,
-    'phone_format' as check_type,
-    COUNT(*) as total_records,
-    COUNT(CASE WHEN phone REGEXP '^[+]?[0-9]{10,15}$' THEN 1 END) as valid_phones,
-    COUNT(*) - COUNT(CASE WHEN phone REGEXP '^[+]?[0-9]{10,15}$' THEN 1 END) as invalid_phones,
-    ROUND(COUNT(CASE WHEN phone REGEXP '^[+]?[0-9]{10,15}$' THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM customers
-WHERE phone IS NOT NULL;
-```
-
-#### Validity Checks
-```sql
--- Check business rule validity
-SELECT 
-    'customers' as table_name,
-    'customer_type_validity' as check_type,
-    COUNT(*) as total_records,
-    COUNT(CASE WHEN customer_type IN ('regular', 'vip', 'corporate') THEN 1 END) as valid_types,
-    COUNT(*) - COUNT(CASE WHEN customer_type IN ('regular', 'vip', 'corporate') THEN 1 END) as invalid_types,
-    ROUND(COUNT(CASE WHEN customer_type IN ('regular', 'vip', 'corporate') THEN 1 END) * 100.0 / COUNT(*), 2) as validity_score
-FROM customers;
 ```
 
 ---
 
-### 2. Product Data Quality Rules
+### 2. Product Dimension Quality Rules
 
 #### Completeness Checks
 ```sql
 -- Check for missing required fields
 SELECT 
-    'products' as table_name,
+    'dim_product' as table_name,
     'completeness' as check_type,
     COUNT(*) as total_records,
     COUNT(*) - COUNT(product_id) as missing_product_id,
@@ -123,68 +99,33 @@ SELECT
     COUNT(*) - COUNT(category) as missing_category,
     COUNT(*) - COUNT(unit_price) as missing_unit_price,
     ROUND((COUNT(*) - COUNT(product_id) - COUNT(product_name) - COUNT(category) - COUNT(unit_price)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM products;
+FROM dim_product;
 ```
 
 #### Validity Checks
 ```sql
 -- Check price validity
 SELECT 
-    'products' as table_name,
+    'dim_product' as table_name,
     'price_validity' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE WHEN unit_price > 0 THEN 1 END) as valid_prices,
     COUNT(*) - COUNT(CASE WHEN unit_price > 0 THEN 1 END) as invalid_prices,
     ROUND(COUNT(CASE WHEN unit_price > 0 THEN 1 END) * 100.0 / COUNT(*), 2) as validity_score
-FROM products;
-```
-
----
-
-### 3. Sales Data Quality Rules
-
-#### Completeness Checks
-```sql
--- Check for missing required fields
-SELECT 
-    'sales' as table_name,
-    'completeness' as check_type,
-    COUNT(*) as total_records,
-    COUNT(*) - COUNT(sale_id) as missing_sale_id,
-    COUNT(*) - COUNT(product_id) as missing_product_id,
-    COUNT(*) - COUNT(product_name) as missing_product_name,
-    COUNT(*) - COUNT(quantity_sold) as missing_quantity_sold,
-    COUNT(*) - COUNT(price_per_unit) as missing_price_per_unit,
-    COUNT(*) - COUNT(total_amount) as missing_total_amount,
-    COUNT(*) - COUNT(sale_date) as missing_sale_date,
-    ROUND((COUNT(*) - COUNT(sale_id) - COUNT(product_id) - COUNT(product_name) - COUNT(quantity_sold) - COUNT(price_per_unit) - COUNT(total_amount) - COUNT(sale_date)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM sales;
-```
-
-#### Accuracy Checks
-```sql
--- Check amount calculation accuracy
-SELECT 
-    'sales' as table_name,
-    'amount_calculation' as check_type,
-    COUNT(*) as total_records,
-    COUNT(CASE WHEN ABS(total_amount - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) as accurate_calculations,
-    COUNT(*) - COUNT(CASE WHEN ABS(total_amount - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) as inaccurate_calculations,
-    ROUND(COUNT(CASE WHEN ABS(total_amount - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM sales;
+FROM dim_product;
 ```
 
 ---
 
 ## DWD Layer Data Quality Monitoring - Wide Table Architecture
 
-### 1. Transaction Detail Table Quality Monitoring
+### 1. Sales Detail Table Quality Monitoring
 
 #### Completeness Checks
 ```sql
--- Check transaction detail completeness
+-- Check sales detail completeness
 SELECT 
-    'dwd_transaction_detail' as table_name,
+    'dwd_sales_detail' as table_name,
     'completeness' as check_type,
     COUNT(*) as total_records,
     COUNT(*) - COUNT(sale_id) as missing_sale_id,
@@ -194,24 +135,24 @@ SELECT
     COUNT(*) - COUNT(sale_date) as missing_sale_date,
     COUNT(*) - COUNT(calculated_total) as missing_calculated_total,
     ROUND((COUNT(*) - COUNT(sale_id) - COUNT(product_id) - COUNT(quantity_sold) - COUNT(total_amount) - COUNT(sale_date) - COUNT(calculated_total)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM dwd_transaction_detail;
+FROM dwd_sales_detail;
 ```
 
 #### Accuracy Checks
 ```sql
 -- Check calculated total accuracy
 SELECT 
-    'dwd_transaction_detail' as table_name,
+    'dwd_sales_detail' as table_name,
     'calculated_total_accuracy' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE WHEN ABS(calculated_total - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) as accurate_calculations,
     COUNT(*) - COUNT(CASE WHEN ABS(calculated_total - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) as inaccurate_calculations,
     ROUND(COUNT(CASE WHEN ABS(calculated_total - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM dwd_transaction_detail;
+FROM dwd_sales_detail;
 
 -- Check sale value range accuracy
 SELECT 
-    'dwd_transaction_detail' as table_name,
+    'dwd_sales_detail' as table_name,
     'sale_value_range_accuracy' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE 
@@ -235,33 +176,33 @@ SELECT
              (total_amount >= 1000 AND sale_value_range = 'Premium')
         THEN 1 
     END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM dwd_transaction_detail;
+FROM dwd_sales_detail;
 ```
 
 #### Consistency Checks
 ```sql
 -- Check foreign key consistency
 SELECT 
-    'dwd_transaction_detail' as table_name,
+    'dwd_sales_detail' as table_name,
     'foreign_key_consistency' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END) as records_with_customer_id,
-    COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dwd_customer_dimension) THEN 1 END) as valid_customer_references,
-    COUNT(CASE WHEN product_id IN (SELECT product_id FROM dwd_product_dimension) THEN 1 END) as valid_product_references,
-    ROUND(COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dwd_customer_dimension) THEN 1 END) * 100.0 / COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END), 2) as customer_consistency_score,
-    ROUND(COUNT(CASE WHEN product_id IN (SELECT product_id FROM dwd_product_dimension) THEN 1 END) * 100.0 / COUNT(*), 2) as product_consistency_score
-FROM dwd_transaction_detail;
+    COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dim_customer) THEN 1 END) as valid_customer_references,
+    COUNT(CASE WHEN product_id IN (SELECT product_id FROM dim_product) THEN 1 END) as valid_product_references,
+    ROUND(COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dim_customer) THEN 1 END) * 100.0 / COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END), 2) as customer_consistency_score,
+    ROUND(COUNT(CASE WHEN product_id IN (SELECT product_id FROM dim_product) THEN 1 END) * 100.0 / COUNT(*), 2) as product_consistency_score
+FROM dwd_sales_detail;
 ```
 
 ---
 
-### 2. Inventory Snapshot Table Quality Monitoring
+### 2. Inventory Detail Table Quality Monitoring
 
 #### Completeness Checks
 ```sql
--- Check inventory snapshot completeness
+-- Check inventory detail completeness
 SELECT 
-    'dwd_inventory_snapshot' as table_name,
+    'dwd_inventory_detail' as table_name,
     'completeness' as check_type,
     COUNT(*) as total_records,
     COUNT(*) - COUNT(product_id) as missing_product_id,
@@ -270,14 +211,14 @@ SELECT
     COUNT(*) - COUNT(stock_status) as missing_stock_status,
     COUNT(*) - COUNT(stock_value) as missing_stock_value,
     ROUND((COUNT(*) - COUNT(product_id) - COUNT(stock_level) - COUNT(last_updated) - COUNT(stock_status) - COUNT(stock_value)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM dwd_inventory_snapshot;
+FROM dwd_inventory_detail;
 ```
 
 #### Accuracy Checks
 ```sql
 -- Check stock status accuracy
 SELECT 
-    'dwd_inventory_snapshot' as table_name,
+    'dwd_inventory_detail' as table_name,
     'stock_status_accuracy' as check_type,
     COUNT(*) as total_records,
     COUNT(CASE 
@@ -298,155 +239,55 @@ SELECT
              (stock_level = 0 AND stock_status = 'Out of Stock')
         THEN 1 
     END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM dwd_inventory_snapshot;
+FROM dwd_inventory_detail;
 
 -- Check stock value calculation accuracy
-    SELECT 
-    'dwd_inventory_snapshot' as table_name,
+SELECT 
+    'dwd_inventory_detail' as table_name,
     'stock_value_accuracy' as check_type,
-        COUNT(*) as total_records,
-    COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dwd_product_dimension WHERE product_id = dwd_inventory_snapshot.product_id))) < 0.01 THEN 1 END) as accurate_values,
-    COUNT(*) - COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dwd_product_dimension WHERE product_id = dwd_inventory_snapshot.product_id))) < 0.01 THEN 1 END) as inaccurate_values,
-    ROUND(COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dwd_product_dimension WHERE product_id = dwd_inventory_snapshot.product_id))) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
-FROM dwd_inventory_snapshot;
-```
-
----
-
-### 3. Customer Dimension Table Quality Monitoring
-
-#### Completeness Checks
-```sql
--- Check customer dimension completeness
-    SELECT 
-    'dwd_customer_dimension' as table_name,
-    'completeness' as check_type,
-        COUNT(*) as total_records,
-    COUNT(*) - COUNT(customer_id) as missing_customer_id,
-    COUNT(*) - COUNT(customer_name) as missing_customer_name,
-    COUNT(*) - COUNT(customer_type) as missing_customer_type,
-    COUNT(*) - COUNT(created_at) as missing_created_at,
-    ROUND((COUNT(*) - COUNT(customer_id) - COUNT(customer_name) - COUNT(customer_type) - COUNT(created_at)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM dwd_customer_dimension;
-```
-
-#### Validity Checks
-```sql
--- Check customer type validity
-    SELECT 
-    'dwd_customer_dimension' as table_name,
-    'customer_type_validity' as check_type,
-        COUNT(*) as total_records,
-    COUNT(CASE WHEN customer_type IN ('REGULAR', 'VIP', 'CORPORATE') THEN 1 END) as valid_types,
-    COUNT(*) - COUNT(CASE WHEN customer_type IN ('REGULAR', 'VIP', 'CORPORATE') THEN 1 END) as invalid_types,
-    ROUND(COUNT(CASE WHEN customer_type IN ('REGULAR', 'VIP', 'CORPORATE') THEN 1 END) * 100.0 / COUNT(*), 2) as validity_score
-FROM dwd_customer_dimension;
-```
-
----
-
-### 4. Product Dimension Table Quality Monitoring
-
-#### Completeness Checks
-```sql
--- Check product dimension completeness
-    SELECT 
-    'dwd_product_dimension' as table_name,
-    'completeness' as check_type,
     COUNT(*) as total_records,
-    COUNT(*) - COUNT(product_id) as missing_product_id,
-    COUNT(*) - COUNT(product_name) as missing_product_name,
-    COUNT(*) - COUNT(category) as missing_category,
-    COUNT(*) - COUNT(unit_price) as missing_unit_price,
-    ROUND((COUNT(*) - COUNT(product_id) - COUNT(product_name) - COUNT(category) - COUNT(unit_price)) * 100.0 / COUNT(*), 2) as completeness_score
-FROM dwd_product_dimension;
-```
-
-#### Validity Checks
-```sql
--- Check price range validity
-    SELECT 
-    'dwd_product_dimension' as table_name,
-    'price_range_validity' as check_type,
-        COUNT(*) as total_records,
-    COUNT(CASE 
-        WHEN (unit_price < 50 AND price_range = 'Low') OR
-             (unit_price >= 50 AND unit_price < 200 AND price_range = 'Medium') OR
-             (unit_price >= 200 AND unit_price < 1000 AND price_range = 'High') OR
-             (unit_price >= 1000 AND price_range = 'Premium')
-        THEN 1 
-    END) as accurate_ranges,
-    COUNT(*) - COUNT(CASE 
-        WHEN (unit_price < 50 AND price_range = 'Low') OR
-             (unit_price >= 50 AND unit_price < 200 AND price_range = 'Medium') OR
-             (unit_price >= 200 AND unit_price < 1000 AND price_range = 'High') OR
-             (unit_price >= 1000 AND price_range = 'Premium')
-        THEN 1 
-    END) as inaccurate_ranges,
-    ROUND(COUNT(CASE 
-        WHEN (unit_price < 50 AND price_range = 'Low') OR
-             (unit_price >= 50 AND unit_price < 200 AND price_range = 'Medium') OR
-             (unit_price >= 200 AND unit_price < 1000 AND price_range = 'High') OR
-             (unit_price >= 1000 AND price_range = 'Premium')
-        THEN 1 
-    END) * 100.0 / COUNT(*), 2) as validity_score
-FROM dwd_product_dimension;
+    COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dim_product WHERE product_id = dwd_inventory_detail.product_id))) < 0.01 THEN 1 END) as accurate_values,
+    COUNT(*) - COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dim_product WHERE product_id = dwd_inventory_detail.product_id))) < 0.01 THEN 1 END) as inaccurate_values,
+    ROUND(COUNT(CASE WHEN ABS(stock_value - (stock_level * (SELECT unit_price FROM dim_product WHERE product_id = dwd_inventory_detail.product_id))) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
+FROM dwd_inventory_detail;
 ```
 
 ---
 
-## DWS Layer Data Quality Monitoring
+## DWS Layer Data Quality Monitoring - Data Cube Architecture
 
-### 1. Customer Summary Quality Monitoring
+### 1. Sales Cube Quality Monitoring
 
 #### Accuracy Checks
 ```sql
--- Verify customer summary accuracy
-    SELECT 
-    'dws_customer_summary' as table_name,
-    'summary_accuracy' as check_type,
+-- Verify sales cube accuracy
+SELECT 
+    'dws_sales_cube' as table_name,
+    'cube_accuracy' as check_type,
     COUNT(*) as total_records,
-    COUNT(CASE WHEN total_transactions = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE customer_id = dws_customer_summary.customer_id) THEN 1 END) as accurate_transaction_counts,
-    COUNT(CASE WHEN ABS(total_spent - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE customer_id = dws_customer_summary.customer_id)) < 0.01 THEN 1 END) as accurate_total_spent,
-    ROUND(COUNT(CASE WHEN total_transactions = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE customer_id = dws_customer_summary.customer_id) THEN 1 END) * 100.0 / COUNT(*), 2) as transaction_accuracy_score,
-    ROUND(COUNT(CASE WHEN ABS(total_spent - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE customer_id = dws_customer_summary.customer_id)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as spending_accuracy_score
-FROM dws_customer_summary;
+    COUNT(CASE WHEN transaction_count = (SELECT COUNT(*) FROM dwd_sales_detail WHERE sale_date = dws_sales_cube.sale_date AND customer_id = dws_sales_cube.customer_id AND product_id = dws_sales_cube.product_id) THEN 1 END) as accurate_transaction_counts,
+    COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_sales_detail WHERE sale_date = dws_sales_cube.sale_date AND customer_id = dws_sales_cube.customer_id AND product_id = dws_sales_cube.product_id)) < 0.01 THEN 1 END) as accurate_revenue,
+    ROUND(COUNT(CASE WHEN transaction_count = (SELECT COUNT(*) FROM dwd_sales_detail WHERE sale_date = dws_sales_cube.sale_date AND customer_id = dws_sales_cube.customer_id AND product_id = dws_sales_cube.product_id) THEN 1 END) * 100.0 / COUNT(*), 2) as transaction_accuracy_score,
+    ROUND(COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_sales_detail WHERE sale_date = dws_sales_cube.sale_date AND customer_id = dws_sales_cube.customer_id AND product_id = dws_sales_cube.product_id)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as revenue_accuracy_score
+FROM dws_sales_cube;
 ```
 
 ---
 
-### 2. Product Summary Quality Monitoring
+### 2. Inventory Cube Quality Monitoring
 
 #### Accuracy Checks
 ```sql
--- Verify product summary accuracy
-    SELECT 
-    'dws_product_summary' as table_name,
-    'summary_accuracy' as check_type,
+-- Verify inventory cube accuracy
+SELECT 
+    'dws_inventory_cube' as table_name,
+    'cube_accuracy' as check_type,
     COUNT(*) as total_records,
-    COUNT(CASE WHEN total_sales_count = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE product_id = dws_product_summary.product_id) THEN 1 END) as accurate_sales_counts,
-    COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE product_id = dws_product_summary.product_id)) < 0.01 THEN 1 END) as accurate_revenue,
-    ROUND(COUNT(CASE WHEN total_sales_count = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE product_id = dws_product_summary.product_id) THEN 1 END) * 100.0 / COUNT(*), 2) as sales_accuracy_score,
-    ROUND(COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE product_id = dws_product_summary.product_id)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as revenue_accuracy_score
-FROM dws_product_summary;
-```
-
----
-
-### 3. Sales Summary Quality Monitoring
-
-#### Accuracy Checks
-```sql
--- Verify daily sales summary accuracy
-    SELECT 
-    'dws_sales_summary_daily' as table_name,
-    'summary_accuracy' as check_type,
-    COUNT(*) as total_records,
-    COUNT(CASE WHEN total_transactions = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE DATE(sale_date) = dws_sales_summary_daily.sale_date) THEN 1 END) as accurate_transaction_counts,
-    COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE DATE(sale_date) = dws_sales_summary_daily.sale_date)) < 0.01 THEN 1 END) as accurate_revenue,
-    ROUND(COUNT(CASE WHEN total_transactions = (SELECT COUNT(*) FROM dwd_transaction_detail WHERE DATE(sale_date) = dws_sales_summary_daily.sale_date) THEN 1 END) * 100.0 / COUNT(*), 2) as transaction_accuracy_score,
-    ROUND(COUNT(CASE WHEN ABS(total_revenue - (SELECT SUM(total_amount) FROM dwd_transaction_detail WHERE DATE(sale_date) = dws_sales_summary_daily.sale_date)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as revenue_accuracy_score
-FROM dws_sales_summary_daily;
+    COUNT(CASE WHEN product_count = (SELECT COUNT(*) FROM dwd_inventory_detail WHERE last_updated_date = dws_inventory_cube.last_updated_date AND product_id = dws_inventory_cube.product_id) THEN 1 END) as accurate_product_counts,
+    COUNT(CASE WHEN ABS(total_stock_value - (SELECT SUM(stock_value) FROM dwd_inventory_detail WHERE last_updated_date = dws_inventory_cube.last_updated_date AND product_id = dws_inventory_cube.product_id)) < 0.01 THEN 1 END) as accurate_stock_values,
+    ROUND(COUNT(CASE WHEN product_count = (SELECT COUNT(*) FROM dwd_inventory_detail WHERE last_updated_date = dws_inventory_cube.last_updated_date AND product_id = dws_inventory_cube.product_id) THEN 1 END) * 100.0 / COUNT(*), 2) as product_count_accuracy_score,
+    ROUND(COUNT(CASE WHEN ABS(total_stock_value - (SELECT SUM(stock_value) FROM dwd_inventory_detail WHERE last_updated_date = dws_inventory_cube.last_updated_date AND product_id = dws_inventory_cube.product_id)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as stock_value_accuracy_score
+FROM dws_inventory_cube;
 ```
 
 ---
@@ -469,7 +310,7 @@ class DataQualityMonitor:
     def run_completeness_check(self, table_name, required_fields):
         """Run completeness check for specified table and fields"""
         query = f"""
-        SELECT 
+    SELECT 
             '{table_name}' as table_name,
             'completeness' as check_type,
             COUNT(*) as total_records,
@@ -538,24 +379,24 @@ class DataQualityMonitor:
     def get_required_fields(self, table_name):
         """Get required fields for completeness check"""
         field_mapping = {
-            'dwd_transaction_detail': ['sale_id', 'product_id', 'quantity_sold', 'total_amount', 'sale_date'],
-            'dwd_inventory_snapshot': ['product_id', 'stock_level', 'last_updated', 'stock_status'],
-            'dwd_customer_dimension': ['customer_id', 'customer_name', 'customer_type'],
-            'dwd_product_dimension': ['product_id', 'product_name', 'category', 'unit_price']
+            'dwd_sales_detail': ['sale_id', 'product_id', 'quantity_sold', 'total_amount', 'sale_date'],
+            'dwd_inventory_detail': ['product_id', 'stock_level', 'last_updated', 'stock_status'],
+            'dim_customer': ['customer_id', 'customer_name', 'customer_type'],
+            'dim_product': ['product_id', 'product_name', 'category', 'unit_price']
         }
         return field_mapping.get(table_name, [])
     
     def get_accuracy_rules(self, table_name):
         """Get accuracy rules for specified table"""
         rules_mapping = {
-            'dwd_transaction_detail': {
+            'dwd_sales_detail': {
                 'calculated_total_accuracy': """
                     COUNT(*) as total_records,
                     COUNT(CASE WHEN ABS(calculated_total - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) as accurate_calculations,
                     ROUND(COUNT(CASE WHEN ABS(calculated_total - (quantity_sold * price_per_unit)) < 0.01 THEN 1 END) * 100.0 / COUNT(*), 2) as accuracy_score
                 """
             },
-            'dwd_inventory_snapshot': {
+            'dwd_inventory_detail': {
                 'stock_status_accuracy': """
                     COUNT(*) as total_records,
                     COUNT(CASE 
@@ -578,12 +419,12 @@ class DataQualityMonitor:
     def get_consistency_rules(self, table_name):
         """Get consistency rules for specified table"""
         rules_mapping = {
-            'dwd_transaction_detail': {
+            'dwd_sales_detail': {
                 'foreign_key_consistency': """
                     COUNT(*) as total_records,
                     COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END) as records_with_customer_id,
-                    COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dwd_customer_dimension) THEN 1 END) as valid_customer_references,
-                    ROUND(COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dwd_customer_dimension) THEN 1 END) * 100.0 / COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END), 2) as consistency_score
+                    COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dim_customer) THEN 1 END) as valid_customer_references,
+                    ROUND(COUNT(CASE WHEN customer_id IS NOT NULL AND customer_id IN (SELECT customer_id FROM dim_customer) THEN 1 END) * 100.0 / COUNT(CASE WHEN customer_id IS NOT NULL THEN 1 END), 2) as consistency_score
                 """
             }
         }
@@ -591,9 +432,9 @@ class DataQualityMonitor:
     
     def generate_quality_report(self):
         """Generate comprehensive quality report"""
-        tables = ['dwd_transaction_detail', 'dwd_inventory_snapshot', 'dwd_customer_dimension', 'dwd_product_dimension']
+        tables = ['dwd_sales_detail', 'dwd_inventory_detail', 'dim_customer', 'dim_product']
         report = {}
-        
+    
         for table in tables:
             report[table] = {
                 'overall_score': self.calculate_overall_quality_score(table),
@@ -644,12 +485,12 @@ class QualityAlertSystem:
                     'severity': 'HIGH' if metrics['overall_score'] < 80 else 'MEDIUM'
                 }
                 alerts.append(alert)
-        
-        return alerts
     
+    return alerts
+
     def send_alerts(self, alerts):
         """Send alerts through configured channels"""
-        for alert in alerts:
+    for alert in alerts:
             message = f"Data Quality Alert: {alert['table']} scored {alert['score']:.2f}% (threshold: {alert['threshold']}%)"
             
             for channel in self.alert_channels:
@@ -670,9 +511,9 @@ class DataCorrectionEngine:
         self.conn = sqlite3.connect(db_path)
     
     def correct_calculated_totals(self):
-        """Correct calculated_total field in transaction detail"""
+        """Correct calculated_total field in sales detail"""
         query = """
-        UPDATE dwd_transaction_detail 
+        UPDATE dwd_sales_detail 
         SET calculated_total = quantity_sold * price_per_unit
         WHERE ABS(calculated_total - (quantity_sold * price_per_unit)) > 0.01
         """
@@ -685,9 +526,9 @@ class DataCorrectionEngine:
         return corrected_count
     
     def correct_stock_status(self):
-        """Correct stock_status field in inventory snapshot"""
+        """Correct stock_status field in inventory detail"""
         query = """
-        UPDATE dwd_inventory_snapshot 
+        UPDATE dwd_inventory_detail 
         SET stock_status = CASE 
             WHEN stock_level > 10 THEN 'In Stock'
             WHEN stock_level > 0 THEN 'Low Stock'
@@ -710,7 +551,7 @@ class DataCorrectionEngine:
     def correct_price_ranges(self):
         """Correct price_range field in product dimension"""
         query = """
-        UPDATE dwd_product_dimension 
+        UPDATE dim_product 
         SET price_range = CASE 
             WHEN unit_price < 50 THEN 'Low'
             WHEN unit_price < 200 THEN 'Medium'
