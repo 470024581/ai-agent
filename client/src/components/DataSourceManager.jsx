@@ -202,7 +202,7 @@ function DataSourceManager() {
     const fileExtension = file.name.split('.').pop().toLowerCase();
     
     // Only document types are supported now
-    const allowedTypes = ['pdf', 'txt', 'docx'];
+    const allowedTypes = ['pdf', 'txt', 'docx', 'md'];
     const typeErrorMessage = t('unsupportedFileTypeDoc', { allowedTypes: allowedTypes.join(', ') });
     
     if (!allowedTypes.includes(fileExtension)) {

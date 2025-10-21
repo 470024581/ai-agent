@@ -322,7 +322,8 @@ async def upload_file(
             '.pdf': FileType.PDF,
             '.docx': FileType.DOCX,
             '.doc': FileType.DOCX,
-            '.txt': FileType.TEXT
+            '.txt': FileType.TEXT,
+            '.md': FileType.MD
         }
         
         file_type = file_type_mapping.get(file_extension, FileType.UNKNOWN)

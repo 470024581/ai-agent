@@ -33,13 +33,13 @@ async def process_uploaded_file(
         logger.info(f"[FileProcessor] File ID: {file_id} - Status set to PROCESSING. Datasource type: {ds_type}")
 
         # Only process document files for KNOWLEDGE_BASE and HYBRID data sources
-        if ds_type in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value] and file_type.lower() in [FileType.PDF.value, FileType.DOCX.value, FileType.TEXT.value]:
+        if ds_type in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value] and file_type.lower() in [FileType.PDF.value, FileType.DOCX.value, FileType.TEXT.value, FileType.MD.value]:
             
             logger.info(f"[FileProcessor] Processing '{file_type}' file '{original_filename}' for document knowledge base (DS type: {ds_type}).")
             
             # Simulate document processing (text extraction and chunking)
             # In a real implementation, this would:
-            # 1. Extract text from PDF/DOCX/TXT files
+            # 1. Extract text from PDF/DOCX/TXT/MD files
             # 2. Split text into chunks
             # 3. Generate embeddings
             # 4. Store in vector database
@@ -56,7 +56,7 @@ async def process_uploaded_file(
             
         else:
             # Unsupported file type or datasource type
-            error_msg = f"File type '{file_type}' is not supported for datasource type '{ds_type}'. Only PDF, DOCX, and TXT files are supported for document processing."
+            error_msg = f"File type '{file_type}' is not supported for datasource type '{ds_type}'. Only PDF, DOCX, TXT, and MD files are supported for document processing."
             logger.warning(f"[FileProcessor] {error_msg}")
             await update_file_processing_status(file_id, status=ProcessingStatus.FAILED.value, error_message=error_msg)
 

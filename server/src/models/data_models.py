@@ -23,6 +23,8 @@ class FileType(str, Enum):
     TXT = "txt"
     TEXT = "txt"  # Alias for TXT
     DOCX = "docx"
+    MD = "md"
+    MARKDOWN = "md"  # Alias for MD
     UNKNOWN = "unknown"
 
 class ProcessingStatus(str, Enum):

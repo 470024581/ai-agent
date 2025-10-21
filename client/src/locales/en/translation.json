@@ -34,8 +34,8 @@
   "dataSource.enterName": "Please enter data source name",
   "dataSourceDescriptionOptional": "Data source description (optional)",
   "enterDataSourceDescription": "Enter data source description",
-  "dataSource.ragHint": "Document RAG data source (NOT a relational database). Only PDF/DOCX/TXT are supported and queries run via retrieval-augmented generation.",
-  "dataSource.ragHintShort": "Document RAG data source. Only PDF/DOCX/TXT are supported; queries run via RAG.",
+  "dataSource.ragHint": "Document RAG data source (NOT a relational database). Only PDF/DOCX/TXT/MD are supported and queries run via retrieval-augmented generation.",
+  "dataSource.ragHintShort": "Document RAG data source. Only PDF/DOCX/TXT/MD are supported; queries run via RAG.",
   "knowledgeBaseDocsRAG": "Document Knowledge Base (RAG, Local Embedding)",
   "hybridDataSource": "Hybrid Data Source (Document Processing)",
   "defaultERFormatted": "Built-in ERP System (Customers, Products, Orders, Sales, Inventory)",
@@ -231,7 +231,7 @@
     "knowledgeBase": "Document Knowledge Base",
     "hybrid": "Hybrid Data Source"
   },
-  "hybridDataSourceDescription": "Hybrid data source supports multiple file types: CSV/Excel files will be processed via SQL, TXT/PDF/Word files will be processed via RAG",
+  "hybridDataSourceDescription": "Hybrid data source supports multiple file types: CSV/Excel files will be processed via SQL, TXT/PDF/Word/MD files will be processed via RAG",
   "hybridDataSourceHelp": "Suitable for scenarios requiring both structured data (tables) and unstructured data (documents) processing",
   "intelligentAnalysis": {
     "title": "Intelligent Analysis",

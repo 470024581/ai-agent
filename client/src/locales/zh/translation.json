@@ -34,8 +34,8 @@
   "dataSource.enterName": "请输入数据源名称",
   "dataSourceDescriptionOptional": "数据源描述信息（可选）",
   "enterDataSourceDescription": "输入数据源描述信息",
-  "dataSource.ragHint": "文档型 RAG 数据源（不是关系型数据库）。仅支持上传 PDF/DOCX/TXT，并通过检索增强进行问答。",
-  "dataSource.ragHintShort": "文档型 RAG 数据源。仅支持上传 PDF/DOCX/TXT，并通过检索增强进行问答。",
+  "dataSource.ragHint": "文档型 RAG 数据源（不是关系型数据库）。仅支持上传 PDF/DOCX/TXT/MD，并通过检索增强进行问答。",
+  "dataSource.ragHintShort": "文档型 RAG 数据源。仅支持上传 PDF/DOCX/TXT/MD，并通过检索增强进行问答。",
   "knowledgeBaseDocsRAG": "文档知识库 (RAG, 本地Embedding)",
   "hybridDataSource": "混合数据源 (文档处理)",
   "defaultERFormatted": "内置ERP系统 (客户、产品、订单、销售、库存)",
@@ -194,7 +194,7 @@
     "knowledgeBase": "文档知识库",
     "hybrid": "混合数据源"
   },
-  "hybridDataSourceDescription": "混合数据源支持多种文件类型：CSV/Excel文件将进行SQL处理，TXT/PDF/Word文件将进行RAG处理",
+  "hybridDataSourceDescription": "混合数据源支持多种文件类型：CSV/Excel文件将进行SQL处理，TXT/PDF/Word/MD文件将进行RAG处理",
   "hybridDataSourceHelp": "适用于需要同时处理结构化数据（表格）和非结构化数据（文档）的场景",
   "intelligentAnalysis": {
     "title": "智能分析",
