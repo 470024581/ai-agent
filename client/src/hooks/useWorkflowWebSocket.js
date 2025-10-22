@@ -43,6 +43,9 @@ const useWorkflowWebSocket = () => {
       console.log('WebSocket message received:', data);
       console.log('Message type:', data.type, 'Execution ID:', data.execution_id);
 
+      // Define main workflow nodes that should update currentNode
+      const mainNodes = ['rag_query_node', 'sql_query_node', 'intent_analysis_node', 'chart_process_node', 'llm_processing_node'];
+
       switch (data.type) {
         case 'execution_started':
           dispatch(startExecution({
@@ -53,21 +56,27 @@ const useWorkflowWebSocket = () => {
           break;
 
         case 'node_started':
-          dispatch(startNode({
-            executionId: data.execution_id,
-            nodeId: data.node_id,
-            timestamp: data.timestamp,
-            nodeType: data.data?.node_type
-          }));
+          // Only update currentNode for main workflow nodes, not internal sub-nodes
+          if (mainNodes.includes(data.node_id)) {
+            dispatch(startNode({
+              executionId: data.execution_id,
+              nodeId: data.node_id,
+              timestamp: data.timestamp,
+              nodeType: data.data?.node_type
+            }));
+          }
           break;
 
         case 'node_completed':
-          dispatch(completeNode({
-            executionId: data.execution_id,
-            nodeId: data.node_id,
-            timestamp: data.timestamp,
-            output: data.data?.output
-          }));
+          // Only update currentNode for main workflow nodes, not internal sub-nodes
+          if (mainNodes.includes(data.node_id)) {
+            dispatch(completeNode({
+              executionId: data.execution_id,
+              nodeId: data.node_id,
+              timestamp: data.timestamp,
+              output: data.data?.output
+            }));
+          }
           break;
 
         case 'token_stream':

@@ -39,7 +39,7 @@ def run_command(command, description):
             print(result.stdout)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         if e.stderr:
             print(f"Error details: {e.stderr}")
         return False
@@ -49,10 +49,10 @@ def check_python():
     try:
         result = subprocess.run([sys.executable, "--version"], capture_output=True, text=True)
         python_version = result.stdout.strip()
-        print(f"✓ Python found: {python_version}")
+        print(f"Python found: {python_version}")
         return True
     except Exception as e:
-        print(f"❌ Python check failed: {e}")
+        print(f"Python check failed: {e}")
         return False
 
 def check_dependencies():
@@ -68,21 +68,21 @@ def check_dependencies():
             missing_packages.append(package)
     
     if missing_packages:
-        print(f"❌ Missing packages: {missing_packages}")
+        print(f"Missing packages: {missing_packages}")
         requirements_file = Path(__file__).parent / "requirements.txt"
         if requirements_file.exists():
             print(f"Installing dependencies from {requirements_file}...")
             return run_command([sys.executable, "-m", "pip", "install", "-r", str(requirements_file)], "Installing dependencies")
         else:
-            print(f"❌ requirements.txt not found at {requirements_file}. Please create it or install manually.")
+            print(f"requirements.txt not found at {requirements_file}. Please create it or install manually.")
             return False
     else:
-        print("✓ All required packages are installed (including LangServe)")
+        print("All required packages are installed (including LangServe)")
         return True
 
 def start_server(reload=True):
     """Start the FastAPI server"""
-    print("\n🌟 Starting FastAPI server...")
+    print("\nStarting FastAPI server...")
     os.environ["PYTHONPATH"] = str(Path(__file__).parent)
     # Centralized logging: build dictConfig for uvicorn + application (deep copy!)
     log_config = copy.deepcopy(UVICORN_LOGGING_CONFIG)
@@ -156,10 +156,10 @@ def main():
     if args.no_reload:
         args.reload = False
     
-    print("🚀 Starting Smart Backend Service (LangServe Integrated)...")
-    print(f"📍 Service address: http://{args.host}:{args.port}")
-    print(f"📖 API documentation: http://{args.host}:{args.port}/docs")
-    print(f"🔗 LangServe routes: http://{args.host}:{args.port}/langserve/*/docs")
+    print("Starting Smart Backend Service (LangServe Integrated)...")
+    print(f"Service address: http://{args.host}:{args.port}")
+    print(f"API documentation: http://{args.host}:{args.port}/docs")
+    print(f"LangServe routes: http://{args.host}:{args.port}/langserve/*/docs")
     
     # Check environment configuration
     check_environment()
@@ -168,16 +168,16 @@ def main():
     config.ensure_directories()
     
     # Initialize application state
-    print("\n🔧 Initializing application state...")
+    print("\nInitializing application state...")
     try:
         initialize_app_state()
-        print("✅ Application state initialization completed")
+        print("Application state initialization completed")
     except Exception as e:
-        print(f"❌ Application state initialization failed: {e}")
-        print("⚠️  Service may not work properly")
+        print(f"Application state initialization failed: {e}")
+        print("Service may not work properly")
     
-    print(f"\n🌟 Startup mode: {'Development' if args.reload else 'Production'}")
-    print("🔧 Integrated features: LangServe + FastAPI")
+    print(f"\nStartup mode: {'Development' if args.reload else 'Production'}")
+    print("Integrated features: LangServe + FastAPI")
     print("Press Ctrl+C to stop the service\n")
     
     # Start server
@@ -207,7 +207,7 @@ def main():
         ]:
             logging.getLogger(name).setLevel(getattr(logging, log_level, logging.INFO))
         
-        print(f"🔧 Python logging configured - Level: {log_level}")
+        print(f"Python logging configured - Level: {log_level}")
 
         # Optional debug attach
         if args.debug:
@@ -215,18 +215,18 @@ def main():
                 import debugpy
                 debug_host = os.environ.get("DEBUGPY_HOST", "127.0.0.1")
                 debug_port = int(os.environ.get("DEBUGPY_PORT", "5678"))
-                print(f"🐞 Waiting for debugger attach on {debug_host}:{debug_port} ...")
+                print(f"Waiting for debugger attach on {debug_host}:{debug_port} ...")
                 debugpy.listen((debug_host, debug_port))
                 debugpy.wait_for_client()
-                print("🐞 Debugger attached.")
+                print("Debugger attached.")
             except Exception as e:
-                print(f"⚠️  debugpy attach failed: {e}")
+                print(f"debugpy attach failed: {e}")
         
         start_server(reload=args.reload)
     except KeyboardInterrupt:
-        print("\n👋 Server stopped")
+        print("\nServer stopped")
     except Exception as e:
-        print(f"\n❌ Server startup failed: {e}")
+        print(f"\nServer startup failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

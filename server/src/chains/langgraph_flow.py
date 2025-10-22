@@ -164,28 +164,63 @@ class HITLInterruptedException(Exception):
         super().__init__(f"Execution {execution_id} interrupted at node {node_name}")
 
 # GraphState definition moved to top
-# GraphState definition
+# GraphState definition - Updated for new workflow
 class GraphState(TypedDict):
-    """Define graph state"""
+    """Define graph state for hybrid query workflow"""
+    # === Basic fields ===
     user_input: str
-    query_type: str  # "sql" or "rag"
-    sql_task_type: str  # "query" or "chart"
-    structured_data: Optional[Dict[str, Any]]
-    chart_config: Optional[Dict[str, Any]]
-    chart_image: Optional[str]
-    answer: str
-    quality_score: int
-    retry_count: int
     datasource: Dict[str, Any]
-    error: Optional[str]
     execution_id: str  # For WebSocket routing and token streaming
     
-    # HITL (Human-in-the-Loop) state fields
+    # === Intent analysis results ===
+    query_path: str  # "rag_only" | "sql_only" | "rag_sql"
+    need_chart: bool  # Whether chart visualization is needed
+    analysis_reasoning: str  # LLM reasoning process
+    detected_keywords: List[str]  # Detected keywords from query
+    
+    # === Legacy fields (for backward compatibility) ===
+    query_type: Optional[str]  # "sql" or "rag" - deprecated but kept for compatibility
+    sql_task_type: Optional[str]  # "query" or "chart" - deprecated
+    
+    # === RAG related ===
+    rag_result: Optional[str]  # Retrieved document content
+    rag_sources: Optional[List[str]]  # Source file list
+    rag_confidence: Optional[float]  # Retrieval confidence score
+    rag_executed: bool  # Flag to prevent duplicate RAG execution
+    
+    # === SQL related ===
+    structured_data: Optional[Dict[str, Any]]  # Query result data
+    sql_answer: Optional[str]  # Initial SQL result description
+    executed_sql: Optional[str]  # Executed SQL statement
+    
+    # === Merged results (for rag_sql path) ===
+    merged_context: Optional[str]  # Integrated context from RAG + SQL
+    data_with_metadata: Optional[Dict[str, Any]]  # Data with metadata annotations
+    
+    # === Chart related ===
+    chart_config: Optional[Dict[str, Any]]  # Chart configuration
+    chart_data: Optional[List[Dict]]  # Chart data
+    chart_type: Optional[str]  # Chart type
+    chart_image: Optional[str]  # Legacy field - chart image path
+    
+    # === Final output ===
+    answer: str  # Final natural language answer
+    final_result: Optional[Dict[str, Any]]  # Complete result package
+    
+    # === Quality and error ===
+    quality_score: int
+    retry_count: int
+    error: Optional[str]
+    
+    # === HITL (Human-in-the-Loop) ===
     hitl_status: Optional[str]  # "paused", "interrupted", "resumed", None
     hitl_node: Optional[str]  # Node where HITL action occurred
     hitl_reason: Optional[str]  # Reason for HITL action
     hitl_parameters: Optional[Dict[str, Any]]  # Parameters for adjustment
     hitl_timestamp: Optional[str]  # Timestamp of HITL action
+    
+    # === Node outputs tracking ===
+    node_outputs: Dict[str, Any]  # Track outputs from each node
 
 # LangGraph native interrupt implementation
 def check_interrupt_status(state: GraphState) -> str:
@@ -262,103 +297,179 @@ def apply_hitl_parameters(state: Dict[str, Any], parameters: Dict[str, Any]) -> 
 
 # Remove duplicate GraphState definition
 
-def router_node(state: GraphState) -> GraphState:
-    """Router node: determine whether to use SQL or RAG based on user input"""
+def intent_analysis_node(state: GraphState) -> GraphState:
+    """Intent Analysis Node: Optimized single-call intent analysis"""
     user_input = state["user_input"]
+    execution_id = state.get("execution_id", "unknown")
+    
+    logger.info(f"Intent Analysis Node - Analyzing query: {user_input}")
     
     if not llm:
-        logger.warning("LLM not available, using fallback rule-based routing")
-        # Fallback to simple rule-based routing
-        sql_keywords = [
-            "sales", "count", "sum", "average", "total", "report", "data", "table", 
-            "chart", "graph", "visualization", "trend", "statistics", "analysis",
-            "product", "inventory", "amount", "quantity", "value", "calculate",
-            "show me", "how many", "how much", "what is the", "pie chart", "bar chart",
-            "line chart", "proportion", "percentage", "distribution", "breakdown"
-        ]
+        logger.warning("LLM not available, using fallback rule-based intent analysis")
+        return _fallback_intent_analysis(state)
+    
+    try:
+        # Optimized single-call analysis
+        analysis_prompt = f"""
+        Analyze this user query and determine the execution path: "{user_input}"
         
-        if any(keyword in user_input.lower() for keyword in sql_keywords):
-            query_type = "sql"
-        else:
-            query_type = "rag"
-    else:
-        # Use LLM for semantic understanding
+        Analysis steps:
+        1. Identify if query asks about documents/concepts/designs/metadata
+        2. Identify if query asks about database data/statistics/numbers  
+        3. Check for chart/visualization keywords
+        4. Determine if both knowledge and data are needed
+        
+        Keywords to check:
+        - Chart: chart, graph, visualization, pie chart, bar chart, line chart, 图表, 可视化, 饼图, 柱状图, 折线图
+        - Data: data, query, sales, order, product, 数据, 查询, 统计, 分析, 销售, 订单, 产品
+        - Documents: meaning, definition, design, concept, explain, 含义, 定义, 设计, 方案, 原则, 概念, 解释
+        
+        Return ONLY a JSON response:
+        {{
+            "query_path": "rag_only|sql_only|rag_sql",
+            "need_chart": true/false,
+            "reasoning": "Brief explanation of your decision",
+            "detected_keywords": ["keyword1", "keyword2"]
+        }}
+        """
+        
+        response = llm.invoke(analysis_prompt)
+        response_text = _extract_content(response)
+        logger.info(f"Intent Analysis - Response: {response_text[:200]}...")
+        
+        # Parse JSON response
         try:
-            prompt = f"""
-            Analyze the following user query and determine the most appropriate processing method:
-            1. sql - Data analysis, statistics, calculations, reports, charts, visualizations (requires structured data from database)
-               Examples: "show sales data", "generate pie chart", "sales proportion", "monthly trends", "product analysis"
-            2. rag - Knowledge search, document questions, explanations, general information (requires document search)
-               Examples: "what is machine learning", "explain the concept", "tell me about the company"
-            
-            User query: "{user_input}"
-            
-            Key indicators for SQL:
-            - Chart/graph requests (pie chart, bar chart, line chart)
-            - Data analysis (sales, products, trends, proportions)
-            - Statistical calculations (sum, count, average)
-            - Database queries (show me data, analyze results)
-            
-            Based on the query content, should this be processed with 'sql' or 'rag'?
-            Only answer 'sql' or 'rag' (lowercase, no explanation needed).
-            """
-            
-            response = llm.invoke(prompt)
-            
-            # Handle different response types
-            if hasattr(response, 'content'):
-                raw_response = response.content.strip().lower()
-            elif isinstance(response, str):
-                raw_response = response.strip().lower()
-            else:
-                raw_response = str(response).strip().lower()
-            
-            # Extract the first word/line (Bedrock may add explanations)
-            # Try to extract just 'sql' or 'rag' from the response
-            query_type = None
-            
-            # Check if response contains 'sql' or 'rag' in the first line
-            first_line = raw_response.split('\n')[0].strip()
-            
-            # Try exact match on first line/word
-            if first_line in ["sql", "rag"]:
-                query_type = first_line
-            # Try to find sql or rag in first line
-            elif "sql" in first_line and "rag" not in first_line:
-                query_type = "sql"
-            elif "rag" in first_line and "sql" not in first_line:
-                query_type = "rag"
-            # Try to find in full response
-            elif "rag" in raw_response and "sql" not in raw_response[:20]:  # Check first 20 chars
-                query_type = "rag"
-            elif "sql" in raw_response and "rag" not in raw_response[:20]:
-                query_type = "sql"
-            
-            # Validate response
-            if not query_type or query_type not in ["sql", "rag"]:
-                logger.warning(f"Invalid LLM routing response: {raw_response[:200]}, defaulting to sql")
-                query_type = "sql"
-            else:
-                logger.info(f"Router extracted '{query_type}' from response: {raw_response[:100]}")
+            import json
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                decision_json = json.loads(response_text[json_start:json_end])
                 
-        except Exception as e:
-            logger.error(f"Error in LLM routing: {e}, falling back to rule-based")
-            # Fallback to rule-based
-            sql_keywords = [
-                "sales", "count", "sum", "average", "total", "report", "data", "table", 
-                "chart", "graph", "visualization", "trend", "statistics", "analysis",
-                "product", "inventory", "amount", "quantity", "value", "calculate",
-                "show me", "how many", "how much", "what is the"
-            ]
-            
-            if any(keyword in user_input.lower() for keyword in sql_keywords):
-                query_type = "sql"
+                query_path = decision_json.get("query_path", "rag_only")
+                need_chart = decision_json.get("need_chart", False)
+                reasoning = decision_json.get("reasoning", "No reasoning provided")
+                detected_keywords = decision_json.get("detected_keywords", [])
+                
+                # Validate query_path
+                if query_path not in ["rag_only", "sql_only", "rag_sql"]:
+                    logger.warning(f"Invalid query_path: {query_path}, defaulting to rag_only")
+                    query_path = "rag_only"
+                
+                logger.info(f"Intent Analysis Result - Path: {query_path}, Chart: {need_chart}")
+                
+                return {
+                    **state,
+                    "query_path": query_path,
+                    "need_chart": need_chart,
+                    "analysis_reasoning": reasoning,
+                    "detected_keywords": detected_keywords,
+                    # Legacy compatibility
+                    "query_type": "sql" if query_path in ["sql_only", "rag_sql"] else "rag",
+                    "sql_task_type": "chart" if need_chart else "query",
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "intent_analysis": {
+                            "status": "completed",
+                            "timestamp": time.time(),
+                            "query_path": query_path,
+                            "need_chart": need_chart,
+                            "reasoning": reasoning,
+                            "keywords": detected_keywords
+                        }
+                    }
+                }
             else:
-                query_type = "rag"
+                raise ValueError("No valid JSON found in response")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse intent analysis JSON: {e}, using fallback")
+            return _fallback_intent_analysis(state)
+            
+    except Exception as e:
+        logger.error(f"Intent analysis failed: {e}, using fallback")
+        return _fallback_intent_analysis(state)
+
+def _fallback_intent_analysis(state: GraphState) -> GraphState:
+    """Fallback rule-based intent analysis when LLM is not available"""
+    user_input = state["user_input"]
     
-    logger.info(f"Router decision result: {query_type} for input: {user_input}")
+    # Rule-based keyword detection
+    chart_keywords = ["图表", "可视化", "饼图", "柱状图", "折线图", "chart", "graph", "visualization", "pie chart", "bar chart", "line chart"]
+    db_keywords = ["数据", "查询", "统计", "分析", "销售", "订单", "产品", "data", "query", "sales", "order", "product"]
+    doc_keywords = ["含义", "定义", "设计", "方案", "原则", "概念", "解释", "meaning", "definition", "design", "concept", "explain"]
     
-    return {**state, "query_type": query_type}
+    detected_keywords = []
+    has_chart = False
+    has_db = False
+    has_doc = False
+    
+    user_lower = user_input.lower()
+    
+    for keyword in chart_keywords:
+        if keyword in user_lower:
+            detected_keywords.append(keyword)
+            has_chart = True
+    
+    for keyword in db_keywords:
+        if keyword in user_lower:
+            detected_keywords.append(keyword)
+            has_db = True
+    
+    for keyword in doc_keywords:
+        if keyword in user_lower:
+            detected_keywords.append(keyword)
+            has_doc = True
+    
+    # Determine query path
+    if has_doc and has_db:
+        query_path = "rag_sql"
+    elif has_db:
+        query_path = "sql_only"
+    else:
+        query_path = "rag_only"
+    
+    need_chart = has_chart or (has_db and not has_doc)  # All SQL queries try charts unless pure RAG
+    
+    reasoning = f"Rule-based analysis: doc={has_doc}, db={has_db}, chart={has_chart}"
+    
+    logger.info(f"Fallback Intent Analysis - Path: {query_path}, Chart: {need_chart}")
+    
+    return {
+        **state,
+        "query_path": query_path,
+        "need_chart": need_chart,
+        "analysis_reasoning": reasoning,
+        "detected_keywords": detected_keywords,
+        # Legacy compatibility
+        "query_type": "sql" if query_path in ["sql_only", "rag_sql"] else "rag",
+        "sql_task_type": "chart" if need_chart else "query",
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "intent_analysis": {
+                "status": "completed",
+                "timestamp": time.time(),
+                "query_path": query_path,
+                "need_chart": need_chart,
+                "reasoning": reasoning,
+                "method": "fallback"
+            }
+        }
+    }
+
+def _extract_content(response) -> str:
+    """Extract content from LLM response"""
+    if hasattr(response, 'content'):
+        return response.content.strip()
+    elif isinstance(response, str):
+        return response.strip()
+    else:
+        return str(response).strip()
+
+# Legacy router_node for backward compatibility
+def router_node(state: GraphState) -> GraphState:
+    """Legacy router node - redirects to intent_analysis_node"""
+    logger.info("Using legacy router_node - redirecting to intent_analysis_node")
+    return intent_analysis_node(state)
 
 # Remove hitl_checkpoint decorator completely and use LangGraph native interrupt
 def sql_classifier_node(state: GraphState) -> GraphState:
@@ -436,10 +547,12 @@ def sql_classifier_node(state: GraphState) -> GraphState:
     return {**state, "sql_task_type": sql_task_type}
 
 async def sql_query_node(state: GraphState) -> GraphState:
-    """SQL query node: execute SQL query and return results"""
+    """Enhanced SQL query node: supports both direct queries and RAG-guided queries, with integrated result merging and chart decision"""
     try:
         user_input = state["user_input"]
-        datasource = state.get("datasource")  # Get datasource from state
+        datasource = state.get("datasource")
+        rag_result = state.get("rag_result")  # Optional RAG metadata for guidance
+        query_path = state.get("query_path", "sql_only")
         
         if not datasource:
             error_msg = "No data source found in state. Please select or create a data source first."
@@ -468,15 +581,22 @@ async def sql_query_node(state: GraphState) -> GraphState:
             except Exception as _e:
                 logger.warning(f"SQL branch: failed to switch to DEFAULT datasource: {_e}")
 
-        # Call SQL query logic with improved error handling
-        result = await get_query_from_sqltable_datasource(
-            user_input,
-            datasource
-        )
+        logger.info(f"SQL Query Node - Path: {query_path}, Has RAG guidance: {bool(rag_result)}")
+        
+        # Enhanced query processing based on path
+        if query_path == "rag_sql" and rag_result:
+            # Use RAG metadata to guide SQL generation
+            logger.info("SQL Query Node - Using RAG-guided SQL generation")
+            result = await _perform_rag_guided_sql_query(user_input, datasource, rag_result)
+        else:
+            # Direct SQL query (existing logic)
+            logger.info("SQL Query Node - Using direct SQL query")
+            result = await get_query_from_sqltable_datasource(user_input, datasource)
         
         if result["success"]:
             structured_data = result.get("data", {})
             executed_sql = result.get("executed_sql", "")
+            sql_answer = result.get("answer", "")
             
             # Validate the result structure
             if not structured_data:
@@ -497,33 +617,112 @@ async def sql_query_node(state: GraphState) -> GraphState:
             
             logger.info(f"SQL query successful, data: {structured_data}")
             
-            # Strong intent-to-chart enforcement when data matches category-value schema
-            chart_intent = state.get("sql_task_type") == "chart" or any(k in user_input.lower() for k in [
-                "pie", "pie chart", "proportion", "percentage", "distribution", "breakdown", "饼图", "占比", "比例"
-            ])
-            if chart_intent and isinstance(structured_data, dict) and structured_data.get("rows"):
-                rows = structured_data.get("rows", [])
-                if rows and isinstance(rows[0], dict) and ("category" in rows[0] and "value" in rows[0]):
-                    logger.info("Chart intent detected with compatible data; ensuring downstream chart path.")
-                    state = {**state, "sql_task_type": "chart"}
+            # === INTEGRATED RESULT MERGING AND CHART DECISION ===
             
-            return {
+            # 1. Result Merging Logic (from result_merge_node)
+            merged_context = None
+            data_with_metadata = None
+            
+            if rag_result and structured_data:
+                # Normal case: both RAG and SQL available
+                logger.info("SQL Query Node - Combining RAG metadata with SQL data")
+                merged_context = f"""
+                [Metadata Context]
+                {rag_result}
+                
+                [Data Query Results]
+                Query: {user_input}
+                SQL: {executed_sql}
+                Data: {structured_data.get('rows', [])}
+                
+                The metadata above explains the meaning and context of the data below.
+                """
+                
+                data_with_metadata = {
+                    "metadata_context": rag_result,
+                    "query_context": user_input,
+                    "sql_query": executed_sql,
+                    "data_rows": structured_data.get('rows', []),
+                    "data_columns": structured_data.get('columns', []),
+                    "row_count": len(structured_data.get('rows', [])),
+                    "merged_at": time.time()
+                }
+                logger.info(f"SQL Query Node - Result merge completed - Rows: {len(structured_data.get('rows', []))}")
+                
+            elif not rag_result and structured_data:
+                # Handle case where RAG failed but SQL succeeded
+                logger.warning("SQL Query Node - RAG result missing, proceeding with SQL data only")
+                merged_context = f"""
+                [Data Query Results]
+                Query: {user_input}
+                SQL: {executed_sql}
+                Data: {structured_data.get('rows', [])}
+                
+                Note: No metadata context available, using direct data query results.
+                """
+                
+                data_with_metadata = {
+                    "metadata_context": "No metadata available",
+                    "query_context": user_input,
+                    "sql_query": executed_sql,
+                    "data_rows": structured_data.get('rows', []),
+                    "data_columns": structured_data.get('columns', []),
+                    "row_count": len(structured_data.get('rows', [])),
+                    "merged_at": time.time(),
+                    "rag_failed": True
+                }
+            
+            # 2. Chart Decision Logic (from chart_decision_node)
+            chart_decision = "skip_chart"
+            if query_path in ["sql_only", "rag_sql"] and structured_data:
+                rows = structured_data.get("rows", [])
+                if rows and len(rows) > 0:
+                    chart_decision = "generate_chart"
+                    logger.info(f"SQL Query Node - Chart decision: generate_chart for {query_path} path with {len(rows)} rows")
+                else:
+                    logger.info(f"SQL Query Node - Chart decision: skip_chart - no data rows")
+            else:
+                logger.info(f"SQL Query Node - Chart decision: skip_chart for {query_path} path")
+            
+            # Prepare return state with all integrated results
+            return_state = {
                 **state,
                 "structured_data": structured_data,
-                "answer": result["answer"],
+                "sql_answer": sql_answer,
+                "executed_sql": executed_sql,
+                "merged_context": merged_context,
+                "data_with_metadata": data_with_metadata,
+                "chart_decision": chart_decision,
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "sql_query": {
                         "status": "completed",
                         "timestamp": time.time(),
+                        "query_path": query_path,
+                        "rag_guided": bool(rag_result),
                         "data_summary": {
                             "row_count": len(structured_data.get("rows", [])),
                             "executed_sql": executed_sql,
-                            "has_answer": bool(result.get("answer"))
+                            "has_answer": bool(sql_answer)
+                        },
+                        "result_merge": {
+                            "status": "completed",
+                            "timestamp": time.time(),
+                            "merged_context_length": len(merged_context) if merged_context else 0,
+                            "data_rows": len(structured_data.get('rows', [])),
+                            "metadata_used": bool(rag_result)
+                        },
+                        "chart_decision": {
+                            "status": "completed",
+                            "timestamp": time.time(),
+                            "decision": chart_decision,
+                            "reason": f"{query_path} path with {len(structured_data.get('rows', []))} rows"
                         }
                     }
                 }
             }
+            
+            return return_state
         else:
             error_msg = result.get("error", "SQL query execution failed")
             logger.error(f"SQL query failed: {error_msg}")
@@ -554,6 +753,58 @@ async def sql_query_node(state: GraphState) -> GraphState:
                     "error": error_msg
                 }
             }
+        }
+
+async def _perform_rag_guided_sql_query(user_input: str, datasource: Dict[str, Any], rag_metadata: str) -> Dict[str, Any]:
+    """Perform SQL query with RAG metadata guidance"""
+    try:
+        # Enhanced prompt that includes RAG metadata
+        enhanced_prompt = f"""
+        User Query: "{user_input}"
+        
+        Metadata Context (from documents):
+        {rag_metadata}
+        
+        Based on the metadata context above, generate an accurate SQL query that:
+        1. Uses the correct table and field names mentioned in the metadata
+        2. Follows the business rules and relationships described
+        3. Answers the user's question using the proper data structure
+        
+        The metadata provides important context about:
+        - Table structures and field definitions
+        - Business rules and relationships
+        - Data types and constraints
+        - Domain-specific knowledge
+        
+        Use this metadata to ensure the SQL query is accurate and meaningful.
+        """
+        
+        # Use the existing SQL query logic but with enhanced context
+        result = await get_query_from_sqltable_datasource(enhanced_prompt, datasource)
+        
+        if result["success"]:
+            # Enhance the result with metadata context
+            enhanced_answer = f"""
+            [Based on metadata context]
+            {result.get('answer', '')}
+            
+            The query was generated using metadata guidance to ensure accuracy.
+            """
+            
+            return {
+                **result,
+                "answer": enhanced_answer,
+                "rag_guided": True,
+                "metadata_used": True
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        logger.error(f"RAG-guided SQL query error: {e}")
+        return {
+            "success": False,
+            "error": f"RAG-guided SQL query failed: {str(e)}"
         }
 
 async def sql_chart_node(state: GraphState) -> GraphState:
@@ -678,44 +929,275 @@ def chart_config_node(state: GraphState) -> GraphState:
         }
 
 async def rag_query_node(state: GraphState) -> GraphState:
-    """RAG query node"""
+    """Enhanced RAG query node: supports both full retrieval and metadata-focused retrieval"""
     try:
         user_input = state["user_input"]
         datasource = state["datasource"]
+        query_path = state.get("query_path", "rag_only")
+        
         # Guards: avoid duplicate RAG execution in the same run
-        # 1) Upstream may have produced an answer
-        if state.get("answer"):
-            logger.info("RAG query skipped: answer already present in state (preventing duplicate execution)")
-            return {**state}
-        # 2) This node already executed before (e.g., re-entry in graph)
         if state.get("rag_executed"):
             logger.info("RAG query skipped: rag_executed flag present (preventing duplicate execution)")
             return {**state}
         
-        # Call RAG query logic
-        result = await perform_rag_query(user_input, datasource)
+        logger.info(f"RAG Query Node - Path: {query_path}, Query: {user_input}")
+        
+        # Determine retrieval strategy based on query path
+        if query_path == "rag_sql":
+            # Metadata-focused retrieval for hybrid path
+            logger.info("RAG Query Node - Using metadata-focused retrieval for hybrid path")
+            result = await _perform_metadata_rag_query(user_input, datasource)
+        else:
+            # Full retrieval for pure RAG path
+            logger.info("RAG Query Node - Using full retrieval for pure RAG path")
+            result = await perform_rag_query(user_input, datasource)
         
         if result["success"]:
+            rag_result = result["answer"]
+            rag_sources = result.get("sources", [])
+            rag_confidence = result.get("confidence", 0.8)
+            
+            # For rag_only path, set answer directly
+            if query_path == "rag_only":
+                return {
+                    **state,
+                    "answer": rag_result,
+                    "rag_result": rag_result,
+                    "rag_sources": rag_sources,
+                    "rag_confidence": rag_confidence,
+                    "rag_executed": True,
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "rag_query": {
+                            "status": "completed",
+                            "timestamp": time.time(),
+                            "query_path": query_path,
+                            "sources": rag_sources,
+                            "confidence": rag_confidence,
+                            "data": result.get("data", {})
+                        }
+                    }
+                }
+            else:
+                # For rag_sql path, store result for later merging
+                return {
+                    **state,
+                    "rag_result": rag_result,
+                    "rag_sources": rag_sources,
+                    "rag_confidence": rag_confidence,
+                    "rag_executed": True,
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "rag_query": {
+                            "status": "completed",
+                            "timestamp": time.time(),
+                            "query_path": query_path,
+                            "sources": rag_sources,
+                            "confidence": rag_confidence,
+                            "data": result.get("data", {})
+                        }
+                    }
+                }
+        else:
+            error_msg = result.get("error", "RAG query failed")
+            logger.error(f"RAG query failed: {error_msg}")
             return {
-                **state,
-                "answer": result["answer"],
-                "rag_executed": True,
+                **state, 
+                "rag_executed": True, 
+                "error": error_msg,
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "rag_query": {
-                        "status": "completed",
+                        "status": "error",
                         "timestamp": time.time(),
-                        "data": result.get("data", {})
+                        "error": error_msg
                     }
                 }
             }
-        else:
-            return {**state, "rag_executed": True, "error": result.get("error", "RAG query failed")}
     except Exception as e:
         logger.error(f"RAG query node error: {e}")
-        return {**state, "error": str(e)}
+        return {
+            **state, 
+            "error": str(e),
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "rag_query": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": str(e)
+                }
+            }
+        }
 
-# Sample data generation removed - system will use real data only
+async def _perform_metadata_rag_query(user_input: str, datasource: Dict[str, Any]) -> Dict[str, Any]:
+    """Perform metadata-focused RAG query for hybrid path"""
+    try:
+        # Enhanced prompt for metadata retrieval
+        metadata_prompt = f"""
+        The user is asking: "{user_input}"
+        
+        Focus on retrieving metadata information that would help understand:
+        - Table structures and field definitions
+        - Data relationships and business rules
+        - Field meanings and data types
+        - Business context and domain knowledge
+        
+        This metadata will be used to guide a subsequent database query.
+        Prioritize information that explains what the data means, not the actual data values.
+        """
+        
+        # Use the existing perform_rag_query but with enhanced context
+        result = await perform_rag_query(metadata_prompt, datasource)
+        
+        if result["success"]:
+            # Enhance the result with metadata-specific information
+            enhanced_answer = f"""
+            [Metadata Context]
+            {result['answer']}
+            
+            This metadata information will help guide the subsequent data query.
+            """
+            
+            return {
+                **result,
+                "answer": enhanced_answer,
+                "confidence": result.get("confidence", 0.9),  # Higher confidence for metadata
+                "metadata_focused": True
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        logger.error(f"Metadata RAG query error: {e}")
+        return {
+            "success": False,
+            "error": f"Metadata RAG query failed: {str(e)}"
+        }
+
+# Result Merge Node for combining RAG + SQL results
+def result_merge_node(state: GraphState) -> GraphState:
+    """Result Merge Node: combine RAG metadata and SQL data results"""
+    try:
+        rag_result = state.get("rag_result")
+        structured_data = state.get("structured_data")
+        user_input = state["user_input"]
+        
+        # Handle case where RAG failed but SQL succeeded
+        if not rag_result and structured_data:
+            logger.warning("RAG result missing, proceeding with SQL data only")
+            merged_context = f"""
+            [Data Query Results]
+            Query: {user_input}
+            SQL: {structured_data.get('executed_sql', 'N/A')}
+            Data: {structured_data.get('rows', [])}
+            
+            Note: No metadata context available, using direct data query results.
+            """
+            
+            data_with_metadata = {
+                "metadata_context": "No metadata available",
+                "query_context": user_input,
+                "sql_query": structured_data.get('executed_sql', ''),
+                "data_rows": structured_data.get('rows', []),
+                "data_columns": structured_data.get('columns', []),
+                "row_count": len(structured_data.get('rows', [])),
+                "merged_at": time.time(),
+                "rag_failed": True
+            }
+            
+            return {
+                **state,
+                "merged_context": merged_context,
+                "data_with_metadata": data_with_metadata,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "result_merge": {
+                        "status": "completed",
+                        "timestamp": time.time(),
+                        "rag_available": False,
+                        "sql_available": True,
+                        "merged_successfully": True
+                    }
+                }
+            }
+        
+        # Handle case where both RAG and SQL are missing
+        if not rag_result and not structured_data:
+            error_msg = "Missing both RAG result and structured data for merging"
+            logger.error(error_msg)
+            return {
+                **state,
+                "error": error_msg,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "result_merge": {
+                        "status": "error",
+                        "timestamp": time.time(),
+                        "error": error_msg
+                    }
+                }
+            }
+        
+        # Normal case: both RAG and SQL available
+        logger.info("Result Merge Node - Combining RAG metadata with SQL data")
+        
+        # Create merged context
+        merged_context = f"""
+        [Metadata Context]
+        {rag_result}
+        
+        [Data Query Results]
+        Query: {user_input}
+        SQL: {structured_data.get('executed_sql', 'N/A') if structured_data else 'N/A'}
+        Data: {structured_data.get('rows', []) if structured_data else []}
+        
+        The metadata above explains the meaning and context of the data below.
+        """
+        
+        # Create data with metadata annotations
+        data_with_metadata = {
+            "metadata_context": rag_result,
+            "query_context": user_input,
+            "sql_query": structured_data.get('executed_sql', '') if structured_data else '',
+            "data_rows": structured_data.get('rows', []) if structured_data else [],
+            "data_columns": structured_data.get('columns', []) if structured_data else [],
+            "row_count": len(structured_data.get('rows', [])) if structured_data else 0,
+            "merged_at": time.time()
+        }
+        
+        logger.info(f"Result Merge completed - Rows: {len(structured_data.get('rows', [])) if structured_data else 0}")
+        
+        return {
+            **state,
+            "merged_context": merged_context,
+            "data_with_metadata": data_with_metadata,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "result_merge": {
+                    "status": "completed",
+                    "timestamp": time.time(),
+                    "merged_context_length": len(merged_context),
+                    "data_rows": len(structured_data.get('rows', [])),
+                    "metadata_used": True
+                }
+            }
+        }
+        
+    except Exception as e:
+        error_msg = f"Error in Result Merge Node: {str(e)}"
+        logger.error(error_msg)
+        return {
+            **state,
+            "error": error_msg,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "result_merge": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": error_msg
+                }
+            }
+        }
 
 def chart_rendering_node(state: GraphState) -> GraphState:
     """Chart rendering node: render interactive chart configuration"""
@@ -805,86 +1287,203 @@ def chart_rendering_node(state: GraphState) -> GraphState:
         return {**state, "error": str(e)}
 
 async def llm_processing_node(state: GraphState) -> GraphState:
-    """LLM processing node: process results with LLM for natural language response (with token streaming)"""
+    """Enhanced LLM Processing Node: handle outputs from 3 different query paths"""
     try:
         user_input = state["user_input"]
-        structured_data = state.get("structured_data")
-        chart_image = state.get("chart_image")
-        existing_answer = state.get("answer", "")
-        error = state.get("error")
+        query_path = state.get("query_path", "rag_only")
         execution_id = state.get("execution_id")
         
-        # Debug logging
-        logger.info(f"LLM Processing Node - Input: {user_input}")
-        logger.info(f"LLM Processing Node - Has structured_data: {bool(structured_data)}")
-        logger.info(f"LLM Processing Node - Has chart_image: {bool(chart_image)}")
-        logger.info(f"LLM Processing Node - Existing answer: '{existing_answer}'")
-        logger.info(f"LLM Processing Node - Error: {error}")
+        logger.info(f"LLM Processing Node - Path: {query_path}")
         
-        if structured_data:
-            logger.info(f"LLM Processing Node - Structured data keys: {list(structured_data.keys())}")
-            rows = structured_data.get("rows", [])
-            logger.info(f"LLM Processing Node - Number of rows: {len(rows)}")
-            if rows:
-                logger.info(f"LLM Processing Node - First row: {rows[0]}")
-        
-        # If there's an error, provide a helpful response (no streaming for errors)
-        if error:
-            final_answer = f"I encountered an issue while processing your request: {error}. Please try rephrasing your question or check if the data source is properly configured."
-            logger.info(f"LLM Processing Node - Returning error response: {final_answer}")
-            return {**state, "answer": final_answer}
-        
-        # If there's already an answer from RAG, stream it token by token for better UX
-        if existing_answer and not structured_data and not chart_image:
-            logger.info(f"LLM Processing Node - Streaming existing RAG answer: {existing_answer[:100]}...")
-            await _stream_text_as_tokens(existing_answer, execution_id)
-            return {**state, "answer": existing_answer}
-        
-        # For SQL results, generate a natural language response
-        if structured_data:
-            if chart_image:
-                # For chart results, create a descriptive prompt and stream LLM response
-                chart_prompt = f"""
-                The user asked: "{user_input}"
-                
-                I've generated a visualization chart for this query. Please provide a brief, natural description
-                of what the chart shows and what insights the user can gain from it.
-                Keep the response concise (2-3 sentences) and friendly.
-                """
-                logger.info(f"LLM Processing Node - Streaming chart description via LLM")
-                final_answer = await stream_llm_response(chart_prompt, execution_id, "llm_processing_node")
-            else:
-                # Generate intelligent text-based answer from structured data
-                rows = structured_data.get("rows", [])
-                columns = structured_data.get("columns", [])
-                executed_sql = structured_data.get("executed_sql", "")
-                
-                logger.info(f"LLM Processing Node - Processing SQL results: rows={len(rows)}, columns={columns}")
-                
-                if rows:
-                    logger.info("LLM Processing Node - Generating and streaming SQL response")
-                    # Generate structured answer first
-                    structured_answer = _generate_intelligent_sql_response(user_input, rows, columns, executed_sql)
-                    # Stream it token by token for better UX
-                    await _stream_text_as_tokens(structured_answer, execution_id)
-                    final_answer = structured_answer
-                    logger.info(f"LLM Processing Node - Streamed intelligent response: {final_answer[:200]}...")
-                else:
-                    final_answer = f"No data was found matching your query '{user_input}'. Please try a different question or check if the data exists."
-                    logger.info(f"LLM Processing Node - No rows response: {final_answer}")
-                    await _stream_text_as_tokens(final_answer, execution_id)
+        # Handle different paths
+        if query_path == "rag_only":
+            return await _process_rag_only_output(state, execution_id)
+        elif query_path == "sql_only":
+            return await _process_sql_only_output(state, execution_id)
+        elif query_path == "rag_sql":
+            return await _process_rag_sql_output(state, execution_id)
         else:
-            final_answer = existing_answer or f"I've processed your query '{user_input}' but couldn't generate specific results. Please try rephrasing your question."
-            logger.info(f"LLM Processing Node - Fallback response: {final_answer}")
-            await _stream_text_as_tokens(final_answer, execution_id)
-        
-        logger.info(f"LLM Processing Node - Final answer: {final_answer[:200]}...")
-        return {**state, "answer": final_answer}
+            logger.warning(f"Unknown query path: {query_path}, defaulting to rag_only")
+            return await _process_rag_only_output(state, execution_id)
+            
     except Exception as e:
-        logger.error(f"LLM processing error: {e}")
-        import traceback
-        logger.error(f"LLM processing traceback: {traceback.format_exc()}")
-        return {**state, "error": f"LLM processing failed: {e}"}
+        error_msg = f"Error in LLM Processing Node: {str(e)}"
+        logger.error(error_msg)
+        return {
+            **state,
+            "error": error_msg,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "llm_processing": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": error_msg
+                }
+            }
+        }
+
+async def _process_rag_only_output(state: GraphState, execution_id: str) -> GraphState:
+    """Process RAG-only path output"""
+    rag_result = state.get("rag_result", "")
+    
+    if not rag_result:
+        error_msg = "No RAG result available for processing"
+        logger.error(error_msg)
+        return {**state, "error": error_msg}
+    
+    logger.info("LLM Processing - Processing RAG-only output")
+    
+    # Stream the RAG result
+    await _stream_text_as_tokens(rag_result, execution_id, "llm_processing_node")
+    
+    final_result = {
+        "text": rag_result,
+        "data": None,
+        "chart": None,
+        "path": "rag_only"
+    }
+    
+    return {
+        **state,
+        "answer": rag_result,
+        "final_result": final_result,
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "llm_processing": {
+                "status": "completed",
+                "timestamp": time.time(),
+                "path": "rag_only",
+                "output_type": "text_only"
+            }
+        }
+    }
+
+async def _process_sql_only_output(state: GraphState, execution_id: str) -> GraphState:
+    """Process SQL-only path output"""
+    structured_data = state.get("structured_data")
+    chart_config = state.get("chart_config")
+    sql_answer = state.get("sql_answer", "")
+    
+    if not structured_data:
+        error_msg = "No structured data available for processing"
+        logger.error(error_msg)
+        return {**state, "error": error_msg}
+    
+    logger.info("LLM Processing - Processing SQL-only output")
+    
+    # Generate intelligent response from SQL data
+    rows = structured_data.get("rows", [])
+    columns = structured_data.get("columns", [])
+    executed_sql = structured_data.get("executed_sql", "")
+    
+    if rows:
+        # Generate structured answer
+        structured_answer = _generate_intelligent_sql_response(
+            state["user_input"], rows, columns, executed_sql
+        )
+        
+        # Add chart context if available
+        if chart_config:
+            structured_answer += f"\n\nI've also generated a visualization chart to help you better understand the data."
+        
+        # Stream the response
+        await _stream_text_as_tokens(structured_answer, execution_id, "llm_processing_node")
+        final_answer = structured_answer
+    else:
+        final_answer = f"No data was found matching your query '{state['user_input']}'. Please try a different question or check if the data exists."
+        await _stream_text_as_tokens(final_answer, execution_id, "llm_processing_node")
+    
+    final_result = {
+        "text": final_answer,
+        "data": structured_data,
+        "chart": chart_config,
+        "path": "sql_only"
+    }
+    
+    return {
+        **state,
+        "answer": final_answer,
+        "final_result": final_result,
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "llm_processing": {
+                "status": "completed",
+                "timestamp": time.time(),
+                "path": "sql_only",
+                "output_type": "text_and_chart" if chart_config else "text_and_data",
+                "data_rows": len(rows),
+                "has_chart": bool(chart_config)
+            }
+        }
+    }
+
+async def _process_rag_sql_output(state: GraphState, execution_id: str) -> GraphState:
+    """Process RAG+SQL hybrid path output"""
+    merged_context = state.get("merged_context")
+    structured_data = state.get("structured_data")
+    chart_config = state.get("chart_config")
+    
+    # Handle case where RAG failed but SQL succeeded
+    if not merged_context and structured_data:
+        logger.warning("RAG context missing, processing SQL-only output in hybrid path")
+        return await _process_sql_only_output(state, execution_id)
+    
+    # Handle case where SQL failed but RAG succeeded
+    if merged_context and not structured_data:
+        logger.warning("SQL data missing, processing RAG-only output in hybrid path")
+        return await _process_rag_only_output(state, execution_id)
+    
+    # Handle case where both are missing
+    if not merged_context and not structured_data:
+        error_msg = "Missing both merged context and structured data for hybrid processing"
+        logger.error(error_msg)
+        return {**state, "error": error_msg}
+    
+    logger.info("LLM Processing - Processing RAG+SQL hybrid output")
+    
+    # Generate comprehensive response combining metadata and data
+    comprehensive_prompt = f"""
+    User Query: "{state['user_input']}"
+    
+    Context: {merged_context}
+    
+    Please provide a comprehensive response that:
+    1. Explains the metadata context and what the data means
+    2. Analyzes the actual data results
+    3. Provides insights and interpretation
+    4. Mentions the visualization if available
+    
+    Keep the response informative but concise.
+    """
+    
+    # Stream LLM response
+    final_answer = await stream_llm_response(comprehensive_prompt, execution_id, "llm_processing_node")
+    
+    final_result = {
+        "text": final_answer,
+        "data": structured_data,
+        "chart": chart_config,
+        "metadata": merged_context,
+        "path": "rag_sql"
+    }
+    
+    return {
+        **state,
+        "answer": final_answer,
+        "final_result": final_result,
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "llm_processing": {
+                "status": "completed",
+                "timestamp": time.time(),
+                "path": "rag_sql",
+                "output_type": "comprehensive",
+                "data_rows": len(structured_data.get("rows", [])),
+                "has_chart": bool(chart_config),
+                "has_metadata": True
+            }
+        }
+    }
 
 def _generate_intelligent_sql_response(user_input: str, rows: list, columns: list, executed_sql: str = "") -> str:
     """Generate intelligent natural language response from SQL results"""
@@ -1263,7 +1862,7 @@ def extract_data_summary(data: Dict[str, Any]) -> str:
         return "Data summary extraction failed"
 
 def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: Dict[str, Any], user_input: str = "") -> tuple:
-    """Extract chart data based on LLM analysis results"""
+    """Extract chart data - simplified logic without fallback"""
     try:
         labels = []
         values = []
@@ -1273,11 +1872,6 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
             return labels, values
         
         rows = data["rows"]
-        aggregation_method = chart_analysis.get("aggregation_method", "none")
-        time_grouping = chart_analysis.get("time_grouping", "none")
-        is_time_series = chart_analysis.get("is_time_series", False)
-        
-        # Smart field detection based on data structure
         sample_row = rows[0] if rows else {}
         logger.info(f"Processing sample row: {sample_row}, type: {type(sample_row)}")
         
@@ -1285,70 +1879,9 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         if isinstance(sample_row, dict) and "category" in sample_row and "value" in sample_row:
             logger.info(f"Processing {len(rows)} rows of category-value data")
             
-            # Use LLM to intelligently analyze the data and user intent
-            if llm:
-                try:
-                    # Prepare comprehensive data context for LLM
-                    sample_data = rows[:5]  # Use first 5 rows as sample
-                    sample_categories = [str(row.get("category", "")) for row in sample_data]
-                    sample_values = [row.get("value", 0) for row in sample_data]
-                    
-                    # Let LLM freely analyze without constraints
-                    analysis_prompt = f"""
-                    You are an expert data analyst. Analyze the following user request and data to determine the best processing strategy.
-                    
-                    USER REQUEST: "{user_input}"
-                    
-                    DATA CONTEXT:
-                    - Total records: {len(rows)}
-                    - Sample categories: {sample_categories}
-                    - Sample values: {sample_values}
-                    - First few records: {sample_data}
-                    
-                    Based on your expertise, provide a comprehensive analysis plan in JSON format. You have complete freedom to design the response structure. Consider:
-                    
-                    1. What type of data is this? (time series, categorical, hierarchical, etc.)
-                    2. What does the user want to achieve?
-                    3. How should the data be filtered, sorted, and limited?
-                    4. What would be the most meaningful way to present this data?
-                    
-                    Design your own JSON structure that best captures your analysis. Be creative and thorough.
-                    
-                    Return only valid JSON, no other text.
-                    """
-                    
-                    response = llm.invoke(analysis_prompt)
-                    
-                    # Parse LLM response
-                    if hasattr(response, 'content'):
-                        analysis_text = response.content
-                    elif isinstance(response, str):
-                        analysis_text = response
-                    else:
-                        analysis_text = str(response)
-                    
-                    # Extract JSON
-                    import json
-                    json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-                    if json_match:
-                        intelligent_analysis = json.loads(json_match.group())
-                        logger.info(f"LLM dynamic analysis result: {intelligent_analysis}")
-                        
-                        # Apply LLM's custom analysis strategy
-                        processed_rows = _apply_dynamic_analysis_strategy(rows, intelligent_analysis, user_input)
-                        
-                    else:
-                        raise ValueError("No valid JSON found in LLM response")
-                        
-                except Exception as e:
-                    logger.warning(f"LLM dynamic analysis failed: {e}, using fallback detection")
-                    # Fallback to simple pattern detection
-                    intelligent_analysis = _fallback_data_analysis(sample_row, user_input, len(rows))
-                    processed_rows = _apply_standard_analysis_strategy(rows, intelligent_analysis)
-            else:
-                # No LLM available, use fallback
-                intelligent_analysis = _fallback_data_analysis(sample_row, user_input, len(rows))
-                processed_rows = _apply_standard_analysis_strategy(rows, intelligent_analysis)
+            # Simple processing: sort by value descending and take top 10
+            sorted_rows = sorted(rows, key=lambda x: float(x.get("value", 0)), reverse=True)
+            processed_rows = sorted_rows[:10]  # Limit to top 10
             
             # Extract final labels and values
             for row in processed_rows:
@@ -1364,7 +1897,7 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                     logger.warning(f"Error processing row: {e}")
                     continue
             
-            logger.info(f"Successfully extracted {len(labels)} data points using dynamic analysis")
+            logger.info(f"Successfully extracted {len(labels)} data points using simplified analysis")
             return labels, values
         
         # Handle original logic for other data formats
@@ -1571,8 +2104,11 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                                 continue
                         else:
                             # For list format
-                            label = str(row[label_idx]) if row[label_idx] else f"Item{len(labels)+1}"
-                        value_str = str(row[value_idx]) if row[value_idx] else "0"
+                            if label_idx < len(row) and value_idx < len(row):
+                                label = str(row[label_idx]) if row[label_idx] else f"Item{len(labels)+1}"
+                                value_str = str(row[value_idx]) if row[value_idx] else "0"
+                            else:
+                                continue
                         try:
                             value = float(value_str)
                         except ValueError:
@@ -1820,87 +2356,63 @@ def get_compiled_app():
     Build and compile the LangGraph workflow app.
     Centralizes workflow construction so both normal run and resume reuse identical graph.
     """
-    # Define workflow graph
+    return create_workflow()
+
+def create_workflow():
+    """Create the new hybrid workflow with 3 query paths"""
     workflow = StateGraph(GraphState)
     
     # Add nodes to the graph
     workflow.add_node("start_node", lambda state: state)  # Start node just passes through
-    workflow.add_node("router_node", router_node)
-    workflow.add_node("sql_classifier_node", sql_classifier_node)
-    workflow.add_node("sql_query_node", sql_query_node)  # New node for SQL queries
-    workflow.add_node("sql_chart_node", sql_chart_node)  # Renamed from sql_execution_node
-    workflow.add_node("rag_query_node", rag_query_node)
-    # Merge Chart Config + Render as a single node
-    def chart_process_node(state: GraphState) -> GraphState:
-        """Generate chart config then render chart in one step."""
-        try:
-            # Step 1: build config
-            cfg_state = chart_config_node(state)
-            if cfg_state.get("error"):
-                return cfg_state
-            # Step 2: render
-            rendered_state = chart_rendering_node(cfg_state)
-            return rendered_state
-        except Exception as e:
-            logger.error(f"Chart process node error: {e}")
-            return {**state, "error": str(e)}
-
-    workflow.add_node("chart_process_node", chart_process_node)
-    workflow.add_node("llm_processing_node", llm_processing_node)
-    workflow.add_node("interrupt_node", interrupt_node)  # Add interrupt node
+    workflow.add_node("intent_analysis_node", intent_analysis_node)  # New intent analysis node
+    workflow.add_node("rag_query_node", rag_query_node)  # Enhanced RAG query node
+    workflow.add_node("sql_query_node", sql_query_node)  # Enhanced SQL query node with integrated result merge and chart decision
+    workflow.add_node("chart_process_node", chart_process_node)  # Enhanced chart process node
+    workflow.add_node("llm_processing_node", llm_processing_node)  # Enhanced LLM processing node
+    workflow.add_node("interrupt_node", interrupt_node)  # HITL interrupt node
     workflow.add_node("end_node", lambda state: {"success": True})
 
     # Set entry point
     workflow.set_entry_point("start_node")
     
-    # Connect start to router
-    workflow.add_edge("start_node", "router_node")
+    # Connect start to intent analysis
+    workflow.add_edge("start_node", "intent_analysis_node")
 
-    # Add edges
+    # Intent analysis routes to different paths
     workflow.add_conditional_edges(
-        "router_node",
-        lambda state: state["query_type"],
+        "intent_analysis_node",
+        lambda state: state["query_path"],
         {
-            "sql": "sql_classifier_node",
-            "rag": "rag_query_node"
+            "rag_only": "rag_query_node",
+            "sql_only": "sql_query_node", 
+            "rag_sql": "rag_query_node"  # Start with RAG for hybrid path
         }
     )
 
-    # SQL Classifier routes based on task type
+    # RAG query node routes based on path
     workflow.add_conditional_edges(
-        "sql_classifier_node",
-        lambda state: state["sql_task_type"],
+        "rag_query_node",
+        lambda state: state["query_path"],
         {
-            "query": "sql_query_node",     # Query task goes to SQL Query node
-            "chart": "sql_chart_node"      # Chart task goes to SQL Chart node
+            "rag_only": "llm_processing_node",  # Pure RAG goes directly to LLM
+            "rag_sql": "sql_query_node"  # Hybrid continues to SQL
         }
     )
 
-    # Connect SQL Query node to LLM Processing with interrupt check
+    # SQL query node routes based on chart decision (integrated)
     workflow.add_conditional_edges(
         "sql_query_node",
-        check_interrupt_status,
+        lambda state: state.get("chart_decision", "skip_chart"),
         {
-            "continue": "llm_processing_node",
-            "interrupt": "interrupt_node"
+            "generate_chart": "chart_process_node",  # Generate chart if needed
+            "skip_chart": "llm_processing_node"  # Skip chart, go to LLM processing
         }
     )
 
-    # Connect SQL Chart node to Chart Process with interrupt check
-    workflow.add_conditional_edges(
-        "sql_chart_node",
-        check_interrupt_status,
-        {
-            "continue": "chart_process_node",
-            "interrupt": "interrupt_node"
-        }
-    )
-
-    # Chart process goes directly to LLM processing
+    # Chart process node goes to LLM processing
     workflow.add_edge("chart_process_node", "llm_processing_node")
-    workflow.add_edge("rag_query_node", "llm_processing_node")
     
-    # LLM processing goes directly to end node (validation & retry removed)
+    # LLM processing goes to end
     workflow.add_edge("llm_processing_node", "end_node")
     
     # Interrupt node goes to end (workflow stops)
@@ -1911,6 +2423,147 @@ def get_compiled_app():
 
     # Compile the graph
     return workflow.compile()
+# Chart Decision Node - determines if chart should be generated
+def chart_decision_node(state: GraphState) -> GraphState:
+    """Chart Decision Node: determine if chart should be generated based on query path and data"""
+    query_path = state.get("query_path", "rag_only")
+    need_chart = state.get("need_chart", False)
+    structured_data = state.get("structured_data")
+    
+    logger.info(f"Chart Decision Node - Path: {query_path}, Has data: {bool(structured_data)}")
+    
+    # All SQL paths should try to generate charts (as per requirement)
+    if query_path in ["sql_only", "rag_sql"] and structured_data:
+        rows = structured_data.get("rows", [])
+        if rows and len(rows) > 0:
+            logger.info(f"Chart Decision - Generating chart for {query_path} path with {len(rows)} rows")
+            return {
+                **state,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "chart_decision": {
+                        "status": "completed",
+                        "timestamp": time.time(),
+                        "decision": "generate_chart",
+                        "reason": f"SQL path with {len(rows)} rows"
+                    }
+                }
+            }
+    
+    logger.info(f"Chart Decision - No chart needed for {query_path} path")
+    return {
+        **state,
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "chart_decision": {
+                "status": "completed",
+                "timestamp": time.time(),
+                "decision": "skip_chart",
+                "reason": f"No chart needed for {query_path} path"
+            }
+        }
+    }
+
+# Chart Decision Router Function
+def chart_decision_router(state: GraphState) -> str:
+    """Chart Decision Router: determine routing based on chart decision"""
+    query_path = state.get("query_path", "rag_only")
+    structured_data = state.get("structured_data")
+    
+    # All SQL paths should try to generate charts (as per requirement)
+    if query_path in ["sql_only", "rag_sql"] and structured_data:
+        rows = structured_data.get("rows", [])
+        if rows and len(rows) > 0:
+            return "generate_chart"
+    
+    return "skip_chart"
+
+# Enhanced Chart Process Node
+def chart_process_node(state: GraphState) -> GraphState:
+    """Enhanced Chart Process Node: generate chart config then render chart"""
+    try:
+        structured_data = state.get("structured_data")
+        user_input = state["user_input"]
+        query_path = state.get("query_path", "sql_only")
+        
+        if not structured_data:
+            logger.warning("Chart Process Node - No structured data available")
+            return {**state, "error": "No structured data available for chart generation"}
+        
+        logger.info(f"Chart Process Node - Processing chart for {query_path} path")
+        
+        # Step 1: Generate chart configuration
+        chart_config_result = chart_config_node(state)
+        if chart_config_result.get("error"):
+            logger.warning(f"Chart config failed: {chart_config_result.get('error')}")
+            # Don't fail the entire process, just skip chart generation
+            return {
+                **state,
+                "chart_config": None,
+                "chart_data": None,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "chart_process": {
+                        "status": "skipped",
+                        "timestamp": time.time(),
+                        "reason": "Chart config failed",
+                        "error": chart_config_result.get("error")
+                    }
+                }
+            }
+        
+        # Step 2: Render chart
+        chart_render_result = chart_rendering_node(chart_config_result)
+        if chart_render_result.get("error"):
+            logger.warning(f"Chart rendering failed: {chart_render_result.get('error')}")
+            # Don't fail the entire process, just skip chart generation
+            return {
+                **chart_config_result,
+                "chart_config": None,
+                "chart_data": None,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "chart_process": {
+                        "status": "skipped",
+                        "timestamp": time.time(),
+                        "reason": "Chart rendering failed",
+                        "error": chart_render_result.get("error")
+                    }
+                }
+            }
+        
+        logger.info("Chart Process Node - Chart generation completed successfully")
+        
+        return {
+            **chart_render_result,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "chart_process": {
+                    "status": "completed",
+                    "timestamp": time.time(),
+                    "chart_type": chart_render_result.get("chart_type"),
+                    "data_rows": len(structured_data.get("rows", []))
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Chart process node error: {e}")
+        return {
+            **state, 
+            "error": str(e),
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "chart_process": {
+                    "status": "error",
+                    "timestamp": time.time(),
+                    "error": str(e)
+                }
+            }
+        }
+
+    # Use the new workflow structure
+    return create_workflow()
 async def resume_workflow_from_paused_state(
     execution_id: str,
     paused_state: Dict[str, Any],
@@ -1944,50 +2597,142 @@ async def resume_workflow_from_paused_state(
             await websocket_manager.broadcast_execution_update(execution_id, snapshot)
 
         try:
-            if paused_node == "sql_chart_node":
-                # Continue to chart_process → llm_processing
-                def chart_process_node_local(s: Dict[str, Any]) -> Dict[str, Any]:
-                    t1 = chart_config_node(s)
-                    if t1.get("error"):
-                        return t1
-                    return chart_rendering_node(t1)
-
-                state = chart_process_node_local(state)
-                await _emit(state)
-
+            # Get the query path to determine continuation logic
+            query_path = state.get("query_path", "rag_only")
+            
+            if paused_node == "chart_process_node":
+                # Continue from chart processing to LLM processing
                 state = await llm_processing_node(state)
                 await _emit(state)
 
             elif paused_node == "sql_query_node":
-                # Continue directly to llm_processing
+                # Continue based on query path
+                if query_path == "sql_only":
+                    # Pure SQL path: go to chart decision
+                    state = chart_decision_node(state)
+                    await _emit(state)
+                    
+                    # Check chart decision
+                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                    if chart_decision == "generate_chart":
+                        state = chart_process_node(state)
+                await _emit(state)
+
+                state = await llm_processing_node(state)
+                await _emit(state)
+            elif query_path == "rag_sql":
+                    # Hybrid path: go to result merge
+                    state = result_merge_node(state)
+                    await _emit(state)
+
+                    # Then chart decision
+                    state = chart_decision_node(state)
+                    await _emit(state)
+                    
+                    # Check chart decision
+                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                    if chart_decision == "generate_chart":
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+
+            elif paused_node == "rag_query_node":
+                # Continue based on query path
+                if query_path == "rag_only":
+                    # Pure RAG path: go directly to LLM processing
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                elif query_path == "rag_sql":
+                    # Hybrid path: go to SQL query
+                    state = await sql_query_node(state)
+                    await _emit(state)
+                    
+                    # Then result merge
+                    state = result_merge_node(state)
+                    await _emit(state)
+                    
+                    # Then chart decision
+                    state = chart_decision_node(state)
+                    await _emit(state)
+                    
+                    # Check chart decision
+                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                    if chart_decision == "generate_chart":
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+
+            elif paused_node == "result_merge_node":
+                # Continue from result merge to chart decision
+                state = chart_decision_node(state)
+                await _emit(state)
+                
+                # Check chart decision
+                chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                if chart_decision == "generate_chart":
+                    state = chart_process_node(state)
+                    await _emit(state)
+                
                 state = await llm_processing_node(state)
                 await _emit(state)
 
-            elif paused_node == "router_node":
-                # Edge case: decide branch from existing state without re-running router
-                branch = state.get("query_type")
-                if branch == "sql":
-                    # We assume classifier result already exists; route accordingly
-                    task = state.get("sql_task_type")
-                    if task == "chart":
-                        def chart_process_node_local2(s: Dict[str, Any]) -> Dict[str, Any]:
-                            t1 = chart_config_node(s)
-                            if t1.get("error"):
-                                return t1
-                            return chart_rendering_node(t1)
-                        state = chart_process_node_local2(state)
-                        await _emit(state)
-                        state = await llm_processing_node(state)
-                        await _emit(state)
-                    else:
-                        state = await llm_processing_node(state)
-                        await _emit(state)
-                else:
-                    # rag path: continue to llm_processing directly
+            elif paused_node == "chart_decision_node":
+                # Continue from chart decision
+                chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                if chart_decision == "generate_chart":
+                    state = chart_process_node(state)
+                    await _emit(state)
+                
                     state = await llm_processing_node(state)
                     await _emit(state)
+
+            elif paused_node == "intent_analysis_node":
+                # Continue from intent analysis based on determined path
+                query_path = state.get("query_path", "rag_only")
+                
+                if query_path == "rag_only":
+                    state = await rag_query_node(state)
+                    await _emit(state)
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                elif query_path == "sql_only":
+                    state = await sql_query_node(state)
+                    await _emit(state)
+                    state = chart_decision_node(state)
+                    await _emit(state)
+                    
+                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                    if chart_decision == "generate_chart":
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                elif query_path == "rag_sql":
+                    state = await rag_query_node(state)
+                    await _emit(state)
+                    state = await sql_query_node(state)
+                    await _emit(state)
+                    state = result_merge_node(state)
+                    await _emit(state)
+                    state = chart_decision_node(state)
+                    await _emit(state)
+                    
+                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
+                    if chart_decision == "generate_chart":
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+
             else:
-                # Fallback: if we don't recognize the node, do minimal safe continuation
+                # Fallback: continue to LLM processing
+                logger.warning(f"Unknown paused node {paused_node}, continuing to LLM processing")
                 state = await llm_processing_node(state)
                 await _emit(state)
 
@@ -2048,16 +2793,37 @@ async def process_intelligent_query(
         initial_state = {
         "user_input": user_input,
         "datasource": datasource,
-        "query_type": "",  # Will be set by router_node
-        "sql_task_type": "",  # Will be set by sql_classifier_node
+            "execution_id": execution_id,
+            "query_path": "",  # Will be set by intent_analysis_node
+            "need_chart": False,  # Will be set by intent_analysis_node
+            "analysis_reasoning": "",
+            "detected_keywords": [],
+            "query_type": None,  # Legacy field
+            "sql_task_type": None,  # Legacy field
+            "rag_result": None,
+            "rag_sources": None,
+            "rag_confidence": None,
+            "rag_executed": False,
         "structured_data": None,
+            "sql_answer": None,
+            "executed_sql": None,
+            "merged_context": None,
+            "data_with_metadata": None,
         "chart_config": None,
+            "chart_data": None,
+            "chart_type": None,
         "chart_image": None,
         "answer": "",
+            "final_result": None,
         "quality_score": 10,
         "retry_count": 0,
             "error": None,
-            "execution_id": execution_id  # NEW: For token streaming
+            "hitl_status": None,
+            "hitl_node": None,
+            "hitl_reason": None,
+            "hitl_parameters": None,
+            "hitl_timestamp": None,
+            "node_outputs": {}
     }
     
     config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}
@@ -2293,12 +3059,13 @@ def _fallback_data_analysis(sample_row: Dict[str, Any], user_input: str, total_r
         
         is_time_series = is_date_format and has_time_keywords
         
-        # Determine year filter
+        # Determine year filter - only apply to time series data, not category-value data
         year_filter = None
-        if '2025' in user_input and '2024' not in user_input:
-            year_filter = "2025"
-        elif '2024' in user_input and '2025' not in user_input:
-            year_filter = "2024"
+        if is_time_series:  # Only apply year filter to actual time series data
+            if '2025' in user_input and '2024' not in user_input:
+                year_filter = "2025"
+            elif '2024' in user_input and '2025' not in user_input:
+                year_filter = "2024"
         
         # Determine sort strategy
         if is_time_series:
@@ -2456,8 +3223,9 @@ def _apply_flexible_filters(rows: List[Dict], filter_config: Any, user_input: st
         if isinstance(filter_config, dict):
             for filter_key, filter_value in filter_config.items():
                 if filter_key.lower() in ['year', 'year_filter']:
-                    rows = [row for row in rows if str(filter_value) in str(row.get("category", ""))]
-                    logger.info(f"Applied flexible year filter '{filter_value}': {len(rows)} rows remaining")
+                    # For category-value data, year filters don't apply to categories
+                    # Skip year filtering for category-value data structure
+                    logger.info(f"Skipping year filter '{filter_value}' for category-value data structure")
                 elif filter_key.lower() in ['range', 'time_range']:
                     if isinstance(filter_value, dict) and 'start' in filter_value and 'end' in filter_value:
                         start, end = filter_value['start'], filter_value['end']
@@ -2466,11 +3234,8 @@ def _apply_flexible_filters(rows: List[Dict], filter_config: Any, user_input: st
         elif isinstance(filter_config, str):
             # Handle string-based filter instructions
             if any(year in filter_config for year in ['2025', '2024', '2023']):
-                for year in ['2025', '2024', '2023']:
-                    if year in filter_config:
-                        rows = [row for row in rows if year in str(row.get("category", ""))]
-                        logger.info(f"Applied string-based year filter '{year}': {len(rows)} rows remaining")
-                        break
+                # Skip year filtering for category-value data structure
+                logger.info(f"Skipping year filter in string config for category-value data structure")
         
         return rows
         

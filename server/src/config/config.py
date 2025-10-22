@@ -313,10 +313,10 @@ def check_environment():
     
     warnings = config.validate_config()
     if warnings:
-        print("\n⚠️  Configuration warnings:")
+        print("\nConfiguration warnings:")
         for warning in warnings:
             print(f"  - {warning}")
     else:
-        print("✅ Configuration check passed")
+        print("Configuration check passed")
     
     print("=" * 40) 

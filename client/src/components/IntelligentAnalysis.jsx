@@ -113,55 +113,50 @@ function IntelligentAnalysis() {
     cancelExecution,
   } = useWorkflowWebSocket();
   
-  // LangGraph nodes and edges definition - optimized layout for better visual flow
+  // LangGraph nodes and edges definition - New Hybrid Workflow Structure with increased horizontal spacing
   const langGraphNodes = [
-    // Row 2 (middle): Start
-    { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 2, totalCols: 3, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
+    // Row 1: Start
+    { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 3, totalCols: 6, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
     
-    // Row 2 (middle): Router
-    { id: 'router_node', name: 'Router', type: 'decision', layer: 2, col: 2, totalCols: 3, description: 'Determine SQL or RAG path', icon: FaRoute, color: 'blue' },
+    // Row 2: Intent Analysis (New ReAct-based node)
+    { id: 'intent_analysis_node', name: 'Intent Analysis', type: 'decision', layer: 2, col: 3, totalCols: 6, description: 'ReAct reasoning to determine query path', icon: FaBrain, color: 'blue' },
     
-    // Row 1 (top): SQL Classifier 与 Router 同层对齐
-    { id: 'sql_classifier_node', name: 'SQL Classifier', type: 'process', layer: 2, col: 1, totalCols: 3, description: 'Classify as query or chart', icon: FaCogs, color: 'cyan' },
+    // Row 3: Two parallel paths - RAG Query and SQL Query (with integrated result merge and chart decision)
+    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 1, totalCols: 6, description: 'Document retrieval & metadata extraction', icon: FaSearch, color: 'purple' },
+    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 3, col: 3, totalCols: 6, description: 'Database query execution + result merge + chart decision', icon: FaDatabase, color: 'green' },
     
-    // Row 3 (bottom): RAG Query
-    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 3, totalCols: 3, description: 'Vector search & retrieval', icon: FaSearch, color: 'purple' },
+    // Row 4: Chart Process (moved up since chart decision is now integrated)
+    { id: 'chart_process_node', name: 'Chart Process', type: 'process', layer: 5, col: 3, totalCols: 6, description: 'Generate and render charts', icon: FaChartLine, color: 'orange' },
     
-    // Row 1 (top): SQL Chart（与 SQL Query、RAG Query 同列）
-    { id: 'sql_chart_node', name: 'SQL Chart', type: 'process', layer: 3, col: 1, totalCols: 3, description: 'Execute chart data query', icon: FaChartLine, color: 'orange' },
+    // Row 5: Final Processing
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 7, col: 3, totalCols: 6, description: 'Generate final response', icon: FaComments, color: 'violet' },
     
-    // Row 2 (middle): SQL Query（与 SQL Chart、RAG Query 同列）
-    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 3, col: 2, totalCols: 3, description: 'Execute database query', icon: FaDatabase, color: 'green' },
-    
-    // Row 1 (top): Chart Build（合并）
-    { id: 'chart_process_node', name: 'Chart Build', type: 'process', layer: 4, col: 1, totalCols: 3, description: 'Generate config and render chart', icon: FaChartLine, color: 'orange' },
-    
-    // Row 2 (middle): LLM Process
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 4, col: 2, totalCols: 3, description: 'Generate natural language response', icon: FaBrain, color: 'violet' },
-    
-    // Row 2 (middle): End
-    { id: 'end_node', name: 'Complete', type: 'end', layer: 5, col: 2, totalCols: 3, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
+    // Row 6: End
+    { id: 'end_node', name: 'Complete', type: 'end', layer: 9, col: 3, totalCols: 6, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
   ];
 
   const langGraphEdges = [
-    // Center lane
-    { from: 'start_node', to: 'router_node', label: 'Initialize', color: 'emerald' },
-
-    // Lane 1 (SQL Chart flow)
-    { from: 'router_node', to: 'sql_classifier_node', label: 'SQL Path', color: 'blue' },
-    { from: 'sql_classifier_node', to: 'sql_chart_node', label: 'Chart', color: 'orange' },
-    { from: 'sql_chart_node', to: 'chart_process_node', label: 'Build', color: 'orange' },
-    { from: 'chart_process_node', to: 'llm_processing_node', label: 'Result', color: 'orange' },
-
-    // Lane 2 (SQL Query flow)
-    { from: 'sql_classifier_node', to: 'sql_query_node', label: 'Query', color: 'green' },
-    { from: 'sql_query_node', to: 'llm_processing_node', label: 'Result', color: 'green' },
-
-    // Lane 3 (RAG flow)
-    { from: 'router_node', to: 'rag_query_node', label: 'RAG Path', color: 'purple' },
+    // Main flow
+    { from: 'start_node', to: 'intent_analysis_node', label: 'Initialize', color: 'emerald' },
+    
+    // Intent Analysis to paths
+    { from: 'intent_analysis_node', to: 'rag_query_node', label: 'RAG Only', color: 'purple' },
+    { from: 'intent_analysis_node', to: 'sql_query_node', label: 'SQL Only', color: 'green' },
+    { from: 'intent_analysis_node', to: 'rag_query_node', label: 'Hybrid', color: 'cyan' },
+    
+    // Hybrid path connections - RAG Query to SQL Query
+    { from: 'rag_query_node', to: 'sql_query_node', label: 'Metadata', color: 'cyan' },
+    
+    // SQL Query routes based on chart decision (integrated) - ONLY ONE PATH
+    { from: 'sql_query_node', to: 'chart_process_node', label: 'Generate Chart', color: 'orange' },
+    
+    // Chart processing to LLM processing
+    { from: 'chart_process_node', to: 'llm_processing_node', label: 'Chart + Data', color: 'orange' },
+    
+    // RAG Query to LLM processing (for pure RAG)
     { from: 'rag_query_node', to: 'llm_processing_node', label: 'Documents', color: 'purple' },
-
-    // Converge to end
+    
+    // Final processing to end
     { from: 'llm_processing_node', to: 'end_node', label: 'Response', color: 'emerald' }
   ];
 
@@ -376,31 +371,26 @@ function IntelligentAnalysis() {
     }
   };
 
-  // Example queries data structure
+  // Example queries data structure - Updated to 2 categories with 4 examples each
   const exampleQueries = [
     {
-      category: 'SQL Chart',
+      category: 'SQL',
       color: 'blue',
       examples: [
         'Show monthly sales trend for 2024.',
-        'Generate a pie chart of sales proportion by product category for July to September 2024.'
-      ]
-    },
-    {
-      category: 'SQL Query',
-      color: 'green',
-      examples: [
+        'Generate a pie chart of sales proportion by product category for July to September 2024.',
         "List top 10 products by total sales in 2024.",
-        'What are the total sales and average order value for 2024?',
-        'Which products are below minimum stock level?'
+        'What are the total sales and average order value for 2024?'
       ]
     },
     {
-      category: 'RAG Query',
+      category: 'RAG',
       color: 'purple',
       examples: [
-        'Who is LongLiang?',
-        'Explain the key points of the uploaded document.'
+        'Do you know LongLiang?',
+        'Explain the data warehouse architecture design.',
+        'What are the key features of the wide table solution?',
+        'Describe the business schema and data relationships.'
       ]
     }
   ];
@@ -1316,22 +1306,21 @@ function IntelligentAnalysis() {
                 if (Array.isArray(out)) {
                   for (const item of out) {
                     if (item?.chart_process_node?.[key]) return item.chart_process_node[key];
-                    if (item?.chart_rendering_node?.[key]) return item.chart_rendering_node[key];
                     if (item?.llm_processing_node?.[key]) return item.llm_processing_node[key];
-                    if (item?.sql_chart_node?.[key]) return item.sql_chart_node[key];
+                    if (item?.sql_query_node?.[key]) return item.sql_query_node[key];
+                    if (item?.rag_query_node?.[key]) return item.rag_query_node[key];
+                    if (item?.result_merge_node?.[key]) return item.result_merge_node[key];
                   }
                 }
                 return null;
               };
 
               const chartImage = actualResult?.chart_process_node?.chart_image 
-                || actualResult?.chart_rendering_node?.chart_image 
                 || actualResult?.chart_image 
                 || actualResult?.input?.chart_image
                 || getFromOutput('chart_image')
                 || currentExecutionData?.chart_image;
               const chartConfig = actualResult?.chart_process_node?.chart_config 
-                || actualResult?.chart_rendering_node?.chart_config 
                 || actualResult?.chart_config 
                 || actualResult?.input?.chart_config
                 || getFromOutput('chart_config')

@@ -202,9 +202,9 @@ def initialize_database_schema():
                 execution_id TEXT NOT NULL UNIQUE,
                 user_input TEXT NOT NULL,
                 datasource_id INTEGER,
-                interrupt_node TEXT NOT NULL,
-                interrupt_reason TEXT,
-                state_data TEXT NOT NULL, -- JSON serialized complete state
+                node_name TEXT NOT NULL,
+                reason TEXT,
+                current_state TEXT NOT NULL, -- JSON serialized complete state
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 status TEXT NOT NULL DEFAULT 'interrupted', -- interrupted, resumed, cancelled
@@ -816,7 +816,7 @@ async def delete_file_record_and_associated_data(file_id: int) -> bool:
 # ================== HITL (Human-in-the-Loop) Operations ==================
 
 def create_hitl_interrupt(execution_id: str, user_input: str, datasource_id: Optional[int], 
-                         interrupt_node: str, interrupt_reason: str, state_data: str) -> bool:
+                         node_name: str, reason: str, state_data: str) -> bool:
     """Create a new HITL interrupt record"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -824,9 +824,9 @@ def create_hitl_interrupt(execution_id: str, user_input: str, datasource_id: Opt
     try:
         cursor.execute("""
             INSERT OR REPLACE INTO hitl_interrupts 
-            (execution_id, user_input, datasource_id, interrupt_node, interrupt_reason, state_data, status)
+            (execution_id, user_input, datasource_id, node_name, reason, current_state, status)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (execution_id, user_input, datasource_id, interrupt_node, interrupt_reason, state_data, "interrupted"))
+        """, (execution_id, user_input, datasource_id, node_name, reason, state_data, "interrupted"))
         
         conn.commit()
         return cursor.rowcount > 0

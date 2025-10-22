@@ -127,6 +127,11 @@ const workflowSlice = createSlice({
             node.endTime = Date.now();
             node.duration = (node.endTime - node.startTime) / 1000;
             node.output = output;
+            
+            // Clear currentNode when node completes
+            if (state.executions[executionId].currentNode === nodeId) {
+                state.executions[executionId].currentNode = null;
+            }
         }
     },
     streamToken: (state, action) => {

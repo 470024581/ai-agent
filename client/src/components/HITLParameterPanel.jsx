@@ -25,10 +25,9 @@ export function HITLParameterPanel({
   // Map internal node ids to friendly display names
   const getDisplayNodeName = (id) => {
     const map = {
-      chart_process_node: 'Chart Build',
-      sql_chart_node: 'SQL Chart',
+      intent_analysis_node: 'Intent Analysis',
+      chart_process_node: 'Chart Process',
       sql_query_node: 'SQL Query',
-      router_node: 'Router',
       rag_query_node: 'RAG Query',
       llm_processing_node: 'LLM Process',
       start_node: 'Start',
@@ -69,7 +68,7 @@ export function HITLParameterPanel({
 
       // Derive sensible defaults when backend snapshot misses fields (common on interrupts)
       const derivedQueryType = pick(currentState, ['query_type', 'input.query_type'],
-        nodeName === 'chart_process_node' || nodeName === 'sql_query_node' || nodeName === 'sql_chart_node' ? 'sql' : (nodeName === 'rag_query_node' ? 'rag' : ''));
+        nodeName === 'chart_process_node' || nodeName === 'sql_query_node' ? 'sql' : (nodeName === 'rag_query_node' ? 'rag' : ''));
       const derivedSqlTaskType = pick(currentState, ['sql_task_type', 'input.sql_task_type'],
         nodeName === 'chart_process_node' ? 'chart' : (nodeName === 'sql_query_node' ? 'query' : ''));
 
