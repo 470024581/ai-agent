@@ -25,10 +25,12 @@ export function HITLParameterPanel({
   // Map internal node ids to friendly display names
   const getDisplayNodeName = (id) => {
     const map = {
-      intent_analysis_node: 'Intent Analysis',
+      rag_retriever_node: 'RAG Retriever',
+      rerank_node: 'Rerank',
+      rag_answer_node: 'RAG Answer',
+      router_node: 'Router',
+      sql_agent_node: 'SQL Agent',
       chart_process_node: 'Chart Process',
-      sql_query_node: 'SQL Query',
-      rag_query_node: 'RAG Query',
       llm_processing_node: 'LLM Process',
       start_node: 'Start',
       end_node: 'Complete',
@@ -68,16 +70,22 @@ export function HITLParameterPanel({
 
       // Derive sensible defaults when backend snapshot misses fields (common on interrupts)
       const derivedQueryType = pick(currentState, ['query_type', 'input.query_type'],
-        nodeName === 'chart_process_node' || nodeName === 'sql_query_node' ? 'sql' : (nodeName === 'rag_query_node' ? 'rag' : ''));
-      const derivedSqlTaskType = pick(currentState, ['sql_task_type', 'input.sql_task_type'],
-        nodeName === 'chart_process_node' ? 'chart' : (nodeName === 'sql_query_node' ? 'query' : ''));
+        nodeName === 'chart_process_node' || nodeName === 'sql_agent_node' ? 'sql' : (nodeName === 'rag_answer_node' ? 'rag' : ''));
+      const derivedNeedSqlAgent = pick(currentState, ['need_sql_agent', 'input.need_sql_agent'],
+        nodeName === 'router_node' ? true : false);
 
       const initialParams = {
         user_input: pick(currentState, ['user_input', 'query', 'input.user_input'], ''),
         query_type: derivedQueryType,
-        sql_task_type: derivedSqlTaskType,
+        need_sql_agent: derivedNeedSqlAgent,
+        retrieved_documents: pick(currentState, ['retrieved_documents', 'input.retrieved_documents'], []),
+        reranked_documents: pick(currentState, ['reranked_documents', 'input.reranked_documents'], []),
+        rag_answer: pick(currentState, ['rag_answer', 'input.rag_answer', 'output.rag_answer'], ''),
+        sql_agent_answer: pick(currentState, ['sql_agent_answer', 'input.sql_agent_answer', 'output.sql_agent_answer'], ''),
+        executed_sqls: pick(currentState, ['executed_sqls', 'input.executed_sqls'], []),
         structured_data: pick(currentState, ['structured_data', 'input.structured_data', 'output.structured_data'], null),
         chart_config: pick(currentState, ['chart_config', 'input.chart_config', 'output.chart_config'], null),
+        chart_suitable: pick(currentState, ['chart_suitable', 'input.chart_suitable'], false),
         answer: pick(currentState, ['answer', 'input.answer', 'output.answer'], ''),
         datasource: pick(currentState, ['datasource'], null),
         execution_id: pick(currentState, ['execution_id'], executionId || ''),
@@ -87,7 +95,6 @@ export function HITLParameterPanel({
       
       console.log('📊 [FRONTEND-HITL] HITLParameterPanel initialParams:', initialParams);
       console.log('📊 [FRONTEND-HITL] HITLParameterPanel query_type from state:', currentState?.query_type);
-      console.log('📊 [FRONTEND-HITL] HITLParameterPanel sql_task_type from state:', currentState?.sql_task_type);
       console.log('📊 [FRONTEND-HITL] HITLParameterPanel datasource from state:', currentState?.datasource);
       setParameters(initialParams);
       setValidationErrors({});
@@ -121,8 +128,12 @@ export function HITLParameterPanel({
       errors.query_type = 'Query type must be either "sql" or "rag"';
     }
     
-    if (parameters.sql_task_type && !['query', 'chart'].includes(parameters.sql_task_type)) {
-      errors.sql_task_type = 'SQL task type must be either "query" or "chart"';
+    if (parameters.need_sql_agent !== undefined && typeof parameters.need_sql_agent !== 'boolean') {
+      errors.need_sql_agent = 'Need SQL Agent must be true or false';
+    }
+    
+    if (parameters.chart_suitable !== undefined && typeof parameters.chart_suitable !== 'boolean') {
+      errors.chart_suitable = 'Chart suitable must be true or false';
     }
     
     setValidationErrors(errors);
@@ -258,29 +269,6 @@ export function HITLParameterPanel({
                 </p>
               )}
             </div>
-
-            {/* SQL Task Type */}
-            {parameters.query_type === 'sql' && (
-              <div className="space-y-1.5">
-                <Label htmlFor="sql_task_type">SQL Task Type</Label>
-                <select
-                  id="sql_task_type"
-                  value={parameters.sql_task_type || ''}
-                  onChange={(e) => handleParameterChange('sql_task_type', e.target.value)}
-                  className={`w-full p-2 border rounded-md ${validationErrors.sql_task_type ? 'border-red-500' : 'border-gray-300'}`}
-                >
-                  <option value="">Select SQL task type...</option>
-                  <option value="query">Data Query</option>
-                  <option value="chart">Chart Generation</option>
-                </select>
-                {validationErrors.sql_task_type && (
-                  <p className="text-sm text-red-500 flex items-center gap-1">
-                    <XCircle className="h-4 w-4" />
-                    {validationErrors.sql_task_type}
-                  </p>
-                )}
-              </div>
-            )}
 
             {/* Additional Parameters */}
             <div className="space-y-1.5">

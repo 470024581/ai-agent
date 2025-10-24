@@ -191,12 +191,12 @@ def show_sample_queries(db_path: str = "data/smart.db"):
                 p.product_name,
                 p.category,
                 COUNT(*) as sales_count,
-                SUM(s.total_amount) as total_revenue,
+                SUM(s.total_amount) as total_amount,
                 AVG(s.total_amount) as avg_transaction_value
             FROM dwd_sales_detail s
             LEFT JOIN dim_product p ON s.product_id = p.product_id
             GROUP BY s.product_id, p.product_name, p.category
-            ORDER BY total_revenue DESC
+            ORDER BY total_amount DESC
             LIMIT 5
         """)
         product_performance = cursor.fetchall()
@@ -225,11 +225,11 @@ def show_sample_queries(db_path: str = "data/smart.db"):
             SELECT 
                 category,
                 SUM(transaction_count) as total_transactions,
-                SUM(total_revenue) as total_revenue,
+                SUM(total_amount) as total_amount,
                 AVG(avg_transaction_value) as avg_transaction_value
             FROM dws_sales_cube
             GROUP BY category
-            ORDER BY total_revenue DESC
+            ORDER BY total_amount DESC
         """)
         cube_summary = cursor.fetchall()
         for row in cube_summary:

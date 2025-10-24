@@ -183,7 +183,17 @@ export function AnimatedWorkflowDiagram({
         // If node.col provided, treat it as row index (1-based); else spread evenly
         const row = node.col != null ? Number(node.col) - 1 : indexInLayer;
         const totalRows = node.totalCols != null ? Number(node.totalCols) : rowCount;
-        const y = paddingY + (availableHeight * (row + 1)) / (totalRows + 1);
+        let y = paddingY + (availableHeight * (row + 1)) / (totalRows + 1);
+        
+        // Apply specific upward shifts for better alignment
+        if (node.id === 'sql_agent_node' || node.id === 'chart_process_node') {
+          y -= 40; // Move SQL Agent and Chart Process up by 40 pixels
+        }
+
+        // Force alignment for RAG, Router, and LLM nodes to share the same Y level
+        if (node.id === 'rag_query_node' || node.id === 'router_node' || node.id === 'llm_processing_node') {
+          y = (height * 3) / 7;
+        }
         
         // Ensure x and y are within bounds
         const clampedX = Math.max(paddingX, Math.min(width - paddingX, x));

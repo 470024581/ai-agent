@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import ChartRenderer from './ChartRenderer';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -25,6 +25,12 @@ const InteractiveChart = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [selectedDataPoints, setSelectedDataPoints] = useState([]);
   const [chartType, setChartType] = useState(chartConfig?.type || 'line');
+
+  // Sync local chartType with incoming chartConfig.type when backend result changes
+  useEffect(() => {
+    const incomingType = chartConfig?.type || 'line';
+    setChartType(incomingType);
+  }, [chartConfig?.type]);
 
   const handleDataPointClick = useCallback((event) => {
     if (onDataPointClick) {

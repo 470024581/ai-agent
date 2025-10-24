@@ -283,7 +283,6 @@
       "qualityValidation": "Quality Validation",
       "qualityValidationDesc": "Score and validate output quality"
     },
-    "exampleTitle": "Example Queries",
     "rateLimit": {
       "exceeded": "Usage frequency exceeded",
       "waitTime": "Please wait {time} before trying again",

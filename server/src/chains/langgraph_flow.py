@@ -6,13 +6,19 @@ import time
 import uuid
 import asyncio
 import re
+import os
 from typing import Dict, Any, List, Optional, TypedDict
 import logging
 import requests
 from langgraph.graph import StateGraph
+from langchain_community.utilities import SQLDatabase
 from ..agents.intelligent_agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
-from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus
-from ..database.db_operations import get_active_datasource  # Added to get active datasource
+import re
+import difflib
+from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus, DataSourceType
+from ..database.db_operations import get_active_datasource
+from ..agents.intelligent_agent import DB_URI
+# Removed unused import
 
 logger = logging.getLogger(__name__)
 
@@ -166,46 +172,44 @@ class HITLInterruptedException(Exception):
 # GraphState definition moved to top
 # GraphState definition - Updated for new workflow
 class GraphState(TypedDict):
-    """Define graph state for hybrid query workflow"""
+    """Define graph state for new RAG mandatory + SQL-Agent optional workflow"""
     # === Basic fields ===
     user_input: str
     datasource: Dict[str, Any]
     execution_id: str  # For WebSocket routing and token streaming
     
-    # === Intent analysis results ===
-    query_path: str  # "rag_only" | "sql_only" | "rag_sql"
-    need_chart: bool  # Whether chart visualization is needed
-    analysis_reasoning: str  # LLM reasoning process
-    detected_keywords: List[str]  # Detected keywords from query
-    
-    # === Legacy fields (for backward compatibility) ===
-    query_type: Optional[str]  # "sql" or "rag" - deprecated but kept for compatibility
-    sql_task_type: Optional[str]  # "query" or "chart" - deprecated
-    
-    # === RAG related ===
-    rag_result: Optional[str]  # Retrieved document content
-    rag_sources: Optional[List[str]]  # Source file list
-    rag_confidence: Optional[float]  # Retrieval confidence score
-    rag_executed: bool  # Flag to prevent duplicate RAG execution
-    
-    # === SQL related ===
-    structured_data: Optional[Dict[str, Any]]  # Query result data
-    sql_answer: Optional[str]  # Initial SQL result description
-    executed_sql: Optional[str]  # Executed SQL statement
-    
-    # === Merged results (for rag_sql path) ===
-    merged_context: Optional[str]  # Integrated context from RAG + SQL
-    data_with_metadata: Optional[Dict[str, Any]]  # Data with metadata annotations
-    
-    # === Chart related ===
+    # === RAG path fields ===
+    retrieved_documents: Optional[List[Any]]  # Retrieved Top 10 documents
+    reranked_documents: Optional[List[Any]]  # Top 3 documents after reranking
+    rag_answer: Optional[str]  # RAG generated answer
+    rag_source_documents: Optional[List[Any]]  # RAG source documents
+    retrieval_success: bool  # Whether retrieval was successful
+    rerank_success: bool  # Whether reranking was successful
+    rag_success: bool  # Whether RAG answer generation was successful
+
+    # === Router fields ===
+    need_sql_agent: bool  # Whether SQL-Agent is needed
+    router_reasoning: Optional[str]  # Router decision reasoning
+
+    # === SQL-Agent fields ===
+    sql_agent_answer: Optional[str]  # SQL-Agent answer
+    executed_sqls: Optional[List[str]]  # List of executed SQL queries
+    agent_intermediate_steps: Optional[List[Any]]  # Agent intermediate steps
+    sql_execution_success: bool  # Whether SQL execution was successful
+
+    # === Chart fields ===
+    chart_suitable: bool  # Whether data is suitable for chart generation
     chart_config: Optional[Dict[str, Any]]  # Chart configuration
     chart_data: Optional[List[Dict]]  # Chart data
     chart_type: Optional[str]  # Chart type
-    chart_image: Optional[str]  # Legacy field - chart image path
+    chart_error: Optional[str]  # Chart error information
+    
+    # === Structured data ===
+    structured_data: Optional[Dict[str, Any]]  # Query result data
     
     # === Final output ===
     answer: str  # Final natural language answer
-    final_result: Optional[Dict[str, Any]]  # Complete result package
+    final_answer: Optional[str]  # Final integrated answer
     
     # === Quality and error ===
     quality_score: int
@@ -221,6 +225,9 @@ class GraphState(TypedDict):
     
     # === Node outputs tracking ===
     node_outputs: Dict[str, Any]  # Track outputs from each node
+    
+    # === Legacy fields (for backward compatibility) ===
+    query_type: Optional[str]  # "sql" or "rag" - deprecated but kept for compatibility
 
 # LangGraph native interrupt implementation
 def check_interrupt_status(state: GraphState) -> str:
@@ -297,164 +304,6 @@ def apply_hitl_parameters(state: Dict[str, Any], parameters: Dict[str, Any]) -> 
 
 # Remove duplicate GraphState definition
 
-def intent_analysis_node(state: GraphState) -> GraphState:
-    """Intent Analysis Node: Optimized single-call intent analysis"""
-    user_input = state["user_input"]
-    execution_id = state.get("execution_id", "unknown")
-    
-    logger.info(f"Intent Analysis Node - Analyzing query: {user_input}")
-    
-    if not llm:
-        logger.warning("LLM not available, using fallback rule-based intent analysis")
-        return _fallback_intent_analysis(state)
-    
-    try:
-        # Optimized single-call analysis
-        analysis_prompt = f"""
-        Analyze this user query and determine the execution path: "{user_input}"
-        
-        Analysis steps:
-        1. Identify if query asks about documents/concepts/designs/metadata
-        2. Identify if query asks about database data/statistics/numbers  
-        3. Check for chart/visualization keywords
-        4. Determine if both knowledge and data are needed
-        
-        Keywords to check:
-        - Chart: chart, graph, visualization, pie chart, bar chart, line chart, 图表, 可视化, 饼图, 柱状图, 折线图
-        - Data: data, query, sales, order, product, 数据, 查询, 统计, 分析, 销售, 订单, 产品
-        - Documents: meaning, definition, design, concept, explain, 含义, 定义, 设计, 方案, 原则, 概念, 解释
-        
-        Return ONLY a JSON response:
-        {{
-            "query_path": "rag_only|sql_only|rag_sql",
-            "need_chart": true/false,
-            "reasoning": "Brief explanation of your decision",
-            "detected_keywords": ["keyword1", "keyword2"]
-        }}
-        """
-        
-        response = llm.invoke(analysis_prompt)
-        response_text = _extract_content(response)
-        logger.info(f"Intent Analysis - Response: {response_text[:200]}...")
-        
-        # Parse JSON response
-        try:
-            import json
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                decision_json = json.loads(response_text[json_start:json_end])
-                
-                query_path = decision_json.get("query_path", "rag_only")
-                need_chart = decision_json.get("need_chart", False)
-                reasoning = decision_json.get("reasoning", "No reasoning provided")
-                detected_keywords = decision_json.get("detected_keywords", [])
-                
-                # Validate query_path
-                if query_path not in ["rag_only", "sql_only", "rag_sql"]:
-                    logger.warning(f"Invalid query_path: {query_path}, defaulting to rag_only")
-                    query_path = "rag_only"
-                
-                logger.info(f"Intent Analysis Result - Path: {query_path}, Chart: {need_chart}")
-                
-                return {
-                    **state,
-                    "query_path": query_path,
-                    "need_chart": need_chart,
-                    "analysis_reasoning": reasoning,
-                    "detected_keywords": detected_keywords,
-                    # Legacy compatibility
-                    "query_type": "sql" if query_path in ["sql_only", "rag_sql"] else "rag",
-                    "sql_task_type": "chart" if need_chart else "query",
-                    "node_outputs": {
-                        **state.get("node_outputs", {}),
-                        "intent_analysis": {
-                            "status": "completed",
-                            "timestamp": time.time(),
-                            "query_path": query_path,
-                            "need_chart": need_chart,
-                            "reasoning": reasoning,
-                            "keywords": detected_keywords
-                        }
-                    }
-                }
-            else:
-                raise ValueError("No valid JSON found in response")
-                
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"Failed to parse intent analysis JSON: {e}, using fallback")
-            return _fallback_intent_analysis(state)
-            
-    except Exception as e:
-        logger.error(f"Intent analysis failed: {e}, using fallback")
-        return _fallback_intent_analysis(state)
-
-def _fallback_intent_analysis(state: GraphState) -> GraphState:
-    """Fallback rule-based intent analysis when LLM is not available"""
-    user_input = state["user_input"]
-    
-    # Rule-based keyword detection
-    chart_keywords = ["图表", "可视化", "饼图", "柱状图", "折线图", "chart", "graph", "visualization", "pie chart", "bar chart", "line chart"]
-    db_keywords = ["数据", "查询", "统计", "分析", "销售", "订单", "产品", "data", "query", "sales", "order", "product"]
-    doc_keywords = ["含义", "定义", "设计", "方案", "原则", "概念", "解释", "meaning", "definition", "design", "concept", "explain"]
-    
-    detected_keywords = []
-    has_chart = False
-    has_db = False
-    has_doc = False
-    
-    user_lower = user_input.lower()
-    
-    for keyword in chart_keywords:
-        if keyword in user_lower:
-            detected_keywords.append(keyword)
-            has_chart = True
-    
-    for keyword in db_keywords:
-        if keyword in user_lower:
-            detected_keywords.append(keyword)
-            has_db = True
-    
-    for keyword in doc_keywords:
-        if keyword in user_lower:
-            detected_keywords.append(keyword)
-            has_doc = True
-    
-    # Determine query path
-    if has_doc and has_db:
-        query_path = "rag_sql"
-    elif has_db:
-        query_path = "sql_only"
-    else:
-        query_path = "rag_only"
-    
-    need_chart = has_chart or (has_db and not has_doc)  # All SQL queries try charts unless pure RAG
-    
-    reasoning = f"Rule-based analysis: doc={has_doc}, db={has_db}, chart={has_chart}"
-    
-    logger.info(f"Fallback Intent Analysis - Path: {query_path}, Chart: {need_chart}")
-    
-    return {
-        **state,
-        "query_path": query_path,
-        "need_chart": need_chart,
-        "analysis_reasoning": reasoning,
-        "detected_keywords": detected_keywords,
-        # Legacy compatibility
-        "query_type": "sql" if query_path in ["sql_only", "rag_sql"] else "rag",
-        "sql_task_type": "chart" if need_chart else "query",
-        "node_outputs": {
-            **state.get("node_outputs", {}),
-            "intent_analysis": {
-                "status": "completed",
-                "timestamp": time.time(),
-                "query_path": query_path,
-                "need_chart": need_chart,
-                "reasoning": reasoning,
-                "method": "fallback"
-            }
-        }
-    }
 
 def _extract_content(response) -> str:
     """Extract content from LLM response"""
@@ -465,295 +314,797 @@ def _extract_content(response) -> str:
     else:
         return str(response).strip()
 
-# Legacy router_node for backward compatibility
 def router_node(state: GraphState) -> GraphState:
-    """Legacy router node - redirects to intent_analysis_node"""
-    logger.info("Using legacy router_node - redirecting to intent_analysis_node")
-    return intent_analysis_node(state)
-
-# Remove hitl_checkpoint decorator completely and use LangGraph native interrupt
-def sql_classifier_node(state: GraphState) -> GraphState:
-    """SQL classification node: use LLM to determine if it's data query or chart building"""
+    """Router Node: Determine whether to trigger SQL-Agent"""
     user_input = state["user_input"]
+    rag_answer = state.get("rag_answer", "")
+    reranked_documents = state.get("reranked_documents", [])
+    
+    logger.info(f"Router Node - Analyzing query: {user_input}")
     
     if not llm:
-        logger.warning("LLM not available, using fallback rule-based SQL classification")
-        # Fallback to rule-based judgment
-        chart_keywords = [
-            "chart", "visualization", "trend", "distribution", "bar chart", 
-            "line chart", "pie chart", "graph", "plot", "generate", "create", "build",
-            "visualize", "show", "display", "draw"
-        ]
-        
-        if any(keyword in user_input.lower() for keyword in chart_keywords):
-            sql_task_type = "chart"
-        else:
-            sql_task_type = "query"
-    else:
-        # Use LLM for semantic classification (with strong rule overrides)
-        try:
-            prompt = f"""
-            Analyze the following user query and determine what the user wants:
-            1. query - Get data query results (text-based data analysis)
-            2. chart - Generate charts or visualizations (charts, trend graphs, distribution graphs, etc.)
-            
-            User query: "{user_input}"
-            
-            Only answer "query" or "chart" (lowercase, no explanation needed).
-            """
-            
-            response = llm.invoke(prompt)
-            
-            # Handle different response types (Ollama returns string, OpenAI returns object)
-            if hasattr(response, 'content'):
-                sql_task_type = response.content.strip().lower()
-            elif isinstance(response, str):
-                sql_task_type = response.strip().lower()
-            else:
-                sql_task_type = str(response).strip().lower()
-            
-            # Normalize punctuation and whitespace
-            sql_task_type = sql_task_type.strip().strip(".!,; ")
-            
-            # Strong keyword override for chart intent
-            chart_keywords = [
-                "pie", "pie chart", "proportion", "percentage", "distribution", "breakdown",
-                "饼图", "占比", "比例", "分布", "图表"
-            ]
-            if any(k in user_input.lower() for k in chart_keywords):
-                sql_task_type = "chart"
-            
-            # Validate response
-            if sql_task_type not in ["query", "chart"]:
-                logger.warning(f"Invalid LLM SQL classification response: {sql_task_type}, defaulting to chart if keywords present else query")
-                sql_task_type = "chart" if any(k in user_input.lower() for k in chart_keywords) else "query"
-                
-        except Exception as e:
-            logger.error(f"Error in LLM SQL classification: {e}, falling back to rule-based")
-            # Fallback to rule-based
-            chart_keywords = [
-                "chart", "visualization", "trend", "distribution", "bar chart", 
-                "line chart", "pie chart", "graph", "plot", "generate", "create", "build",
-                "visualize", "show", "display", "draw"
-            ]
-            if any(keyword in user_input.lower() for keyword in chart_keywords):
-                sql_task_type = "chart"
-            else:
-                sql_task_type = "query"
+        logger.warning("LLM not available, using fallback rule-based router decision")
+        return _fallback_router_decision(state)
     
-    logger.info(f"SQL task type: {sql_task_type} for input: {user_input}")
-    
-    # Return updated state while preserving existing state
-    return {**state, "sql_task_type": sql_task_type}
-
-async def sql_query_node(state: GraphState) -> GraphState:
-    """Enhanced SQL query node: supports both direct queries and RAG-guided queries, with integrated result merging and chart decision"""
     try:
-        user_input = state["user_input"]
-        datasource = state.get("datasource")
-        rag_result = state.get("rag_result")  # Optional RAG metadata for guidance
-        query_path = state.get("query_path", "sql_only")
-        
-        if not datasource:
-            error_msg = "No data source found in state. Please select or create a data source first."
-            logger.error(error_msg)
+        # Lightweight heuristics to bias decision without hardcoding logic
+        heuristics = _router_heuristics(user_input, reranked_documents)
+        if heuristics.get("strong_llm_only", False):
+            # Strong signals indicate documentation-style Q&A; skip SQL-Agent
+            logger.info(f"Router heuristics suggest LLM-only (reason: {heuristics.get('reason', 'n/a')})")
             return {
                 **state,
-                "error": error_msg,
+                "need_sql_agent": False,
+                "router_reasoning": f"Heuristic decision: {heuristics.get('reason', 'conceptual and high-confidence RAG doc')}",
                 "node_outputs": {
                     **state.get("node_outputs", {}),
-                    "sql_query": {
-                        "status": "error",
-                        "timestamp": time.time(),
-                        "error": "No datasource in state"
-                    }
-                }
-            }
-        
-        # Force SQL branch to use built-in DEFAULT datasource (ID=1)
-        if datasource.get("type") != "default":
-            try:
-                from ..database.db_operations import get_datasource
-                builtin_ds = await get_datasource(1)
-                if builtin_ds:
-                    datasource = builtin_ds
-                    logger.info("SQL branch: switched to built-in DEFAULT datasource (ID=1)")
-            except Exception as _e:
-                logger.warning(f"SQL branch: failed to switch to DEFAULT datasource: {_e}")
-
-        logger.info(f"SQL Query Node - Path: {query_path}, Has RAG guidance: {bool(rag_result)}")
-        
-        # Enhanced query processing based on path
-        if query_path == "rag_sql" and rag_result:
-            # Use RAG metadata to guide SQL generation
-            logger.info("SQL Query Node - Using RAG-guided SQL generation")
-            result = await _perform_rag_guided_sql_query(user_input, datasource, rag_result)
-        else:
-            # Direct SQL query (existing logic)
-            logger.info("SQL Query Node - Using direct SQL query")
-            result = await get_query_from_sqltable_datasource(user_input, datasource)
-        
-        if result["success"]:
-            structured_data = result.get("data", {})
-            executed_sql = result.get("executed_sql", "")
-            sql_answer = result.get("answer", "")
-            
-            # Validate the result structure
-            if not structured_data:
-                error_msg = "No structured data returned from query"
-                logger.error(error_msg)
-                return {
-                    **state,
-                    "error": error_msg,
-                    "node_outputs": {
-                        **state.get("node_outputs", {}),
-                        "sql_query": {
-                            "status": "error",
-                            "timestamp": time.time(),
-                            "error": "No data available"
-                        }
-                    }
-                }
-            
-            logger.info(f"SQL query successful, data: {structured_data}")
-            
-            # === INTEGRATED RESULT MERGING AND CHART DECISION ===
-            
-            # 1. Result Merging Logic (from result_merge_node)
-            merged_context = None
-            data_with_metadata = None
-            
-            if rag_result and structured_data:
-                # Normal case: both RAG and SQL available
-                logger.info("SQL Query Node - Combining RAG metadata with SQL data")
-                merged_context = f"""
-                [Metadata Context]
-                {rag_result}
-                
-                [Data Query Results]
-                Query: {user_input}
-                SQL: {executed_sql}
-                Data: {structured_data.get('rows', [])}
-                
-                The metadata above explains the meaning and context of the data below.
-                """
-                
-                data_with_metadata = {
-                    "metadata_context": rag_result,
-                    "query_context": user_input,
-                    "sql_query": executed_sql,
-                    "data_rows": structured_data.get('rows', []),
-                    "data_columns": structured_data.get('columns', []),
-                    "row_count": len(structured_data.get('rows', [])),
-                    "merged_at": time.time()
-                }
-                logger.info(f"SQL Query Node - Result merge completed - Rows: {len(structured_data.get('rows', []))}")
-                
-            elif not rag_result and structured_data:
-                # Handle case where RAG failed but SQL succeeded
-                logger.warning("SQL Query Node - RAG result missing, proceeding with SQL data only")
-                merged_context = f"""
-                [Data Query Results]
-                Query: {user_input}
-                SQL: {executed_sql}
-                Data: {structured_data.get('rows', [])}
-                
-                Note: No metadata context available, using direct data query results.
-                """
-                
-                data_with_metadata = {
-                    "metadata_context": "No metadata available",
-                    "query_context": user_input,
-                    "sql_query": executed_sql,
-                    "data_rows": structured_data.get('rows', []),
-                    "data_columns": structured_data.get('columns', []),
-                    "row_count": len(structured_data.get('rows', [])),
-                    "merged_at": time.time(),
-                    "rag_failed": True
-                }
-            
-            # 2. Chart Decision Logic (from chart_decision_node)
-            chart_decision = "skip_chart"
-            if query_path in ["sql_only", "rag_sql"] and structured_data:
-                rows = structured_data.get("rows", [])
-                if rows and len(rows) > 0:
-                    chart_decision = "generate_chart"
-                    logger.info(f"SQL Query Node - Chart decision: generate_chart for {query_path} path with {len(rows)} rows")
-                else:
-                    logger.info(f"SQL Query Node - Chart decision: skip_chart - no data rows")
-            else:
-                logger.info(f"SQL Query Node - Chart decision: skip_chart for {query_path} path")
-            
-            # Prepare return state with all integrated results
-            return_state = {
-                **state,
-                "structured_data": structured_data,
-                "sql_answer": sql_answer,
-                "executed_sql": executed_sql,
-                "merged_context": merged_context,
-                "data_with_metadata": data_with_metadata,
-                "chart_decision": chart_decision,
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "sql_query": {
+                    "router": {
                         "status": "completed",
-                        "timestamp": time.time(),
-                        "query_path": query_path,
-                        "rag_guided": bool(rag_result),
-                        "data_summary": {
-                            "row_count": len(structured_data.get("rows", [])),
-                            "executed_sql": executed_sql,
-                            "has_answer": bool(sql_answer)
-                        },
-                        "result_merge": {
-                            "status": "completed",
-                            "timestamp": time.time(),
-                            "merged_context_length": len(merged_context) if merged_context else 0,
-                            "data_rows": len(structured_data.get('rows', [])),
-                            "metadata_used": bool(rag_result)
-                        },
-                        "chart_decision": {
-                            "status": "completed",
-                            "timestamp": time.time(),
-                            "decision": chart_decision,
-                            "reason": f"{query_path} path with {len(structured_data.get('rows', []))} rows"
-                        }
+                        "decision": "llm_only",
+                        "reasoning": heuristics.get('reason', ''),
+                        "timestamp": time.time()
                     }
                 }
             }
-            
-            return return_state
-        else:
-            error_msg = result.get("error", "SQL query execution failed")
-            logger.error(f"SQL query failed: {error_msg}")
-            
-            return {
-                **state,
-                "error": error_msg,
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "sql_query": {
-                        "status": "error",
-                        "timestamp": time.time(),
-                        "error": error_msg
-                    }
-                }
-            }
-    except Exception as e:
-        error_msg = f"Unexpected error in SQL query node: {str(e)}"
-        logger.exception(error_msg)
+
+        prompt = f"""
+        User question: {user_input}
+        RAG preliminary answer: {rag_answer}
+        
+        Determine whether to query structured database.
+        
+        Scenarios requiring SQL:
+        - Numerical statistics (sales, quantities, averages)
+        - Time series analysis (trends, comparisons)
+        - Data aggregation and summarization
+        - Rankings and sorting
+        
+        Scenarios not requiring SQL:
+        - Concept explanations and definitions
+        - Design principles and methodologies
+        - Document content queries
+        
+        Context signals (for your reference, not mandatory):
+        - text_intent_prefer_llm: {heuristics.get('text_intent_prefer_llm')}
+        - top1_doc: {heuristics.get('top1_source')}
+        - top1_ext: {heuristics.get('top1_ext')}
+        - top1_ce_score: {heuristics.get('top1_ce_score')}
+        - prefer_llm_hint: {heuristics.get('prefer_llm_hint')}
+        
+        Return JSON:
+        {{
+            "need_sql": true/false,
+            "reasoning": "decision reasoning"
+        }}
+        """
+        
+        response = llm.invoke(prompt)
+        decision = _parse_json_response(response)
+        # Post-override: if LLM prefers SQL but heuristics strongly suggest LLM-only, override
+        if decision.get("need_sql", False) and heuristics.get("prefer_llm_override", False):
+            decision["need_sql"] = False
+            decision["reasoning"] = f"Heuristic override: {heuristics.get('reason', '')}"
+        
+        logger.info(f"Router decision: need_sql={decision['need_sql']}")
+        
         return {
             **state,
-            "error": error_msg,
+            "need_sql_agent": decision["need_sql"],
+            "router_reasoning": decision["reasoning"],
             "node_outputs": {
                 **state.get("node_outputs", {}),
-                "sql_query": {
-                    "status": "error",
-                    "timestamp": time.time(),
-                    "error": error_msg
+                "router": {
+                    "status": "completed",
+                    "decision": "sql_agent" if decision["need_sql"] else "llm_only",
+                    "reasoning": decision["reasoning"],
+                    "timestamp": time.time()
                 }
             }
         }
+    except Exception as e:
+        logger.error(f"Router failed: {e}, using fallback")
+        return _fallback_router_decision(state)
+
+def _fallback_router_decision(state: GraphState) -> GraphState:
+    """Fallback: Rule-based decision using keywords"""
+    user_input = state["user_input"].lower()
+    reranked_documents = state.get("reranked_documents", [])
+    # Positive indicators for SQL
+    sql_keywords = [
+        "sales", "quantity", "statistics", "trend", "chart", "how many", "average", "total", "summary", "ranking",
+        "同比", "环比", "统计", "趋势", "时间", "区间", "top", "sum", "avg", "平均", "总量", "合计", "总数"
+    ]
+    # Indicators for conceptual/document Q&A
+    conceptual_keywords = [
+        "describe", "explain", "what is", "what are", "overview", "architecture", "schema", "relationship",
+        "key feature", "features", "benefits", "advantages", "pros", "cons", "highlights",
+        "架构", "关系", "原理", "概念", "文档", "定义", "说明", "介绍", "特点", "特性", "关键特性", "优势", "亮点", "概览"
+    ]
+    has_sql_signals = any(kw in user_input for kw in sql_keywords)
+    has_concept_signals = any(kw in user_input for kw in conceptual_keywords)
+    # Heuristic override from top documents
+    h = _router_heuristics(state.get("user_input", ""), reranked_documents)
+    prefer_llm_override = h.get("prefer_llm_override", False)
+    need_sql = (has_sql_signals and not has_concept_signals) and not prefer_llm_override
+    
+    logger.info(f"Fallback router decision: need_sql={need_sql}")
+    
+    return {
+        **state,
+        "need_sql_agent": need_sql,
+        "router_reasoning": "Fallback rule-based decision",
+        "node_outputs": {
+            **state.get("node_outputs", {}),
+            "router": {
+                "status": "completed",
+                "decision": "sql_agent" if need_sql else "llm_only",
+                "reasoning": "Fallback rule-based decision",
+                "timestamp": time.time()
+            }
+        }
+    }
+
+def _router_heuristics(user_input: str, reranked_documents: list) -> dict:
+    """Compute lightweight, general heuristics to bias router decision.
+    Returns a dict with fields:
+      - text_intent_prefer_llm: bool
+      - top1_source: str | None
+      - top1_ext: str | None
+      - top1_ce_score: float | None
+      - prefer_llm_hint: bool
+      - strong_llm_only: bool
+      - reason: str
+    """
+    ui = (user_input or "").lower()
+    conceptual_keywords = [
+        "describe", "explain", "what is", "what are", "overview", "architecture", "schema", "relationship",
+        "key feature", "features", "benefits", "advantages", "pros", "cons", "highlights",
+        "架构", "关系", "原理", "概念", "文档", "定义", "说明", "介绍", "特点", "特性", "关键特性", "优势", "亮点", "概览"
+    ]
+    sql_keywords = [
+        "统计", "趋势", "同比", "环比", "top", "sum", "avg", "平均", "总量", "合计", "总数", "时间", "区间",
+        "sales", "quantity", "statistics", "trend", "chart", "how many", "average", "total", "summary", "ranking"
+    ]
+    text_intent_prefer_llm = any(kw in ui for kw in conceptual_keywords) and not any(kw in ui for kw in sql_keywords)
+    top1 = reranked_documents[0] if reranked_documents else None
+    top2 = reranked_documents[1] if len(reranked_documents) > 1 else None
+    top3 = reranked_documents[2] if len(reranked_documents) > 2 else None
+    top1_meta = getattr(top1, "metadata", {}) if top1 else {}
+    import os as _os
+    src = (top1_meta.get("source") or top1_meta.get("file_path") or "") if top1 else ""
+    ext = _os.path.splitext(src)[1].lower() if src else None
+    ce_score = top1_meta.get("ce_score") if isinstance(top1_meta, dict) else None
+    doc_like_exts = {".md", ".docx", ".txt", ".pdf"}
+    doc_like = ext in doc_like_exts if ext else False
+    ce_ok = (float(ce_score) >= 0.6) if ce_score is not None else False
+
+    # Aggregate top-3 doc signals
+    def _doc_like_with_ce(d):
+        if not d:
+            return False
+        m = getattr(d, "metadata", {}) or {}
+        p = m.get("source") or m.get("file_path") or ""
+        e = _os.path.splitext(p)[1].lower() if p else None
+        s = m.get("ce_score")
+        return (e in doc_like_exts) and (s is not None) and (float(s) >= 0.7)
+
+    doc_like_topk = sum(1 for d in (top1, top2, top3) if _doc_like_with_ce(d))
+
+    has_stats_intent = any(kw in ui for kw in sql_keywords)
+    strong_top1 = bool(doc_like and (ce_score is not None) and (float(ce_score) >= 0.8))
+    strong_llm_only = bool(text_intent_prefer_llm and strong_top1)
+    prefer_llm_override = (not has_stats_intent) and (strong_top1 or doc_like_topk >= 2)
+
+    prefer_llm_hint = bool(text_intent_prefer_llm or (doc_like and ce_ok) or doc_like_topk >= 2)
+
+    reason_parts = []
+    if text_intent_prefer_llm:
+        reason_parts.append("conceptual intent detected")
+    if doc_like:
+        reason_parts.append(f"top1 doc-type {ext}")
+    if ce_score is not None:
+        reason_parts.append(f"ce_score={ce_score}")
+    if doc_like_topk >= 2:
+        reason_parts.append("top3_doc_like>=2")
+
+    return {
+        "text_intent_prefer_llm": text_intent_prefer_llm,
+        "top1_source": _os.path.basename(src) if src else None,
+        "top1_ext": ext,
+        "top1_ce_score": ce_score,
+        "prefer_llm_hint": prefer_llm_hint,
+        "strong_llm_only": strong_llm_only,
+        "prefer_llm_override": prefer_llm_override,
+        "reason": ", ".join(reason_parts) or ""
+    }
+
+def _parse_json_response(response) -> dict:
+    """Parse LLM's JSON response"""
+    try:
+        import json
+        if hasattr(response, 'content'):
+            response_text = response.content
+        else:
+            response_text = str(response)
+        
+        # Find JSON part
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            json_str = response_text[json_start:json_end]
+            return json.loads(json_str)
+        else:
+            raise ValueError("No valid JSON found in response")
+    except Exception as e:
+        logger.warning(f"Failed to parse JSON response: {e}")
+        # Return default value
+        return {"need_sql": False, "reasoning": "Failed to parse response"}
+
+
+def extract_table_names_from_rag(rag_answer: str, user_input: str) -> List[str]:
+    """Extract relevant table names from RAG answer and user input"""
+    import re
+    
+    # Common table names in the system
+    known_tables = [
+        'customers', 'products', 'orders', 'sales', 'inventory',
+        'dim_customer', 'dim_product', 'dwd_sales_detail', 'dwd_inventory_detail',
+        'dws_sales_cube', 'dws_inventory_cube'
+    ]
+    
+    # Extract table names from RAG answer and user input
+    text_to_search = f"{rag_answer} {user_input}".lower()
+    relevant_tables = []
+    
+    for table in known_tables:
+        if table.lower() in text_to_search:
+            relevant_tables.append(table)
+    
+    # Additional pattern matching for table references
+    table_patterns = [
+        r'\b(sales?|sale)\b',
+        r'\b(product|products?)\b', 
+        r'\b(customer|customers?)\b',
+        r'\b(order|orders?)\b',
+        r'\b(inventory|stock)\b'
+    ]
+    
+    for pattern in table_patterns:
+        if re.search(pattern, text_to_search):
+            # Map patterns to actual table names
+            if 'sales' in pattern or 'sale' in pattern:
+                if 'dws_sales_cube' not in relevant_tables:
+                    relevant_tables.append('dws_sales_cube')
+                if 'sales' not in relevant_tables:
+                    relevant_tables.append('sales')
+            elif 'product' in pattern:
+                if 'dim_product' not in relevant_tables:
+                    relevant_tables.append('dim_product')
+                if 'products' not in relevant_tables:
+                    relevant_tables.append('products')
+            elif 'customer' in pattern:
+                if 'dim_customer' not in relevant_tables:
+                    relevant_tables.append('dim_customer')
+                if 'customers' not in relevant_tables:
+                    relevant_tables.append('customers')
+            elif 'order' in pattern:
+                if 'orders' not in relevant_tables:
+                    relevant_tables.append('orders')
+            elif 'inventory' in pattern or 'stock' in pattern:
+                if 'dws_inventory_cube' not in relevant_tables:
+                    relevant_tables.append('dws_inventory_cube')
+                if 'inventory' not in relevant_tables:
+                    relevant_tables.append('inventory')
+    
+    logger.info(f"Extracted relevant tables from RAG: {relevant_tables}")
+    return relevant_tables
+
+
+async def sql_agent_node(state: GraphState) -> GraphState:
+    """SQL Agent Node: Use ReAct mode to autonomously explore database"""
+    user_input = state["user_input"]
+    rag_answer = state.get("rag_answer", "")
+    datasource = state["datasource"]
+    execution_id = state.get("execution_id", "unknown")
+    
+    logger.info(f"SQL Agent Node - Starting ReAct exploration for: {user_input}")
+    
+    try:
+        # 1. Extract relevant table names from RAG answer
+        relevant_tables = extract_table_names_from_rag(rag_answer, user_input)
+        
+        # 2. Initialize database connection with table restrictions
+        if datasource['type'] == DataSourceType.DEFAULT.value:
+            # Use default database with RAG-extracted table restrictions
+            include_tables = relevant_tables if relevant_tables else None
+            if include_tables:
+                logger.info(f"SQL Agent - Using RAG-extracted tables: {include_tables}")
+            else:
+                logger.warning("SQL Agent - No relevant tables found in RAG answer, exploring all tables")
+        else:
+            table_name = datasource.get("db_table_name")
+            if not table_name:
+                # If no table name specified, use RAG-extracted tables
+                include_tables = relevant_tables if relevant_tables else None
+                if include_tables:
+                    logger.info(f"SQL Agent - Using RAG-extracted tables: {include_tables}")
+                else:
+                    logger.warning("SQL Agent - No relevant tables found in RAG answer, exploring all tables")
+            else:
+                include_tables = [table_name]
+        
+        db = SQLDatabase.from_uri(
+            f"sqlite:///{os.path.abspath('data/smart.db')}",
+            include_tables=include_tables,
+            sample_rows_in_table_info=3
+        )
+        
+        # 2. Create SQL Toolkit
+        from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+        
+        toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        tools = toolkit.get_tools()
+        
+        # 3. Manual ReAct Loop Implementation
+        logger.info("Starting manual ReAct SQL exploration...")
+        
+        # Step 1: List all tables
+        list_tables_tool = None
+        for tool in tools:
+            if tool.name == 'sql_db_list_tables':
+                list_tables_tool = tool
+                break
+        
+        tables_result = ""
+        if list_tables_tool:
+            try:
+                tables_result = list_tables_tool.invoke({})
+                logger.info(f"Found tables: {tables_result}")
+            except Exception as e:
+                logger.error(f"Error listing tables: {e}")
+                tables_result = "Error listing tables"
+        
+        # Step 2: Get table structure information
+        executed_sqls = []
+        structured_data = None
+        
+        # Get schema information for relevant tables
+        schema_info = ""
+        try:
+            # Get structure for sales-related tables
+            sales_tables = ['sales', 'dws_sales_cube', 'dwd_sales_detail']
+            for table in sales_tables:
+                if table in tables_result:
+                    try:
+                        table_schema = db.get_table_info([table])
+                        schema_info += f"\n{table} table structure:\n{table_schema}\n"
+                    except Exception as e:
+                        logger.warning(f"Error getting schema for table {table}: {e}")
+                        logger.warning(f"Table {table} schema error details: {type(e).__name__}: {str(e)}")
+                        import traceback
+                        logger.debug(f"Full traceback: {traceback.format_exc()}")
+                        # Fallback: use manual schema info
+                        schema_info += f"\n{table} table structure: (schema info unavailable - {type(e).__name__}: {str(e)})\n"
+            
+            # Add specific column information for dws_sales_cube
+            if 'dws_sales_cube' in tables_result:
+                schema_info += f"""
+IMPORTANT: dws_sales_cube table columns:
+- sale_date (DATE): Sales date
+- product_id (TEXT): Product identifier  
+- category (TEXT): Product category (NOT customer_type)
+- price_range (TEXT): Price range classification
+- sale_value_range (TEXT): Sale value range classification
+- transaction_count (INTEGER): Number of transactions
+- total_quantity_sold (INTEGER): Total quantity sold
+- total_amount (DECIMAL): Total revenue amount
+- avg_transaction_value (DECIMAL): Average transaction value
+- unique_products (INTEGER): Number of unique products
+- etl_batch_id (TEXT): ETL batch identifier
+- etl_timestamp (TIMESTAMP): ETL processing timestamp
+
+NOTE: There is NO 'customer_type' column in dws_sales_cube table. Use 'category' instead.
+"""
+            
+            # Add table relationship information
+            schema_info += f"""
+TABLE RELATIONSHIPS AND JOIN RULES:
+1. dws_sales_cube table:
+   - Contains aggregated sales data by product, customer and date
+   - Has product_id field for joining with product tables
+   - Has customer_id field for joining with customer tables
+   - CAN be directly joined with dim_customer table using customer_id
+
+2. dim_customer table:
+   - Contains customer information including customer_type
+   - Has customer_id field
+   - CAN be joined with dws_sales_cube table using customer_id
+
+3. dim_product table:
+   - Contains product information
+   - Has product_id field (can join with dws_sales_cube)
+   - Has category field (same as dws_sales_cube.category)
+
+4. sales table:
+   - Contains individual sales transactions
+   - Has product_id field (can join with dws_sales_cube)
+   - Has customer_id field (can join with dim_customer)
+
+5. dwd_sales_detail table:
+   - Contains detailed sales transactions
+   - Has both product_id and customer_id fields
+   - Can be joined with dws_sales_cube and dim_customer
+   - Has total_amount field for sales calculations
+
+6. orders table:
+   - Contains order information
+   - Has customer_id field
+   - Can be joined with dim_customer
+
+JOIN RESTRICTIONS:
+- dws_sales_cube CAN be directly joined with dim_customer using customer_id
+- sales table CAN be used as bridge (has customer_id field)
+- dwd_sales_detail table can also be used as bridge
+- Example: dwd_sales_detail JOIN dim_customer ON dwd_sales_detail.customer_id = dim_customer.customer_id
+- For aggregated sales by customer_type, aggregate dwd_sales_detail table first, then join
+"""
+        except Exception as e:
+            logger.warning(f"Error getting schema info: {e}")
+        
+        # Build query prompt
+        query_prompt = f"""
+        User question: {user_input}
+        
+        Background knowledge (from knowledge base):
+        {rag_answer}
+        
+        Available tables in database: {tables_result}
+        
+        Table structure information: {schema_info}
+        
+        This is a SQLite database. Please generate a SQL query based on the user question and available tables.
+        
+        CRITICAL RULES - MUST FOLLOW:
+        1. ONLY use column names that exist in the table structure information above
+        2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table
+        3. Use 'category' instead of 'customer_type' for product categorization
+        4. Verify every column name against the table structure before using it
+        5. dws_sales_cube CAN be joined with dim_customer using customer_id field
+        6. Use appropriate JOIN conditions based on available fields
+        7. Check table relationships before creating JOIN conditions
+        8. IMPORTANT: For sales amount queries, use 'total_amount' in dws_sales_cube
+        9. IMPORTANT: For quantity queries, use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube
+        10. IMPORTANT: For date filtering, use 'sale_date' column with strftime() function
+        
+        Technical Instructions:
+        - Use SQLite syntax
+        - Return ONLY ONE SQL query statement, no other explanations or multiple statements
+        - CRITICAL: Generate exactly ONE SELECT statement, not multiple statements
+        - SQLite doesn't support EXTRACT() function, use strftime() instead
+        - SQLite doesn't support YEAR() function, use strftime('%Y', date_column) instead
+        - SQLite doesn't support MONTH() function, use strftime('%m', date_column) instead
+        - If user asks for table list, use: SELECT name FROM sqlite_master WHERE type='table';
+        - For date-related queries, use strftime() function with proper syntax: strftime('%Y-%m', date_column)
+        - SQL clause order: SELECT ... FROM ... WHERE ... GROUP BY ... ORDER BY ...
+        - Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;
+        - Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;
+        - IMPORTANT: strftime() function requires two parameters: format string and date column
+        - IMPORTANT: Do not use backslashes in table or column names, use underscores directly
+        - IMPORTANT: For SELECT * queries, use: SELECT * FROM table_name (not table_name.*)
+        - IMPORTANT: Do NOT include comments, explanations, or multiple SQL statements
+        
+        VALIDATION CHECKLIST:
+        - [ ] All column names exist in the table structure
+        - [ ] No 'customer_type' column used in dws_sales_cube (use 'category' instead)
+        - [ ] For sales amount: use 'total_amount' in dws_sales_cube
+        - [ ] For quantity: use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube
+        - [ ] JOIN conditions use existing fields from both tables
+        - [ ] dws_sales_cube JOIN with dim_customer uses customer_id field
+        - [ ] SQLite syntax used correctly
+        - [ ] Query follows proper SQL clause order
+        - [ ] Date filtering uses strftime() function correctly
+        """
+        
+        try:
+            # Use LLM to generate SQL query
+            response = await llm.ainvoke(query_prompt)
+            sql_query = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+            
+            # Clean SQL query (remove possible markdown markers and escape characters)
+            if sql_query.startswith('```sql'):
+                sql_query = sql_query.replace('```sql', '').replace('```', '').strip()
+            elif sql_query.startswith('```'):
+                sql_query = sql_query.replace('```', '').strip()
+            
+            # Remove escape characters that might be added by LLM
+            sql_query = sql_query.replace('\\_', '_').replace('\\*', '*').replace('\\', '')
+            
+            logger.info(f"Generated SQL query: {sql_query}")
+
+            # Validate and auto-correct table names using whitelist from discovered tables
+            try:
+                # Extract table names referenced in the SQL (simple regex over FROM/JOIN)
+                referenced = set()
+                for m in re.finditer(r"\b(?:FROM|JOIN)\s+([\w\.]+)", sql_query, re.IGNORECASE):
+                    # strip aliases and schema
+                    token = m.group(1)
+                    base = token.split('.')[-1]
+                    referenced.add(base)
+
+                # Build whitelist from actual tables_result string (comma/space separated)
+                whitelist = set()
+                if isinstance(tables_result, str):
+                    # tables_result like: "dim_product, dwd_sales_detail, dws_sales_cube, ..."
+                    for t in re.split(r"[^A-Za-z0-9_]+", tables_result):
+                        if t:
+                            whitelist.add(t)
+
+                # Known preferred names mapping to avoid layer mix-up
+                canonical = {
+                    'dwd_sales_cube': 'dws_sales_cube',
+                }
+
+                corrected = sql_query
+                for name in referenced:
+                    target = name
+                    if name in canonical:
+                        target = canonical[name]
+                    elif whitelist and name not in whitelist:
+                        # fuzzy match to closest table in whitelist
+                        candidates = difflib.get_close_matches(name, list(whitelist), n=1, cutoff=0.8)
+                        if candidates:
+                            target = candidates[0]
+                    # Apply replacement only if changed
+                    if target != name:
+                        logger.warning(f"Auto-correcting table name in SQL: {name} -> {target}")
+                        corrected = re.sub(rf"\b{name}\b", target, corrected)
+
+                if corrected != sql_query:
+                    sql_query = corrected
+                    logger.info(f"Corrected SQL query: {sql_query}")
+            except Exception as v_err:
+                logger.warning(f"Table name validation skipped due to error: {v_err}")
+            
+            # Sanitize to a single SQL statement and enforce basic clause rules
+            def _sanitize_single_select_sql(q: str) -> str:
+                # Keep only the first statement up to the first semicolon
+                semi = q.find(';')
+                if semi != -1:
+                    q = q[:semi + 1]
+                # Remove any trailing content after the semicolon (already truncated)
+                # Normalize whitespace
+                q = " ".join(q.split())
+                # Ensure query ends with a single semicolon
+                if not q.endswith(';'):
+                    q = q + ';'
+                # Optional: very light guard to avoid JOIN after WHERE
+                # If ' where ' appears before ' join ', keep as-is; otherwise fine
+                return q
+
+            sanitized = _sanitize_single_select_sql(sql_query)
+            if sanitized != sql_query:
+                logger.info(f"Sanitized SQL query to single statement: {sanitized}")
+                sql_query = sanitized
+
+            # Execute query
+            if sql_query.upper().startswith('SELECT'):
+                sql_query_tool = None
+                for tool in tools:
+                    if tool.name == 'sql_db_query':
+                        sql_query_tool = tool
+                        break
+                
+                if sql_query_tool:
+                    try:
+                        query_result = sql_query_tool.invoke({"query": sql_query})
+                        executed_sqls.append(sql_query)
+                        structured_data = _parse_agent_query_result(query_result)
+                        logger.info(f"Query executed successfully, result length: {len(str(query_result))}")
+                        logger.info(f"Query result preview: {str(query_result)[:500]}...")
+                    except Exception as e:
+                        logger.error(f"Error executing SQL query: {e}")
+                        query_result = f"Error executing query: {e}"
+                else:
+                    query_result = "SQL query tool not found"
+            else:
+                query_result = "Generated query is not a SELECT statement"
+                
+        except Exception as e:
+            logger.error(f"Error generating SQL query: {e}")
+            query_result = f"Error generating query: {e}"
+        
+        # Build final answer
+        final_answer = f"""
+        Database exploration results:
+        
+        Available tables: {tables_result}
+        
+        Generated query: {sql_query if 'sql_query' in locals() else 'N/A'}
+        
+        Query result: {query_result if 'query_result' in locals() else 'N/A'}
+        """
+        
+        # Ensure variables are in scope
+        if 'sql_query' not in locals():
+            sql_query = "N/A"
+        if 'query_result' not in locals():
+            query_result = "N/A"
+        
+        # Check if chart generation is suitable based on user input and data
+        chart_suitable = False
+        if user_input:
+            # Check if user input contains chart-related keywords
+            chart_keywords = ["chart", "pie", "bar", "line", "graph", "visualization", "proportion", "distribution", "trend"]
+            has_chart_intent = any(keyword.lower() in user_input.lower() for keyword in chart_keywords)
+            
+            # Check if data is suitable for charting
+            if has_chart_intent:
+                if structured_data and structured_data.get("rows") and len(structured_data.get("rows", [])) >= 2:
+                    chart_suitable = True
+                    logger.info(f"Chart generation suitable: user intent={has_chart_intent}, data rows={len(structured_data.get('rows', []))}")
+                else:
+                    # Even if SQL failed, if user wants chart, try to generate a simple chart
+                    chart_suitable = True
+                    logger.info(f"Chart generation suitable despite SQL failure: user intent={has_chart_intent}, will attempt chart generation")
+            else:
+                logger.info(f"Chart generation not suitable: user intent={has_chart_intent}")
+            
+        logger.info(f"SQL Agent completed - Executed {len(executed_sqls)} queries, chart_suitable={chart_suitable}")
+        
+        return {
+                **state,
+            "sql_agent_answer": final_answer,
+            "executed_sqls": executed_sqls,
+                "structured_data": structured_data,
+            "chart_suitable": chart_suitable,
+            "agent_intermediate_steps": [{"step": "manual_react", "tables": tables_result, "query": sql_query, "result": query_result}],
+            "sql_execution_success": True,
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                "sql_agent": {
+                        "status": "completed",
+                    "queries_count": len(executed_sqls),
+                    "steps_count": 1,
+                    "chart_suitable": chart_suitable,
+                    "timestamp": time.time()
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"SQL Agent failed: {e}", exc_info=True)
+        return {
+            **state,
+            "sql_agent_answer": "",
+            "sql_execution_success": False,
+            "sql_error": str(e),
+            "chart_suitable": False,
+            "chart_error": f"SQL Agent failed: {str(e)}",
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "sql_agent": {
+                    "status": "error",
+                    "error": str(e),
+                    "timestamp": time.time()
+                }
+            }
+        }
+
+def _parse_agent_query_result(observation: str) -> Dict[str, Any]:
+    """Parse Agent query result with improved SQLite result handling"""
+    try:
+        logger.info(f"Parsing query result, length: {len(observation)}")
+        
+        # Handle SQLite tuple results (most common case)
+        if observation.startswith('[') and '(' in observation and ')' in observation:
+            try:
+                import ast
+                # Parse the tuple list
+                data = ast.literal_eval(observation)
+                if isinstance(data, list) and len(data) > 0:
+                    # Convert tuples to dictionaries
+                    # First, we need to determine column names
+                    # Try to extract column names from the SQL query if available
+                    sample_row = data[0]
+                    if isinstance(sample_row, tuple):
+                        # Try to infer column names from SQL query context
+                        columns = []
+                        for i in range(len(sample_row)):
+                            # Use more meaningful column names based on common patterns
+                            if i == 0:
+                                columns.append("category")  # Usually first column is category/name
+                            elif i == 1:
+                                columns.append("sales_revenue")  # Usually second column is value
+                            else:
+                                columns.append(f"col_{i}")
+                        
+                        rows = []
+                        for row in data:
+                            if isinstance(row, tuple):
+                                row_dict = {columns[i]: row[i] for i in range(len(row))}
+                                rows.append(row_dict)
+                        
+                        logger.info(f"Parsed tuple result with {len(rows)} rows, {len(columns)} columns")
+                        return {
+                            "rows": rows,
+                            "columns": columns,
+                            "executed_sql": "Agent generated SQL"
+                        }
+            except Exception as e:
+                logger.warning(f"Failed to parse tuple result: {e}")
+        
+        # Try to parse as table format (common SQLite output format)
+        lines = observation.strip().split('\n')
+        if len(lines) >= 2:
+            # Handle different separators
+            separators = ['\t', '|', ',']
+            columns = None
+            separator = None
+            
+            for sep in separators:
+                if sep in lines[0]:
+                    columns = lines[0].split(sep)
+                    separator = sep
+                    break
+            
+            if columns and separator:
+                # Clean column names
+                columns = [col.strip() for col in columns]
+                rows = []
+                
+                for line in lines[1:]:
+                    if line.strip():
+                        values = line.split(separator)
+                        if len(values) == len(columns):
+                            row = {col.strip(): val.strip() for col, val in zip(columns, values)}
+                            rows.append(row)
+                
+                if rows:
+                    logger.info(f"Parsed table result with {len(rows)} rows, {len(columns)} columns")
+                    return {
+                        "rows": rows,
+                        "columns": columns,
+                        "executed_sql": "Agent generated SQL"
+                    }
+        
+        # Try to parse as simple key-value pairs
+        if '=' in observation and '\n' in observation:
+            lines = observation.strip().split('\n')
+            rows = []
+            columns = set()
+            
+            for line in lines:
+                if '=' in line:
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key, value = parts[0].strip(), parts[1].strip()
+                        columns.add(key)
+                        rows.append({key: value})
+            
+            if rows and columns:
+                logger.info(f"Parsed key-value result with {len(rows)} entries")
+                return {
+                    "rows": rows,
+                    "columns": list(columns),
+                    "executed_sql": "Agent generated SQL"
+                }
+        
+        # Fallback: return raw text as single row
+        logger.warning("Unable to parse structured data, returning raw text")
+        return {
+            "rows": [{"result": observation}],
+            "columns": ["result"],
+            "executed_sql": "Agent generated SQL"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to parse agent query result: {e}")
+        return {
+            "rows": [{"result": observation}],
+            "columns": ["result"],
+            "executed_sql": "Agent generated SQL"
+        }
+
 
 async def _perform_rag_guided_sql_query(user_input: str, datasource: Dict[str, Any], rag_metadata: str) -> Dict[str, Any]:
     """Perform SQL query with RAG metadata guidance"""
@@ -807,227 +1158,202 @@ async def _perform_rag_guided_sql_query(user_input: str, datasource: Dict[str, A
             "error": f"RAG-guided SQL query failed: {str(e)}"
         }
 
-async def sql_chart_node(state: GraphState) -> GraphState:
-    """SQL chart node: execute SQL query for chart data"""
-    try:
-        user_input = state["user_input"]
-        datasource = state["datasource"]
-        
-        # Force SQL chart branch to use built-in DEFAULT datasource (ID=1)
-        if datasource.get("type") != "default":
-            try:
-                from ..database.db_operations import get_datasource
-                builtin_ds = await get_datasource(1)
-                if builtin_ds:
-                    datasource = builtin_ds
-                    logger.info("SQL chart branch: switched to built-in DEFAULT datasource (ID=1)")
-            except Exception as _e:
-                logger.warning(f"SQL chart branch: failed to switch to DEFAULT datasource: {_e}")
 
-        # Call existing SQL query logic with chart context
-        result = await get_answer_from_sqltable_datasource(user_input, datasource)
-        
-        if result["success"]:
-            structured_data = result["data"]
-            
-            # Ensure we have the required data for charting
-            if not structured_data.get("rows"):
-                return {
-                    **state,
-                    "error": "No data returned for chart generation",
-                    "node_outputs": {
-                        **state.get("node_outputs", {}),
-                        "sql_chart": {
-                            "status": "error",
-                            "timestamp": time.time(),
-                            "error": "No data available for charting"
-                        }
-                    }
-                }
-            
-            logger.info(f"SQL chart data query successful, data rows: {len(structured_data.get('rows', []))}")
-            
-            # Update state with chart data
-            return {
-                **state,
-                "structured_data": structured_data,
-                "answer": result["answer"],
-                "query_type": state.get("query_type"),  # Preserve query_type
-                "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "sql_chart": {
-                        "status": "completed",
-                        "timestamp": time.time(),
-                        "data_summary": {
-                            "row_count": len(structured_data.get("rows", [])),
-                            "executed_sql": structured_data.get("executed_sql"),
-                            "queried_table": structured_data.get("queried_table")
-                        }
-                    }
-                }
-            }
-        else:
-            error_msg = result.get("error", "SQL chart data query failed")
-            logger.error(f"SQL chart query failed: {error_msg}")
-            return {
-                **state,
-                "error": error_msg,
-                "query_type": state.get("query_type"),  # Preserve query_type
-                "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "sql_chart": {
-                        "status": "error",
-                        "timestamp": time.time(),
-                        "error": error_msg
-                    }
-                }
-            }
-    except Exception as e:
-        error_msg = f"SQL chart node error: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {
-            **state,
-            "error": error_msg,
-            "query_type": state.get("query_type"),  # Preserve query_type
-            "sql_task_type": state.get("sql_task_type"),  # Preserve sql_task_type
-            "node_outputs": {
-                **state.get("node_outputs", {}),
-                "sql_chart": {
-                    "status": "error",
-                    "timestamp": time.time(),
-                    "error": error_msg
-                }
-            }
-        }
-
-def chart_config_node(state: GraphState) -> GraphState:
-    """Chart configuration node: generate chart configuration"""
-    try:
-        structured_data = state.get("structured_data", {})
-        user_input = state["user_input"]
-        
-        # Generate chart configuration based on data and user requirements
-        chart_config = generate_chart_config(structured_data, user_input)
-        
-        # Pass structured_data to next node for chart rendering
-        return {
-            **state, 
-            "chart_config": chart_config,
-            "structured_data": structured_data,  # Ensure structured_data is passed through
-            "query_type": state.get("query_type"),  # Preserve query_type
-            "sql_task_type": state.get("sql_task_type")  # Preserve sql_task_type
-        }
-    except Exception as e:
-        logger.error(f"Chart config node error: {e}")
-        return {
-            **state, 
-            "error": str(e),
-            "query_type": state.get("query_type"),  # Preserve query_type
-            "sql_task_type": state.get("sql_task_type")  # Preserve sql_task_type
-        }
 
 async def rag_query_node(state: GraphState) -> GraphState:
-    """Enhanced RAG query node: supports both full retrieval and metadata-focused retrieval"""
+    """RAG Query Node: Combined RAG retrieval, reranking, and answer generation"""
+    user_input = state["user_input"]
+    datasource = state["datasource"]
+    execution_id = state.get("execution_id", "unknown")
+    
+    logger.info(f"RAG Query Node - Processing query: {user_input}")
+    
     try:
-        user_input = state["user_input"]
-        datasource = state["datasource"]
-        query_path = state.get("query_path", "rag_only")
+        # Step 1: Perform RAG retrieval
+        logger.info(f"RAG Query Node - Retrieving documents for: {user_input}")
+        from ..agents.intelligent_agent import perform_rag_retrieval
         
-        # Guards: avoid duplicate RAG execution in the same run
-        if state.get("rag_executed"):
-            logger.info("RAG query skipped: rag_executed flag present (preventing duplicate execution)")
-            return {**state}
+        retrieval_result = await perform_rag_retrieval(user_input, datasource, k=20)
         
-        logger.info(f"RAG Query Node - Path: {query_path}, Query: {user_input}")
-        
-        # Determine retrieval strategy based on query path
-        if query_path == "rag_sql":
-            # Metadata-focused retrieval for hybrid path
-            logger.info("RAG Query Node - Using metadata-focused retrieval for hybrid path")
-            result = await _perform_metadata_rag_query(user_input, datasource)
-        else:
-            # Full retrieval for pure RAG path
-            logger.info("RAG Query Node - Using full retrieval for pure RAG path")
-            result = await perform_rag_query(user_input, datasource)
-        
-        if result["success"]:
-            rag_result = result["answer"]
-            rag_sources = result.get("sources", [])
-            rag_confidence = result.get("confidence", 0.8)
-            
-            # For rag_only path, set answer directly
-            if query_path == "rag_only":
-                return {
-                    **state,
-                    "answer": rag_result,
-                    "rag_result": rag_result,
-                    "rag_sources": rag_sources,
-                    "rag_confidence": rag_confidence,
-                    "rag_executed": True,
-                    "node_outputs": {
-                        **state.get("node_outputs", {}),
-                        "rag_query": {
-                            "status": "completed",
-                            "timestamp": time.time(),
-                            "query_path": query_path,
-                            "sources": rag_sources,
-                            "confidence": rag_confidence,
-                            "data": result.get("data", {})
-                        }
-                    }
-                }
-            else:
-                # For rag_sql path, store result for later merging
-                return {
-                    **state,
-                    "rag_result": rag_result,
-                    "rag_sources": rag_sources,
-                    "rag_confidence": rag_confidence,
-                    "rag_executed": True,
-                    "node_outputs": {
-                        **state.get("node_outputs", {}),
-                        "rag_query": {
-                            "status": "completed",
-                            "timestamp": time.time(),
-                            "query_path": query_path,
-                            "sources": rag_sources,
-                            "confidence": rag_confidence,
-                            "data": result.get("data", {})
-                        }
-                    }
-                }
-        else:
-            error_msg = result.get("error", "RAG query failed")
-            logger.error(f"RAG query failed: {error_msg}")
+        if not retrieval_result["success"]:
+            logger.error(f"RAG retrieval failed: {retrieval_result.get('error', 'Unknown error')}")
             return {
-                **state, 
-                "rag_executed": True, 
-                "error": error_msg,
+                **state,
+                "retrieved_documents": [],
+                "reranked_documents": [],
+                "rag_answer": f"RAG retrieval failed: {retrieval_result.get('error', 'Unknown error')}",
+                "retrieval_success": False,
+                "retrieval_error": retrieval_result.get("error", "Unknown error"),
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "rag_query": {
-                        "status": "error",
-                        "timestamp": time.time(),
-                        "error": error_msg
+                        "status": "failed",
+                        "error": retrieval_result.get("error", "Unknown error"),
+                        "timestamp": time.time()
                     }
                 }
             }
-    except Exception as e:
-        logger.error(f"RAG query node error: {e}")
+        
+        retrieved_documents = retrieval_result["documents"]
+        logger.info(f"RAG Query Node - Retrieved {len(retrieved_documents)} documents")
+
+        # Minimal debug: sample sources from retrieved set (generic, low-volume)
+        try:
+            sample_sources = []
+            for doc in retrieved_documents[:3]:
+                src = (doc.metadata or {}).get("source") or (doc.metadata or {}).get("file_path") or "unknown"
+                sample_sources.append(os.path.basename(src))
+            if sample_sources:
+                logger.info(f"RAG Retrieval sample sources: {sample_sources}")
+        except Exception:
+            pass
+        
+        # Step 2: Rerank documents (select top 3)
+        logger.info(f"RAG Query Node - Reranking {len(retrieved_documents)} documents")
+        if not retrieved_documents:
+            logger.warning("No documents to rerank")
+            return {
+                **state,
+                "retrieved_documents": [],
+                "reranked_documents": [],
+                "rag_answer": "No relevant documents found to answer the query.",
+                "retrieval_success": False,
+                "retrieval_error": "No documents available for RAG processing",
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "rag_query": {
+                        "status": "failed",
+                        "error": "No documents available for RAG processing",
+                        "timestamp": time.time()
+                    }
+                }
+            }
+        
+        # Rerank using Cross-Encoder (token-based). If CE unavailable, keep original order (no fallback sorting).
+        reranked_documents = []
+        try:
+            from src.models.reranker import rerank_with_cross_encoder  # lazy import
+            reranked_documents = rerank_with_cross_encoder(user_input, retrieved_documents, top_k=3)
+            rerank_mode = "cross-encoder"
+        except Exception as _ce_err:
+            logger.error(f"Cross-Encoder rerank failed: {_ce_err}")
+            # Do not assume score semantics; keep original retrieval order
+            reranked_documents = retrieved_documents[:3]
+            rerank_mode = "cross-encoder-error"
+        
+        logger.info(f"RAG Query Node - Selected top {len(reranked_documents)} documents (mode={rerank_mode})")
+        
+        logger.info(f"RAG Query Node - Selected top {len(reranked_documents)} documents")
+
+        # Minimal debug: print top-3 source and short snippet (generic)
+        try:
+            for i, d in enumerate(reranked_documents[:3]):
+                meta = d.metadata or {}
+                src = meta.get("source") or meta.get("file_path") or "unknown"
+                score = meta.get("score", 0)
+                snippet = (getattr(d, "page_content", "") or "").replace("\n", " ")[:80]
+                logger.info(f"RAG Top{i+1}: score={score:.4f}, source={os.path.basename(src)}, snippet=\"{snippet}\"")
+        except Exception:
+            pass
+        
+        # Step 3: Generate answer using LLM with reranked documents
+        logger.info(f"RAG Query Node - Generating answer from {len(reranked_documents)} documents")
+        
+        # Use RetrievalQA to generate answer
+        from langchain.prompts import PromptTemplate
+        from langchain.chains import RetrievalQA
+        
+        custom_prompt = PromptTemplate(
+            template=(
+                "You must answer ONLY the user question using the facts from the documents.\n"
+                "- If the question is about a person (e.g., Long Liang/Logan), provide a concise biographical summary only.\n"
+                "- Ignore and do not explain code, schemas, ETL, SQL, or any unrelated technical content.\n"
+                "- Prefer content from the most relevant/top-ranked documents; if no relevant facts exist, say you don't know.\n"
+                "- Keep the answer short and focused (3-7 sentences). No extra explanations.\n\n"
+                "Documents:\n{context}\n\n"
+                "Question: {question}\n\n"
+                "Answer:"
+            ),
+            input_variables=["context", "question"]
+        )
+        
+        # Create temporary retriever (returns fixed reranked documents)
+        from langchain_core.retrievers import BaseRetriever
+        from typing import List
+        from langchain_core.documents import Document
+        
+        class FixedRetriever(BaseRetriever):
+            def __init__(self, docs: List[Document]):
+                super().__init__()
+                self._docs = docs
+            
+            def _get_relevant_documents(self, query, *, run_manager=None):
+                return self._docs
+            
+            async def _aget_relevant_documents(self, query, *, run_manager=None):
+                return self._docs
+        
+        retriever = FixedRetriever(reranked_documents)
+        
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            chain_type="stuff",
+            retriever=retriever,
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": custom_prompt}
+        )
+        
+        # Generate answer
+        result = qa_chain.invoke({"query": user_input})
+        rag_answer = (result["result"] or "").lstrip()
+        
+        logger.info(f"RAG Query Node - Generated answer - Length: {len(rag_answer)}")
+        
         return {
-            **state, 
-            "error": str(e),
+            **state,
+            "retrieved_documents": retrieved_documents,
+            "reranked_documents": reranked_documents,
+            "rag_answer": rag_answer,
+            "retrieval_success": True,
+            "rerank_success": True,
+            "rag_success": True,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "rag_query": {
+                    "status": "completed",
+                    "retrieved_count": len(retrieved_documents),
+                    "reranked_count": len(reranked_documents),
+                    "answer_length": len(rag_answer),
+                    "timestamp": time.time(),
+                    "datasource_id": retrieval_result.get("datasource_id"),
+                    "datasource_name": retrieval_result.get("datasource_name")
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in RAG Query Node: {e}", exc_info=True)
+        return {
+            **state,
+            "retrieved_documents": [],
+            "reranked_documents": [],
+            "rag_answer": f"Error generating answer: {str(e)}",
+            "retrieval_success": False,
+            "rerank_success": False,
+            "rag_success": False,
+            "error": f"RAG query processing failed: {str(e)}",
             "node_outputs": {
                 **state.get("node_outputs", {}),
                 "rag_query": {
                     "status": "error",
-                    "timestamp": time.time(),
-                    "error": str(e)
+                    "error": str(e),
+                    "timestamp": time.time()
                 }
             }
         }
+
+
+
 
 async def _perform_metadata_rag_query(user_input: str, datasource: Dict[str, Any]) -> Dict[str, Any]:
     """Perform metadata-focused RAG query for hybrid path"""
@@ -1074,238 +1400,87 @@ async def _perform_metadata_rag_query(user_input: str, datasource: Dict[str, Any
             "error": f"Metadata RAG query failed: {str(e)}"
         }
 
-# Result Merge Node for combining RAG + SQL results
-def result_merge_node(state: GraphState) -> GraphState:
-    """Result Merge Node: combine RAG metadata and SQL data results"""
-    try:
-        rag_result = state.get("rag_result")
-        structured_data = state.get("structured_data")
-        user_input = state["user_input"]
-        
-        # Handle case where RAG failed but SQL succeeded
-        if not rag_result and structured_data:
-            logger.warning("RAG result missing, proceeding with SQL data only")
-            merged_context = f"""
-            [Data Query Results]
-            Query: {user_input}
-            SQL: {structured_data.get('executed_sql', 'N/A')}
-            Data: {structured_data.get('rows', [])}
-            
-            Note: No metadata context available, using direct data query results.
-            """
-            
-            data_with_metadata = {
-                "metadata_context": "No metadata available",
-                "query_context": user_input,
-                "sql_query": structured_data.get('executed_sql', ''),
-                "data_rows": structured_data.get('rows', []),
-                "data_columns": structured_data.get('columns', []),
-                "row_count": len(structured_data.get('rows', [])),
-                "merged_at": time.time(),
-                "rag_failed": True
-            }
-            
-            return {
-                **state,
-                "merged_context": merged_context,
-                "data_with_metadata": data_with_metadata,
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "result_merge": {
-                        "status": "completed",
-                        "timestamp": time.time(),
-                        "rag_available": False,
-                        "sql_available": True,
-                        "merged_successfully": True
-                    }
-                }
-            }
-        
-        # Handle case where both RAG and SQL are missing
-        if not rag_result and not structured_data:
-            error_msg = "Missing both RAG result and structured data for merging"
-            logger.error(error_msg)
-            return {
-                **state,
-                "error": error_msg,
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
-                    "result_merge": {
-                        "status": "error",
-                        "timestamp": time.time(),
-                        "error": error_msg
-                    }
-                }
-            }
-        
-        # Normal case: both RAG and SQL available
-        logger.info("Result Merge Node - Combining RAG metadata with SQL data")
-        
-        # Create merged context
-        merged_context = f"""
-        [Metadata Context]
-        {rag_result}
-        
-        [Data Query Results]
-        Query: {user_input}
-        SQL: {structured_data.get('executed_sql', 'N/A') if structured_data else 'N/A'}
-        Data: {structured_data.get('rows', []) if structured_data else []}
-        
-        The metadata above explains the meaning and context of the data below.
-        """
-        
-        # Create data with metadata annotations
-        data_with_metadata = {
-            "metadata_context": rag_result,
-            "query_context": user_input,
-            "sql_query": structured_data.get('executed_sql', '') if structured_data else '',
-            "data_rows": structured_data.get('rows', []) if structured_data else [],
-            "data_columns": structured_data.get('columns', []) if structured_data else [],
-            "row_count": len(structured_data.get('rows', [])) if structured_data else 0,
-            "merged_at": time.time()
-        }
-        
-        logger.info(f"Result Merge completed - Rows: {len(structured_data.get('rows', [])) if structured_data else 0}")
-        
-        return {
-            **state,
-            "merged_context": merged_context,
-            "data_with_metadata": data_with_metadata,
-            "node_outputs": {
-                **state.get("node_outputs", {}),
-                "result_merge": {
-                    "status": "completed",
-                    "timestamp": time.time(),
-                    "merged_context_length": len(merged_context),
-                    "data_rows": len(structured_data.get('rows', [])),
-                    "metadata_used": True
-                }
-            }
-        }
-        
-    except Exception as e:
-        error_msg = f"Error in Result Merge Node: {str(e)}"
-        logger.error(error_msg)
-        return {
-            **state,
-            "error": error_msg,
-            "node_outputs": {
-                **state.get("node_outputs", {}),
-                "result_merge": {
-                    "status": "error",
-                    "timestamp": time.time(),
-                    "error": error_msg
-                }
-            }
-        }
 
-def chart_rendering_node(state: GraphState) -> GraphState:
-    """Chart rendering node: render interactive chart configuration"""
-    try:
-        chart_config = state.get("chart_config")
-        structured_data = state.get("structured_data")
-        
-        if not chart_config:
-            return {**state, "error": "Missing chart configuration"}
-        
-        # Require structured data for chart generation
-        if not structured_data:
-            return {**state, "error": "Missing structured data for chart"}
-        
-        # Import AntV chart service
-        from ..mcp.antv_chart_service import AntVChartService
-        
-        # Process structured data for chart generation
-        chart_type = chart_config.get("type", "line")
-        chart_title = chart_config.get("title", "Data Visualization")
-        
-        # Convert structured data to chart data format
-        chart_data = []
-        
-        # Handle structured_data format: {'rows': [...], 'columns': [...], ...}
-        if isinstance(structured_data, dict) and "rows" in structured_data:
-            rows = structured_data.get("rows", [])
-            if rows and len(rows) > 0:
-                # Convert rows to chart data format
-                for row in rows:
-                    if isinstance(row, dict):
-                        # Handle dict format like {'col_0': '2025-01', 'col_1': 42, 'col_2': 88293.43}
-                        row_keys = list(row.keys())
-                        if len(row_keys) >= 2:
-                            # Use first column as x-axis (time/date), last column as y-axis (value)
-                            x_value = row[row_keys[0]]  # e.g., '2025-01'
-                            y_value = row[row_keys[-1]]  # e.g., 88293.43
-                            chart_data.append({
-                                "x": str(x_value),
-                                "y": float(y_value) if isinstance(y_value, (int, float)) else 0
-                            })
-                    else:
-                        # Handle list format
-                        if len(row) >= 2:
-                            chart_data.append({
-                                "x": str(row[0]),
-                                "y": float(row[-1]) if isinstance(row[-1], (int, float)) else 0
-                            })
-        elif isinstance(structured_data, list) and len(structured_data) > 0:
-            # Handle direct list format
-            if isinstance(structured_data[0], dict):
-                chart_data = structured_data
-            else:
-                # Convert simple list to chart data
-                for i, value in enumerate(structured_data):
-                    chart_data.append({"x": i, "y": value})
-        else:
-            # No structured data available
-            logger.warning("No structured data available for chart generation")
-            return {**state, "error": "No structured data available for chart generation"}
-        
-        # Generate interactive chart configuration using PyEcharts
-        chart_service = AntVChartService()
-        interactive_chart_config = chart_service.render_chart(
-            chart_type=chart_type,
-            data=chart_data,
-            config={
-                "title": chart_title,
-                "xField": chart_config.get("xField", "x"),
-                "yField": chart_config.get("yField", "y"),
-                "seriesField": chart_config.get("seriesField"),
-                "categoryField": chart_config.get("categoryField", "category"),
-                "valueField": chart_config.get("valueField", "value")
-            }
-        )
-        
-        logger.info(f"Generated interactive chart config for {chart_type} chart")
-        
-        return {
-            **state, 
-            "chart_config": interactive_chart_config,
-            "chart_type": chart_type,
-            "chart_data": chart_data
-        }
-    except Exception as e:
-        logger.error(f"Chart rendering error: {e}")
-        return {**state, "error": str(e)}
 
 async def llm_processing_node(state: GraphState) -> GraphState:
-    """Enhanced LLM Processing Node: handle outputs from 3 different query paths"""
+    """Enhanced LLM Processing Node: Integrate RAG + SQL-Agent + Chart inputs"""
     try:
         user_input = state["user_input"]
-        query_path = state.get("query_path", "rag_only")
         execution_id = state.get("execution_id")
         
-        logger.info(f"LLM Processing Node - Path: {query_path}")
+        # Get various inputs
+        rag_answer = state.get("rag_answer", "")
+        sql_agent_answer = state.get("sql_agent_answer", "")
+        structured_data = state.get("structured_data")
+        chart_config = state.get("chart_config")
+        chart_suitable = state.get("chart_suitable", False)
         
-        # Handle different paths
-        if query_path == "rag_only":
-            return await _process_rag_only_output(state, execution_id)
-        elif query_path == "sql_only":
-            return await _process_sql_only_output(state, execution_id)
-        elif query_path == "rag_sql":
-            return await _process_rag_sql_output(state, execution_id)
-        else:
-            logger.warning(f"Unknown query path: {query_path}, defaulting to rag_only")
-            return await _process_rag_only_output(state, execution_id)
+        logger.info(f"LLM Processing Node - Integrating inputs: RAG={bool(rag_answer)}, SQL={bool(sql_agent_answer)}, Chart={chart_suitable}")
+        
+        # Build comprehensive prompt
+        prompt_parts = []
+        
+        # 1. Basic question
+        prompt_parts.append(f"User question: {user_input}")
+        
+        # 2. RAG answer (if available)
+        if rag_answer:
+            prompt_parts.append(f"Knowledge base answer: {rag_answer}")
+        
+        # 3. SQL-Agent answer (if available)
+        if sql_agent_answer:
+            prompt_parts.append(f"Database query results: {sql_agent_answer}")
             
+            # Add structured data summary
+            if structured_data:
+                data_summary = _summarize_structured_data(structured_data)
+                prompt_parts.append(f"Data summary: {data_summary}")
+        
+        # 4. Chart information (if available)
+        if chart_suitable and chart_config:
+            chart_type = chart_config.get("type", "unknown")
+            prompt_parts.append(f"Generated {chart_type} chart, please explain the chart content")
+        
+        # 5. Integration instructions
+        prompt_parts.append("""
+Please generate a comprehensive, accurate, and natural answer based on the above information:
+1. Prioritize specific data from database query results
+2. Combine background information from knowledge base for explanation
+3. If there's a chart, explain what the chart shows
+4. Keep the answer concise and clear, avoid repetition
+5. If information is insufficient, please state honestly
+""")
+        
+        final_prompt = "\n\n".join(prompt_parts)
+        
+        # Generate final answer
+        if llm:
+            logger.info("Generating final integrated answer...")
+            response = await llm.ainvoke(final_prompt)
+            final_answer = (response.content if hasattr(response, 'content') else str(response)).lstrip()
+        else:
+            # Fallback: simple concatenation
+            final_answer = _create_fallback_answer(rag_answer, sql_agent_answer, chart_suitable).lstrip()
+        
+        logger.info(f"LLM Processing completed - Answer length: {len(final_answer)}")
+        
+        return {
+            **state,
+            "answer": final_answer,
+            "final_answer": final_answer,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "llm_processing": {
+                    "status": "completed",
+                    "answer_length": len(final_answer),
+                    "has_rag": bool(rag_answer),
+                    "has_sql": bool(sql_agent_answer),
+                    "has_chart": chart_suitable,
+                    "timestamp": time.time()
+                }
+            }
+        }
+        
     except Exception as e:
         error_msg = f"Error in LLM Processing Node: {str(e)}"
         logger.error(error_msg)
@@ -1322,22 +1497,72 @@ async def llm_processing_node(state: GraphState) -> GraphState:
             }
         }
 
+def _summarize_structured_data(structured_data: Dict[str, Any]) -> str:
+    """Summarize structured data"""
+    try:
+        rows = structured_data.get("rows", [])
+        columns = structured_data.get("columns", [])
+        
+        if not rows or not columns:
+            return "No valid data"
+        
+        summary_parts = []
+        summary_parts.append(f"Data contains {len(rows)} rows, {len(columns)} columns")
+        summary_parts.append(f"Column names: {', '.join(columns)}")
+        
+        # Show first few rows of data
+        if len(rows) <= 5:
+            summary_parts.append("Complete data:")
+            for i, row in enumerate(rows):
+                row_str = ", ".join([f"{col}: {row.get(col, '')}" for col in columns])
+                summary_parts.append(f"  {i+1}. {row_str}")
+        else:
+            summary_parts.append("First 3 rows of data:")
+            for i, row in enumerate(rows[:3]):
+                row_str = ", ".join([f"{col}: {row.get(col, '')}" for col in columns])
+                summary_parts.append(f"  {i+1}. {row_str}")
+            summary_parts.append(f"  ... and {len(rows)-3} more rows")
+        
+        return "\n".join(summary_parts)
+        
+    except Exception as e:
+        logger.warning(f"Failed to summarize structured data: {e}")
+        return "Data summary generation failed"
+
+def _create_fallback_answer(rag_answer: str, sql_answer: str, has_chart: bool) -> str:
+    """Create fallback answer"""
+    parts = []
+    
+    if sql_answer:
+        parts.append(f"Based on database query: {sql_answer}")
+    
+    if rag_answer:
+        parts.append(f"Related knowledge: {rag_answer}")
+    
+    if has_chart:
+        parts.append("Related charts have been generated for reference")
+    
+    if not parts:
+        return "Sorry, unable to retrieve relevant information to answer your question."
+    
+    return "\n\n".join(parts)
+
 async def _process_rag_only_output(state: GraphState, execution_id: str) -> GraphState:
     """Process RAG-only path output"""
-    rag_result = state.get("rag_result", "")
+    rag_answer = state.get("rag_answer", "")
     
-    if not rag_result:
-        error_msg = "No RAG result available for processing"
+    if not rag_answer:
+        error_msg = "No RAG answer available for processing"
         logger.error(error_msg)
         return {**state, "error": error_msg}
     
     logger.info("LLM Processing - Processing RAG-only output")
     
-    # Stream the RAG result
-    await _stream_text_as_tokens(rag_result, execution_id, "llm_processing_node")
+    # Stream the RAG answer
+    await _stream_text_as_tokens(rag_answer, execution_id, "llm_processing_node")
     
     final_result = {
-        "text": rag_result,
+        "text": rag_answer,
         "data": None,
         "chart": None,
         "path": "rag_only"
@@ -1345,7 +1570,7 @@ async def _process_rag_only_output(state: GraphState, execution_id: str) -> Grap
     
     return {
         **state,
-        "answer": rag_result,
+        "answer": rag_answer,
         "final_result": final_result,
         "node_outputs": {
             **state.get("node_outputs", {}),
@@ -1362,7 +1587,7 @@ async def _process_sql_only_output(state: GraphState, execution_id: str) -> Grap
     """Process SQL-only path output"""
     structured_data = state.get("structured_data")
     chart_config = state.get("chart_config")
-    sql_answer = state.get("sql_answer", "")
+    sql_agent_answer = state.get("sql_agent_answer", "")
     
     if not structured_data:
         error_msg = "No structured data available for processing"
@@ -1374,12 +1599,12 @@ async def _process_sql_only_output(state: GraphState, execution_id: str) -> Grap
     # Generate intelligent response from SQL data
     rows = structured_data.get("rows", [])
     columns = structured_data.get("columns", [])
-    executed_sql = structured_data.get("executed_sql", "")
+    executed_sqls = state.get("executed_sqls", [])
     
     if rows:
         # Generate structured answer
         structured_answer = _generate_intelligent_sql_response(
-            state["user_input"], rows, columns, executed_sql
+            state["user_input"], rows, columns, executed_sqls[0] if executed_sqls else ""
         )
         
         # Add chart context if available
@@ -1388,9 +1613,9 @@ async def _process_sql_only_output(state: GraphState, execution_id: str) -> Grap
         
         # Stream the response
         await _stream_text_as_tokens(structured_answer, execution_id, "llm_processing_node")
-        final_answer = structured_answer
+        final_answer = (structured_answer or "").lstrip()
     else:
-        final_answer = f"No data was found matching your query '{state['user_input']}'. Please try a different question or check if the data exists."
+        final_answer = f"No data was found matching your query '{state['user_input']}'. Please try a different question or check if the data exists.".lstrip()
         await _stream_text_as_tokens(final_answer, execution_id, "llm_processing_node")
     
     final_result = {
@@ -1419,37 +1644,40 @@ async def _process_sql_only_output(state: GraphState, execution_id: str) -> Grap
 
 async def _process_rag_sql_output(state: GraphState, execution_id: str) -> GraphState:
     """Process RAG+SQL hybrid path output"""
-    merged_context = state.get("merged_context")
+    rag_answer = state.get("rag_answer", "")
+    sql_agent_answer = state.get("sql_agent_answer", "")
     structured_data = state.get("structured_data")
     chart_config = state.get("chart_config")
     
     # Handle case where RAG failed but SQL succeeded
-    if not merged_context and structured_data:
-        logger.warning("RAG context missing, processing SQL-only output in hybrid path")
+    if not rag_answer and structured_data:
+        logger.warning("RAG answer missing, processing SQL-only output in hybrid path")
         return await _process_sql_only_output(state, execution_id)
     
     # Handle case where SQL failed but RAG succeeded
-    if merged_context and not structured_data:
+    if rag_answer and not structured_data:
         logger.warning("SQL data missing, processing RAG-only output in hybrid path")
         return await _process_rag_only_output(state, execution_id)
     
     # Handle case where both are missing
-    if not merged_context and not structured_data:
-        error_msg = "Missing both merged context and structured data for hybrid processing"
+    if not rag_answer and not structured_data:
+        error_msg = "Missing both RAG answer and structured data for hybrid processing"
         logger.error(error_msg)
         return {**state, "error": error_msg}
     
     logger.info("LLM Processing - Processing RAG+SQL hybrid output")
     
-    # Generate comprehensive response combining metadata and data
+    # Generate comprehensive response combining RAG and SQL data
     comprehensive_prompt = f"""
     User Query: "{state['user_input']}"
     
-    Context: {merged_context}
+    RAG Context: {rag_answer}
+    
+    SQL Answer: {sql_agent_answer}
     
     Please provide a comprehensive response that:
-    1. Explains the metadata context and what the data means
-    2. Analyzes the actual data results
+    1. Explains the RAG context and what the data means
+    2. Analyzes the actual SQL data results
     3. Provides insights and interpretation
     4. Mentions the visualization if available
     
@@ -1463,7 +1691,7 @@ async def _process_rag_sql_output(state: GraphState, execution_id: str) -> Graph
         "text": final_answer,
         "data": structured_data,
         "chart": chart_config,
-        "metadata": merged_context,
+        "metadata": rag_answer,
         "path": "rag_sql"
     }
     
@@ -1480,7 +1708,7 @@ async def _process_rag_sql_output(state: GraphState, execution_id: str) -> Graph
                 "output_type": "comprehensive",
                 "data_rows": len(structured_data.get("rows", [])),
                 "has_chart": bool(chart_config),
-                "has_metadata": True
+                "has_rag_context": bool(rag_answer)
             }
         }
     }
@@ -1617,57 +1845,38 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         
         Data summary: {data_summary}
         
-        Please analyze the user's chart requirements and return chart configuration suggestions in JSON format:
+        You MUST return a complete JSON configuration for the chart. Analyze the user's requirements and provide ALL required fields:
         {{
-            "chart_type": "line|bar|pie",
-            "title": "Chart title",
-            "x_axis_label": "X-axis label",
-            "y_axis_label": "Y-axis label",
-            "data_field_for_labels": "Data field name or index for labels",
-            "data_field_for_values": "Data field name or index for values",
-            "aggregation_method": "none|sum|average|count",
-            "time_grouping": "none|week|month|quarter|year",
-            "is_time_series": true|false
+            "chart_type": "pie",
+            "title": "Sales Proportion by Product Category (July-September 2025)",
+            "x_axis_label": "Product Category",
+            "y_axis_label": "Sales Revenue ($)",
+            "data_field_for_labels": "category",
+            "data_field_for_values": "sales_revenue",
+            "aggregation_method": "sum",
+            "time_grouping": "none",
+            "is_time_series": false
         }}
         
-        Analysis requirements:
-        1. Determine the most suitable chart type based on user query:
-           - Use "pie" for: proportion, percentage, distribution, breakdown, "each product", "by category"
-           - Use "line" for: trend, over time, monthly, weekly, yearly, quarterly
-           - Use "bar" for: comparison, ranking, top/bottom items
-        2. Generate meaningful titles and axis labels
-        3. Identify which fields in the data should be used for labels and values
-        4. **CRITICAL**: Analyze if this is a time series query by looking for keywords:
-           - "trend", "over time", "monthly", "weekly", "yearly", "quarterly"
-           - "sales trend", "time series", "by month", "by year", "by quarter"
-           - "2025", specific years, date ranges
-           - If ANY time-related keywords found, set "is_time_series": true and appropriate "time_grouping"
-        5. Pay attention to time units mentioned in user query:
-           - If user mentions "week" or "weekly": set time_grouping to "week"
-           - If user mentions "month" or "monthly": set time_grouping to "month"  
-           - If user mentions "year" or "yearly": set time_grouping to "year"
-           - If user mentions "quarter" or "quarterly": set time_grouping to "quarter"
-           - If user mentions "trend" without specific time unit, default to "month"
-        6. Generate appropriate x_axis_label based on time grouping:
-           - For week grouping: use "Week"
-           - For month grouping: use "Month"
-           - For year grouping: use "Year"
-           - For quarter grouping: use "Quarter"
-           - For non-time series: use appropriate category label
-        7. For different chart types:
-           - For pie charts: Set data_field_for_labels to "0" (category/product names), data_field_for_values to "1" (amounts/quantities)
-           - For time series data: Always use "line" chart type for trends, set data_field_for_labels to "0" (time), data_field_for_values to "1" (values)
-           - For bar charts: Set data_field_for_labels to "0" (categories), data_field_for_values to "1" (values)
-        8. Only return JSON, no other explanation
+        IMPORTANT: 
+        1. For pie charts about sales proportion, use chart_type: "pie"
+        2. Always provide a meaningful title based on the query - NEVER leave title empty
+        3. Title should be descriptive and include relevant time periods if mentioned
+        4. For sales data, include time period in title (e.g., "July-September 2025")
+        5. For sales data, use y_axis_label: "Sales Revenue ($)" or "Sales Amount ($)"
+        6. For category data, use x_axis_label: "Product Category" or similar
+        7. Return ONLY valid JSON, no additional text
+        
+        Based on the query "{user_input}", return the complete JSON configuration:
         """
         
-        # For chart推理使用 reasoning 模型
+        # Use reasoning model for chart inference
         try:
             from ..models.llm_factory import get_reasoning_llm
             reasoning_llm = get_reasoning_llm()
             response = reasoning_llm.invoke(chart_analysis_prompt)
         except Exception:
-            # 兜底使用默认chat模型
+            # Fallback to default chat model
             response = llm.invoke(chart_analysis_prompt)
         
         # Process LLM response
@@ -1683,15 +1892,73 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             import json
             import re
             
-            # Extract JSON part
+            # Try multiple JSON extraction methods
+            chart_analysis = None
+            
+            # Method 1: Look for complete JSON object
             json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
             if json_match:
-                chart_analysis = json.loads(json_match.group())
-            else:
-                logger.warning("No JSON found in LLM response, using fallback")
-                return generate_fallback_chart_config(data, user_input)
+                try:
+                    chart_analysis = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+            
+            # Method 2: Look for JSON with code block markers
+            if not chart_analysis:
+                code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', analysis_text, re.DOTALL)
+                if code_block_match:
+                    try:
+                        chart_analysis = json.loads(code_block_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Method 3: Try to extract individual fields
+            if not chart_analysis:
+                chart_analysis = {}
+                # Extract chart_type
+                chart_type_match = re.search(r'"chart_type":\s*"([^"]+)"', analysis_text)
+                if chart_type_match:
+                    chart_analysis["chart_type"] = chart_type_match.group(1)
                 
-        except (json.JSONDecodeError, AttributeError) as e:
+                # Extract title
+                title_match = re.search(r'"title":\s*"([^"]+)"', analysis_text)
+                if title_match:
+                    chart_analysis["title"] = title_match.group(1)
+                
+                # Extract other fields similarly
+                y_axis_match = re.search(r'"y_axis_label":\s*"([^"]+)"', analysis_text)
+                if y_axis_match:
+                    chart_analysis["y_axis_label"] = y_axis_match.group(1)
+                
+                x_axis_match = re.search(r'"x_axis_label":\s*"([^"]+)"', analysis_text)
+                if x_axis_match:
+                    chart_analysis["x_axis_label"] = x_axis_match.group(1)
+                
+                # Extract aggregation method
+                agg_match = re.search(r'"aggregation_method":\s*"([^"]+)"', analysis_text)
+                if agg_match:
+                    chart_analysis["aggregation_method"] = agg_match.group(1)
+                
+                # Extract time grouping
+                time_match = re.search(r'"time_grouping":\s*"([^"]+)"', analysis_text)
+                if time_match:
+                    chart_analysis["time_grouping"] = time_match.group(1)
+                
+                # Extract is_time_series
+                time_series_match = re.search(r'"is_time_series":\s*(true|false)', analysis_text)
+                if time_series_match:
+                    chart_analysis["is_time_series"] = time_series_match.group(1).lower() == 'true'
+                
+                # If we found at least chart_type, consider it valid
+                if chart_analysis.get("chart_type"):
+                    logger.info(f"Successfully extracted chart analysis: {chart_analysis}")
+                else:
+                    raise ValueError("No valid chart configuration found")
+            
+            if not chart_analysis:
+                raise ValueError("No valid chart configuration found")
+                
+        except (json.JSONDecodeError, AttributeError, ValueError) as e:
             logger.warning(f"Failed to parse LLM chart analysis: {e}, using fallback")
             return generate_fallback_chart_config(data, user_input)
         
@@ -1707,9 +1974,39 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         elif "bar chart" in user_input_lower or "bar" in user_input_lower:
             detected_type = "bar"
         
-        # Intelligent Y-axis label detection
+        # Generate intelligent chart title
+        chart_title = chart_analysis.get("title", "")
+        logger.info(f"LLM provided title: '{chart_title}'")
+        
+        if not chart_title or chart_title == "Chart title":
+            # Generate title based on user input and chart type
+            if detected_type == "pie":
+                if "sales" in user_input_lower and "proportion" in user_input_lower:
+                    chart_title = "Sales Proportion by Product Category (July-September 2025)"
+                elif "sales" in user_input_lower:
+                    chart_title = "Sales Distribution by Product Category"
+                else:
+                    chart_title = "Data Distribution"
+            elif detected_type == "line":
+                if "trend" in user_input_lower or "monthly" in user_input_lower:
+                    chart_title = "Sales Trend Over Time"
+                else:
+                    chart_title = "Data Trend"
+            elif detected_type == "bar":
+                if "sales" in user_input_lower:
+                    chart_title = "Sales by Product Category"
+                else:
+                    chart_title = "Data Comparison"
+            else:
+                chart_title = "Data Chart"
+            
+            logger.info(f"Generated intelligent title: '{chart_title}'")
+        else:
+            logger.info(f"Using LLM provided title: '{chart_title}'")
+        
+        # Generate intelligent Y-axis label
         y_axis_label = chart_analysis.get("y_axis_label", "Value")
-        if not y_axis_label or y_axis_label == "Value":
+        if not y_axis_label or y_axis_label == "Y-axis label":
             # Try to infer meaningful Y-axis label from user query and data
             if "sales" in user_input_lower and ("trend" in user_input_lower or "monthly" in user_input_lower):
                 y_axis_label = "Sales Amount ($)"
@@ -1721,6 +2018,8 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
                 y_axis_label = "Amount ($)"
             elif "price" in user_input_lower:
                 y_axis_label = "Price ($)"
+            else:
+                y_axis_label = "Value"
         
         chart_config = {
             "type": detected_type,
@@ -1758,7 +2057,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
                 "plugins": {
                     "title": {
                         "display": True,
-                        "text": chart_analysis.get("title", "Data Chart"),
+                        "text": chart_title,
                         "font": {
                             "size": 16,
                             "weight": "bold"
@@ -1818,6 +2117,7 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
             chart_config["data"]["datasets"][0]["backgroundColor"] = colors_bg
             chart_config["data"]["datasets"][0]["borderColor"] = colors_border
             logger.info(f"LLM-guided chart data configured with {len(labels)} data points")
+            logger.info(f"Final chart configuration - Type: {chart_config['type']}, Title: '{chart_config['options']['plugins']['title']['text']}'")
         else:
             logger.warning("No data extracted with LLM guidance, using fallback")
             return generate_fallback_chart_config(data, user_input)
@@ -1845,7 +2145,7 @@ def extract_data_summary(data: Dict[str, Any]) -> str:
                     
                     # Analyze data types
                     if len(sample_row) >= 8:
-                        summary_parts.append("Contains fields: ID, Product ID, Product Name, Category, Sales Volume, Unit Price, Total Amount, Date")
+                        summary_parts.append(f"Contains structured data with {len(sample_row)} fields")
                     elif len(sample_row) >= 3:
                         summary_parts.append(f"Contains structured data with {len(sample_row)} fields")
                     elif len(sample_row) == 2:
@@ -1879,9 +2179,9 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         if isinstance(sample_row, dict) and "category" in sample_row and "value" in sample_row:
             logger.info(f"Processing {len(rows)} rows of category-value data")
             
-            # Simple processing: sort by value descending and take top 10
+            # Simple processing: sort by value descending and take all data points
             sorted_rows = sorted(rows, key=lambda x: float(x.get("value", 0)), reverse=True)
-            processed_rows = sorted_rows[:10]  # Limit to top 10
+            processed_rows = sorted_rows  # Remove the limit to show all data points
             
             # Extract final labels and values
             for row in processed_rows:
@@ -1904,7 +2204,7 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         num_cols = len(sample_row) if isinstance(sample_row, (list, tuple)) else len(sample_row.keys()) if isinstance(sample_row, dict) else 0
         
         # For time series queries, intelligently detect time and value fields
-        if is_time_series or time_grouping != "none" or any(keyword in user_input.lower() for keyword in ['trend', 'monthly', 'yearly', 'over time']):
+        if chart_analysis.get("is_time_series") or chart_analysis.get("time_grouping") != "none" or any(keyword in user_input.lower() for keyword in ['trend', 'monthly', 'yearly', 'over time']):
             # This is likely a time series query
             if num_cols == 2:
                 # Two columns: likely (time/period, value)
@@ -1926,66 +2226,73 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                 except (ValueError, TypeError):
                     label_idx, value_idx = 0, min(1, num_cols - 1)
         else:
-            # Non-time series: use original logic
-            label_field = chart_analysis.get("data_field_for_labels", "2")  # Default product name  
-            value_field = chart_analysis.get("data_field_for_values", "6")  # Default total amount
+            # Non-time series: use dynamic field selection
+            label_field = chart_analysis.get("data_field_for_labels", "0")  # Default to first column
+            value_field = chart_analysis.get("data_field_for_values", "1")  # Default to second column
             try:
-                label_idx = int(label_field) if str(label_field).isdigit() else 2
-                value_idx = int(value_field) if str(value_field).isdigit() else 6
+                label_idx = int(label_field) if str(label_field).isdigit() else 0
+                value_idx = int(value_field) if str(value_field).isdigit() else 1
                 # Ensure indices are within bounds
                 if num_cols > 0:
-                    if label_idx >= num_cols: label_idx = min(2, num_cols - 1)
-                    if value_idx >= num_cols: value_idx = min(num_cols - 1, max(1, num_cols - 1))
+                    if label_idx >= num_cols: label_idx = min(0, num_cols - 1)
+                    if value_idx >= num_cols: value_idx = min(1, num_cols - 1)
             except (ValueError, TypeError):
-                label_idx, value_idx = min(2, num_cols - 1), min(num_cols - 1, max(1, num_cols - 1))
+                label_idx, value_idx = 0, min(1, num_cols - 1)
         
         logger.info(f"Using label_idx: {label_idx}, value_idx: {value_idx}")
         logger.info(f"Sample row: {sample_row}")
-        logger.info(f"Is time series: {is_time_series}, Time grouping: {time_grouping}")
+        logger.info(f"Is time series: {chart_analysis.get('is_time_series', False)}, Time grouping: {chart_analysis.get('time_grouping', 'none')}")
         
-        if time_grouping != "none" and len(rows[0]) > 7:
+        if chart_analysis.get("time_grouping") != "none" and len(rows[0]) > 7:
             # Time series data processing
             time_data = {}
             
             for row in rows:
-                if len(row) > max(label_idx, value_idx, 7):
-                    try:
-                        date_str = str(row[7]) if row[7] else ""
-                        # Handle TEXT type numeric fields
-                        value_str = str(row[value_idx]) if row[value_idx] else "0"
-                        # Try to convert to float
+                # Handle both dict and list/tuple formats
+                if isinstance(row, dict):
+                    row_values = list(row.values())
+                    if len(row_values) > 7:
                         try:
-                            value = float(value_str)
-                        except ValueError:
-                            # If conversion fails, try to extract numbers
-                            import re
-                            numbers = re.findall(r'-?\d+\.?\d*', value_str)
-                            value = float(numbers[0]) if numbers else 0
+                            date_str = str(row_values[7]) if row_values[7] else ""
+                            # Handle TEXT type numeric fields
+                            value_str = str(row_values[value_idx]) if row_values[value_idx] else "0"
+                            # Try to convert to float
+                            try:
+                                value = float(value_str)
+                            except ValueError:
+                                # If conversion fails, try to extract numbers
+                                import re
+                                numbers = re.findall(r'-?\d+\.?\d*', value_str)
+                                value = float(numbers[0]) if numbers else 0
+                        except (IndexError, KeyError, ValueError):
+                            continue
+                else:
+                    if len(row) > max(label_idx, value_idx, 7):
+                        try:
+                            date_str = str(row[7]) if row[7] else ""
+                            # Handle TEXT type numeric fields
+                            value_str = str(row[value_idx]) if row[value_idx] else "0"
+                            # Try to convert to float
+                            try:
+                                value = float(value_str)
+                            except ValueError:
+                                # If conversion fails, try to extract numbers
+                                import re
+                                numbers = re.findall(r'-?\d+\.?\d*', value_str)
+                                value = float(numbers[0]) if numbers else 0
+                        except (IndexError, KeyError, ValueError):
+                            continue
+                        except (IndexError, KeyError, ValueError):
+                            continue
                         
                         if date_str and len(date_str) >= 7:
-                            if time_grouping == "month":
+                            if chart_analysis.get("time_grouping") == "month":
                                 # Extract year-month, support different date formats
                                 if '-' in date_str:
-                                    time_key = date_str[:7]  # YYYY-MM
-                                else:
-                                    # Handle other formats
                                     time_key = date_str[:7] if len(date_str) >= 7 else date_str
-                            elif time_grouping == "week":
-                                # Extract year-week, format as YYYY-WW
-                                if '-' in date_str and len(date_str) >= 10:
-                                    # Convert date to week format using strftime logic
-                                    try:
-                                        from datetime import datetime
-                                        date_obj = datetime.strptime(date_str[:10], '%Y-%m-%d')
-                                        year = date_obj.isocalendar()[0]
-                                        week = date_obj.isocalendar()[1]
-                                        time_key = f"{year}-W{week:02d}"
-                                    except ValueError:
-                                        # Fallback: use first 7 characters
-                                        time_key = date_str[:7]
                                 else:
                                     time_key = date_str[:7] if len(date_str) >= 7 else date_str
-                            elif time_grouping == "quarter":
+                            elif chart_analysis.get("time_grouping") == "quarter":
                                 year = date_str[:4]
                                 month_str = date_str[5:7] if len(date_str) > 6 else "01"
                                 try:
@@ -1994,40 +2301,34 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                                     time_key = f"{year}-Q{quarter}"
                                 except ValueError:
                                     time_key = f"{year}-Q1"
-                            elif time_grouping == "year":
+                            elif chart_analysis.get("time_grouping") == "year":
                                 time_key = date_str[:4]  # YYYY
                             else:
                                 time_key = date_str[:7]
                             
-                            if aggregation_method == "sum":
+                            if chart_analysis.get("aggregation_method") == "sum":
                                 time_data[time_key] = time_data.get(time_key, 0) + value
-                            elif aggregation_method == "average":
+                            elif chart_analysis.get("aggregation_method") == "average":
                                 if time_key in time_data:
                                     time_data[time_key] = (time_data[time_key] + value) / 2
                                 else:
                                     time_data[time_key] = value
-                            elif aggregation_method == "count":
-                                time_data[time_key] = time_data.get(time_key, 0) + 1
                             else:
                                 time_data[time_key] = value
-                                
-                    except (ValueError, TypeError, IndexError) as e:
-                        logger.warning(f"Error processing row data: {e}")
-                        continue
             
             # Convert time data to chart format with proper time-based sorting
             def sort_time_key(key):
                 """Custom time key sorting function"""
                 try:
-                    if time_grouping == "year":
+                    if chart_analysis.get("time_grouping") == "year":
                         return int(key)
-                    elif time_grouping == "month":
+                    elif chart_analysis.get("time_grouping") == "month":
                         year, month = key.split('-')
                         return int(year) * 100 + int(month)
-                    elif time_grouping == "week":
+                    elif chart_analysis.get("time_grouping") == "week":
                         year, week_str = key.split('-W')
                         return int(year) * 100 + int(week_str)
-                    elif time_grouping == "quarter":
+                    elif chart_analysis.get("time_grouping") == "quarter":
                         year, quarter = key.split('-Q')
                         return int(year) * 10 + int(quarter)
                     else:
@@ -2036,7 +2337,7 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                     return key
             
             for time_key in sorted(time_data.keys(), key=sort_time_key):
-                labels.append(format_time_label(time_key, time_grouping))
+                labels.append(_format_time_label(time_key, chart_analysis.get("time_grouping", "none")))
                 values.append(time_data[time_key])
                 
         else:
@@ -2067,9 +2368,22 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                 elif len(row) == 2:
                     # Handle aggregated query results (e.g., month and sales)
                     try:
-                        label = str(row[0]) if row[0] else f"Item{len(labels)+1}"
+                        # Handle both dict and list formats
+                        if isinstance(row, dict):
+                            # For dict format like {'category': 'OFFICE SUPPLIES', 'sales_revenue': 71}
+                            # Get the first and second values
+                            values = list(row.values())
+                            if len(values) >= 2:
+                                label = str(values[0]) if values[0] else f"Item{len(labels)+1}"
+                                value_str = str(values[1]) if values[1] else "0"
+                            else:
+                                continue
+                        else:
+                            # For list/tuple format
+                            label = str(row[0]) if row[0] else f"Item{len(labels)+1}"
+                            value_str = str(row[1]) if row[1] else "0"
+                        
                         # Handle TEXT type numeric fields
-                        value_str = str(row[1]) if row[1] else "0"
                         try:
                             value = float(value_str)
                         except ValueError:
@@ -2117,14 +2431,14 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                             numbers = re.findall(r'-?\d+\.?\d*', value_str)
                             value = float(numbers[0]) if numbers else 0
                         
-                        if aggregation_method == "sum":
+                        if chart_analysis.get("aggregation_method") == "sum":
                             data_dict[label] = data_dict.get(label, 0) + value
-                        elif aggregation_method == "average":
+                        elif chart_analysis.get("aggregation_method") == "average":
                             if label in data_dict:
                                 data_dict[label] = (data_dict[label] + value) / 2
                             else:
                                 data_dict[label] = value
-                        elif aggregation_method == "count":
+                        elif chart_analysis.get("aggregation_method") == "count":
                             data_dict[label] = data_dict.get(label, 0) + 1
                         else:
                             data_dict[label] = value
@@ -2143,8 +2457,8 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                     sorted_items = sorted(data_dict.items(), key=lambda x: _extract_year_from_label(x[0]))
                     logger.info("Sorted by year (ascending)")
                 else:
-                    # Sort by value in descending order (original logic)
-                    sorted_items = sorted(data_dict.items(), key=lambda x: x[1], reverse=True)[:10]
+                    # Sort by value in descending order (show all data points)
+                    sorted_items = sorted(data_dict.items(), key=lambda x: x[1], reverse=True)
                     logger.info("Sorted by value (descending)")
                 
                 labels = [item[0] for item in sorted_items]
@@ -2200,6 +2514,32 @@ def _extract_year_from_label(label) -> int:
         return int(float(label_str))
     except:
         raise ValueError(f"Cannot extract year from label: {label}")
+
+def _format_time_label(time_key: str, time_grouping: str) -> str:
+    """Format time key for display based on grouping type"""
+    try:
+        if time_grouping == "year":
+            return time_key
+        elif time_grouping == "month":
+            year, month = time_key.split('-')
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            try:
+                month_name = month_names[int(month) - 1]
+                return f"{month_name} {year}"
+            except (ValueError, IndexError):
+                return time_key
+        elif time_grouping == "week":
+            year, week = time_key.split('-W')
+            return f"Week {week}, {year}"
+        elif time_grouping == "quarter":
+            year, quarter = time_key.split('-Q')
+            return f"Q{quarter} {year}"
+        else:
+            return time_key
+    except:
+        return time_key
+
 
 def _format_label_based_on_context(label: str, chart_analysis: Dict[str, Any], user_input: str) -> str:
     """Format label based on query context and chart analysis"""
@@ -2359,55 +2699,58 @@ def get_compiled_app():
     return create_workflow()
 
 def create_workflow():
-    """Create the new hybrid workflow with 3 query paths"""
+    """Create the new workflow with mandatory RAG + optional SQL-Agent architecture"""
     workflow = StateGraph(GraphState)
     
-    # Add nodes to the graph
+    # Add nodes to the graph (6 nodes instead of 8)
     workflow.add_node("start_node", lambda state: state)  # Start node just passes through
-    workflow.add_node("intent_analysis_node", intent_analysis_node)  # New intent analysis node
-    workflow.add_node("rag_query_node", rag_query_node)  # Enhanced RAG query node
-    workflow.add_node("sql_query_node", sql_query_node)  # Enhanced SQL query node with integrated result merge and chart decision
-    workflow.add_node("chart_process_node", chart_process_node)  # Enhanced chart process node
-    workflow.add_node("llm_processing_node", llm_processing_node)  # Enhanced LLM processing node
+    workflow.add_node("rag_query_node", rag_query_node)  # Combined RAG node
+    workflow.add_node("router_node", router_node)  # Router node (binary classification)
+    workflow.add_node("sql_agent_node", sql_agent_node)  # SQL-Agent node (ReAct mode)
+    workflow.add_node("chart_process_node", chart_process_node)  # Chart processing node
+    workflow.add_node("llm_processing_node", llm_processing_node)  # LLM integration processing node
     workflow.add_node("interrupt_node", interrupt_node)  # HITL interrupt node
     workflow.add_node("end_node", lambda state: {"success": True})
 
     # Set entry point
     workflow.set_entry_point("start_node")
     
-    # Connect start to intent analysis
-    workflow.add_edge("start_node", "intent_analysis_node")
+    # Workflow connection: start → rag_query → router
+    workflow.add_edge("start_node", "rag_query_node")
+    workflow.add_edge("rag_query_node", "router_node")
 
-    # Intent analysis routes to different paths
+    # Router node routing: Determine if SQL-Agent is needed
     workflow.add_conditional_edges(
-        "intent_analysis_node",
-        lambda state: state["query_path"],
+        "router_node",
+        lambda state: "sql_agent_node" if state.get("need_sql_agent", False) else "llm_processing_node",
         {
-            "rag_only": "rag_query_node",
-            "sql_only": "sql_query_node", 
-            "rag_sql": "rag_query_node"  # Start with RAG for hybrid path
+            "sql_agent_node": "sql_agent_node",  # Needs SQL-Agent
+            "llm_processing_node": "llm_processing_node"  # No SQL-Agent needed
         }
     )
 
-    # RAG query node routes based on path
+    # SQL-Agent node routing: Determine if chart is needed
     workflow.add_conditional_edges(
-        "rag_query_node",
-        lambda state: state["query_path"],
+        "sql_agent_node",
+        lambda state: "chart_process_node" if state.get("chart_suitable", False) else "llm_processing_node",
         {
-            "rag_only": "llm_processing_node",  # Pure RAG goes directly to LLM
-            "rag_sql": "sql_query_node"  # Hybrid continues to SQL
+            "chart_process_node": "chart_process_node",  # Needs chart
+            "llm_processing_node": "llm_processing_node"  # No chart needed
         }
     )
 
-    # SQL query node routes based on chart decision (integrated)
-    workflow.add_conditional_edges(
-        "sql_query_node",
-        lambda state: state.get("chart_decision", "skip_chart"),
-        {
-            "generate_chart": "chart_process_node",  # Generate chart if needed
-            "skip_chart": "llm_processing_node"  # Skip chart, go to LLM processing
-        }
-    )
+    # Chart processing node → LLM processing node
+    workflow.add_edge("chart_process_node", "llm_processing_node")
+
+    # LLM processing node → End
+    workflow.add_edge("llm_processing_node", "end_node")
+
+    # Compile the workflow
+    app = workflow.compile()
+    
+    logger.info("New workflow created with 6 nodes: start → rag_query → router → [sql_agent → chart?] → llm_processing → end")
+    
+    return app
 
     # Chart process node goes to LLM processing
     workflow.add_edge("chart_process_node", "llm_processing_node")
@@ -2479,85 +2822,182 @@ def chart_decision_router(state: GraphState) -> str:
     return "skip_chart"
 
 # Enhanced Chart Process Node
+def _analyze_chart_suitability(structured_data: Dict[str, Any], user_input: str) -> Dict[str, Any]:
+    """Analyze if data is suitable for chart generation"""
+    try:
+        rows = structured_data.get("rows", [])
+        columns = structured_data.get("columns", [])
+        
+        # 1. Check data row count
+        if len(rows) < 2:
+            return {"suitable": False, "reason": "Insufficient data rows (at least 2 rows required)"}
+        
+        if len(rows) > 1000:
+            return {"suitable": False, "reason": "Too many data rows (exceeds 1000 rows)"}
+        
+        # 2. Check column count
+        if len(columns) < 2:
+            return {"suitable": False, "reason": "Insufficient data columns (at least 2 columns required)"}
+        
+        # 3. Check for numeric columns
+        numeric_columns = []
+        for col in columns:
+            if _has_numeric_column(rows, col):
+                numeric_columns.append(col)
+        
+        if not numeric_columns:
+            return {"suitable": False, "reason": "No numeric columns found"}
+        
+        # 4. Check if user input contains chart-related keywords
+        chart_keywords = ["chart", "pie", "bar", "line", "graph", "visualization", "proportion", "distribution", "trend"]
+        has_chart_intent = any(keyword.lower() in user_input.lower() for keyword in chart_keywords)
+        
+        if not has_chart_intent:
+            return {"suitable": False, "reason": "User question does not involve chart generation"}
+        
+        # 5. Data quality check
+        if len(rows) > 50:
+            # For large datasets, check for duplicates or excessive empty values
+            sample_rows = rows[:10]
+            empty_count = sum(1 for row in sample_rows if any(str(val).strip() == "" for val in row.values()))
+            if empty_count > len(sample_rows) * 0.5:
+                return {"suitable": False, "reason": "Poor data quality (too many empty values)"}
+        
+        return {
+            "suitable": True,
+            "reason": "Data suitable for chart generation",
+            "numeric_columns": numeric_columns,
+            "row_count": len(rows),
+            "column_count": len(columns)
+        }
+        
+    except Exception as e:
+        logger.warning(f"Chart suitability analysis failed: {e}")
+        return {"suitable": False, "reason": f"Data suitability analysis failed: {str(e)}"}
+
+def _has_numeric_column(rows: List[Dict], column_name: str) -> bool:
+    """Check if specified column contains numeric data"""
+    try:
+        numeric_count = 0
+        total_count = 0
+        
+        for row in rows[:20]:  # Only check first 20 rows
+            value = row.get(column_name, "")
+            if value is None or str(value).strip() == "":
+                continue
+            
+            total_count += 1
+            
+            # Try to convert to number
+            try:
+                float(str(value).replace(",", "").replace("%", ""))
+                numeric_count += 1
+            except (ValueError, TypeError):
+                pass
+        
+        # If more than 50% of values are numbers, consider it a numeric column
+        return total_count > 0 and (numeric_count / total_count) > 0.5
+        
+    except Exception:
+        return False
+
 def chart_process_node(state: GraphState) -> GraphState:
-    """Enhanced Chart Process Node: generate chart config then render chart"""
+    """Enhanced Chart Process Node: Integrate data suitability analysis + generate chart config + render chart"""
     try:
         structured_data = state.get("structured_data")
         user_input = state["user_input"]
-        query_path = state.get("query_path", "sql_only")
         
         if not structured_data:
             logger.warning("Chart Process Node - No structured data available")
-            return {**state, "error": "No structured data available for chart generation"}
-        
-        logger.info(f"Chart Process Node - Processing chart for {query_path} path")
-        
-        # Step 1: Generate chart configuration
-        chart_config_result = chart_config_node(state)
-        if chart_config_result.get("error"):
-            logger.warning(f"Chart config failed: {chart_config_result.get('error')}")
-            # Don't fail the entire process, just skip chart generation
             return {
                 **state,
-                "chart_config": None,
-                "chart_data": None,
+                "chart_suitable": False,
+                "chart_error": "No structured data available",
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "chart_process": {
                         "status": "skipped",
-                        "timestamp": time.time(),
-                        "reason": "Chart config failed",
-                        "error": chart_config_result.get("error")
+                        "reason": "No structured data",
+                        "timestamp": time.time()
                     }
                 }
             }
         
-        # Step 2: Render chart
-        chart_render_result = chart_rendering_node(chart_config_result)
-        if chart_render_result.get("error"):
-            logger.warning(f"Chart rendering failed: {chart_render_result.get('error')}")
-            # Don't fail the entire process, just skip chart generation
+        logger.info(f"Chart Process Node - Analyzing data suitability for: {user_input}")
+        
+        # Step 1: Data suitability analysis
+        suitability_result = _analyze_chart_suitability(structured_data, user_input)
+        
+        if not suitability_result["suitable"]:
+            logger.info(f"Chart not suitable: {suitability_result['reason']}")
             return {
-                **chart_config_result,
-                "chart_config": None,
-                "chart_data": None,
+                **state,
+                "chart_suitable": False,
+                "chart_error": suitability_result["reason"],
                 "node_outputs": {
                     **state.get("node_outputs", {}),
                     "chart_process": {
                         "status": "skipped",
-                        "timestamp": time.time(),
-                        "reason": "Chart rendering failed",
-                        "error": chart_render_result.get("error")
+                        "reason": suitability_result["reason"],
+                        "timestamp": time.time()
                     }
                 }
             }
         
-        logger.info("Chart Process Node - Chart generation completed successfully")
+        logger.info("Chart suitable - Proceeding with chart generation")
         
+        # Step 2: Generate chart configuration
+        chart_config = generate_chart_config(structured_data, user_input)
+        if not chart_config:
+            logger.warning("Chart config generation failed")
+            return {
+                **state,
+                "chart_suitable": True,
+                "chart_config": None,
+                "chart_data": None,
+                "chart_error": "Chart config generation failed",
+                "node_outputs": {
+                    **state.get("node_outputs", {}),
+                    "chart_process": {
+                        "status": "failed",
+                        "reason": "Chart config generation failed",
+                        "timestamp": time.time()
+                    }
+                }
+            }
+        # Success - Extract data for frontend
+        chart_data = chart_config.get("data", {}).get("labels", [])
+        chart_type = chart_config.get("type", "pie")
+        
+        logger.info("Chart Process completed successfully")
         return {
-            **chart_render_result,
+            **state,
+            "chart_suitable": True,
+            "chart_config": chart_config,
+            "chart_data": chart_data,
+            "chart_type": chart_type,
             "node_outputs": {
                 **state.get("node_outputs", {}),
                 "chart_process": {
                     "status": "completed",
-                    "timestamp": time.time(),
-                    "chart_type": chart_render_result.get("chart_type"),
-                    "data_rows": len(structured_data.get("rows", []))
+                    "chart_type": chart_type,
+                    "timestamp": time.time()
                 }
             }
         }
         
     except Exception as e:
-        logger.error(f"Chart process node error: {e}")
+        logger.error(f"Chart Process Node failed: {e}", exc_info=True)
         return {
             **state, 
-            "error": str(e),
+            "chart_suitable": False,
+            "chart_error": str(e),
             "node_outputs": {
                 **state.get("node_outputs", {}),
                 "chart_process": {
                     "status": "error",
-                    "timestamp": time.time(),
-                    "error": str(e)
+                    "error": str(e),
+                    "timestamp": time.time()
                 }
             }
         }
@@ -2605,125 +3045,29 @@ async def resume_workflow_from_paused_state(
                 state = await llm_processing_node(state)
                 await _emit(state)
 
-            elif paused_node == "sql_query_node":
-                # Continue based on query path
-                if query_path == "sql_only":
-                    # Pure SQL path: go to chart decision
-                    state = chart_decision_node(state)
+            elif paused_node == "sql_agent_node":
+                # Continue from SQL agent to chart process or LLM processing
+                chart_suitable = state.get("chart_suitable", False)
+                if chart_suitable:
+                    state = chart_process_node(state)
                     await _emit(state)
-                    
-                    # Check chart decision
-                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                    if chart_decision == "generate_chart":
-                        state = chart_process_node(state)
-                await _emit(state)
 
                 state = await llm_processing_node(state)
                 await _emit(state)
-            elif query_path == "rag_sql":
-                    # Hybrid path: go to result merge
-                    state = result_merge_node(state)
-                    await _emit(state)
 
-                    # Then chart decision
-                    state = chart_decision_node(state)
-                    await _emit(state)
-                    
-                    # Check chart decision
-                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                    if chart_decision == "generate_chart":
-                        state = chart_process_node(state)
-                        await _emit(state)
-                    
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-
-            elif paused_node == "rag_query_node":
-                # Continue based on query path
-                if query_path == "rag_only":
-                    # Pure RAG path: go directly to LLM processing
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-                elif query_path == "rag_sql":
-                    # Hybrid path: go to SQL query
-                    state = await sql_query_node(state)
-                    await _emit(state)
-                    
-                    # Then result merge
-                    state = result_merge_node(state)
-                    await _emit(state)
-                    
-                    # Then chart decision
-                    state = chart_decision_node(state)
-                    await _emit(state)
-                    
-                    # Check chart decision
-                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                    if chart_decision == "generate_chart":
-                        state = chart_process_node(state)
-                        await _emit(state)
-                    
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-
-            elif paused_node == "result_merge_node":
-                # Continue from result merge to chart decision
-                state = chart_decision_node(state)
+            elif paused_node == "rag_answer_node":
+                # Continue from RAG answer to router
+                state = router_node(state)
                 await _emit(state)
-                
-                # Check chart decision
-                chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                if chart_decision == "generate_chart":
-                    state = chart_process_node(state)
-                    await _emit(state)
-                
-                state = await llm_processing_node(state)
-                await _emit(state)
-
-            elif paused_node == "chart_decision_node":
-                # Continue from chart decision
-                chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                if chart_decision == "generate_chart":
-                    state = chart_process_node(state)
-                    await _emit(state)
-                
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-
-            elif paused_node == "intent_analysis_node":
-                # Continue from intent analysis based on determined path
-                query_path = state.get("query_path", "rag_only")
-                
-                if query_path == "rag_only":
-                    state = await rag_query_node(state)
-                    await _emit(state)
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-                elif query_path == "sql_only":
-                    state = await sql_query_node(state)
-                    await _emit(state)
-                    state = chart_decision_node(state)
+                    
+                # Then continue based on router decision
+                need_sql_agent = state.get("need_sql_agent", False)
+                if need_sql_agent:
+                    state = await sql_agent_node(state)
                     await _emit(state)
                     
-                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                    if chart_decision == "generate_chart":
-                        state = chart_process_node(state)
-                        await _emit(state)
-                    
-                    state = await llm_processing_node(state)
-                    await _emit(state)
-                elif query_path == "rag_sql":
-                    state = await rag_query_node(state)
-                    await _emit(state)
-                    state = await sql_query_node(state)
-                    await _emit(state)
-                    state = result_merge_node(state)
-                    await _emit(state)
-                    state = chart_decision_node(state)
-                    await _emit(state)
-                    
-                    chart_decision = state.get("node_outputs", {}).get("chart_decision", {}).get("decision", "skip_chart")
-                    if chart_decision == "generate_chart":
+                    chart_suitable = state.get("chart_suitable", False)
+                    if chart_suitable:
                         state = chart_process_node(state)
                         await _emit(state)
                     
@@ -2794,36 +3138,44 @@ async def process_intelligent_query(
         "user_input": user_input,
         "datasource": datasource,
             "execution_id": execution_id,
-            "query_path": "",  # Will be set by intent_analysis_node
-            "need_chart": False,  # Will be set by intent_analysis_node
+            "need_chart": False,
             "analysis_reasoning": "",
             "detected_keywords": [],
-            "query_type": None,  # Legacy field
-            "sql_task_type": None,  # Legacy field
-            "rag_result": None,
-            "rag_sources": None,
-            "rag_confidence": None,
-            "rag_executed": False,
+            "query_type": None,
+            # RAG related fields
+            "retrieved_documents": [],
+            "reranked_documents": [],
+            "rag_answer": "",
+            # Router related fields
+            "need_sql_agent": False,
+            "router_reasoning": "",
+            # SQL Agent related fields
+            "sql_agent_answer": "",
+            "executed_sqls": [],
+            "agent_intermediate_steps": [],
         "structured_data": None,
-            "sql_answer": None,
-            "executed_sql": None,
-            "merged_context": None,
-            "data_with_metadata": None,
+            # Chart related fields
+            "chart_suitable": False,
+            "chart_error": None,
         "chart_config": None,
             "chart_data": None,
             "chart_type": None,
         "chart_image": None,
+            # Final result
+            "final_answer": "",
         "answer": "",
-            "final_result": None,
-        "quality_score": 10,
+            "final_result": "",
+            "quality_score": 0.0,
         "retry_count": 0,
             "error": None,
-            "hitl_status": None,
+            "hitl_status": "none",
             "hitl_node": None,
             "hitl_reason": None,
             "hitl_parameters": None,
             "hitl_timestamp": None,
-            "node_outputs": {}
+            "node_outputs": {},
+            "input": user_input,
+            "output": ""
     }
     
     config = {"recursion_limit": 50, "configurable": {"execution_id": execution_id}}
@@ -2853,27 +3205,46 @@ async def process_intelligent_query(
 
         # Single-run: stream events and accumulate final state simultaneously to avoid duplicate execution
         accumulated_state = initial_state.copy()
+        
+        # Define main workflow nodes to track (exclude internal LangChain sub-components)
+        main_workflow_nodes = {
+            'start_node', 'rag_query_node', 'router_node', 'sql_agent_node', 
+            'chart_process_node', 'llm_processing_node', 'end_node'
+        }
+        
         try:
             async for event in app.astream_events(initial_state, config, version="v1"):
                 kind = event.get("event")
                 node_name = event.get("name", "")
 
                 if kind == "on_chain_start":
-                    logger.info(f"Node started: {node_name}")
-                    await emit_event("node_started", node_id=node_name)
+                    # Only log and emit events for main workflow nodes, not internal LangChain components
+                    if node_name in main_workflow_nodes:
+                        logger.info(f"Node started: {node_name}")
+                        await emit_event("node_started", node_id=node_name)
+                    else:
+                        logger.debug(f"Internal component started: {node_name}")
 
                 elif kind == "on_chain_end":
-                    logger.info(f"Node completed: {node_name}")
-                    data = event.get("data")
-                    # Accumulate any state-like data emitted by nodes
-                    if isinstance(data, dict):
-                        for key, value in data.items():
-                            accumulated_state[key] = value
-                    await emit_event("node_completed", node_id=node_name, data=data)
+                    # Only log and emit events for main workflow nodes, not internal LangChain components
+                    if node_name in main_workflow_nodes:
+                        logger.info(f"Node completed: {node_name}")
+                        data = event.get("data")
+                        # Accumulate any state-like data emitted by nodes
+                        if isinstance(data, dict):
+                            for key, value in data.items():
+                                accumulated_state[key] = value
+                        await emit_event("node_completed", node_id=node_name, data=data)
+                    else:
+                        logger.debug(f"Internal component completed: {node_name}")
 
                 elif kind == "on_chain_error":
-                    logger.error(f"Node error: {node_name} - {event.get('data')}")
-                    await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
+                    # Log errors for all nodes, but only emit events for main workflow nodes
+                    if node_name in main_workflow_nodes:
+                        logger.error(f"Node error: {node_name} - {event.get('data')}")
+                        await emit_event("node_error", node_id=node_name, error=str(event.get("data", "")))
+                    else:
+                        logger.error(f"Internal component error: {node_name} - {event.get('data')}")
 
             # After events stream finishes, treat accumulated_state as final_state
             final_state = accumulated_state
@@ -3379,4 +3750,4 @@ def set_execution_final_state(execution_id: str, state: Dict[str, Any]):
     logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored query_type: {state.get('query_type', 'NOT_SET')}")
     logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
     
-    logger.info(f"�?[BACKEND-LG] set_execution_final_state completed successfully")
+    logger.info(f"✅ [BACKEND-LG] set_execution_final_state completed successfully")

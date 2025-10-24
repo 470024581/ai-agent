@@ -194,6 +194,159 @@ except Exception as e:
     else:
         embeddings = None
 
+async def perform_rag_retrieval(query: str, datasource: Dict[str, Any], k: int = 10) -> Dict[str, Any]:
+    """
+    Performs RAG retrieval only, returning Top K documents with similarity scores.
+    This function extracts the retrieval logic from perform_rag_query for use in the new workflow.
+    """
+    logger.info(f"RAG Retrieval - Query: '{query}', K: {k}, Datasource: {datasource['name']}")
+    
+    if not embeddings:
+        raise RuntimeError("Embeddings not initialized. RAG retrieval cannot be performed.")
+    
+    try:
+        # 1. Fetch list of 'completed' files from the database
+        datasource_id = datasource['id']
+        logger.info(f"Fetching completed files for datasource_id: {datasource_id}")
+        db_files = await get_files_by_datasource(datasource_id)
+        
+        completed_files = [f for f in db_files if f['processing_status'] == 'completed']
+        logger.info(f"Found {len(completed_files)} completed files for datasource {datasource_id}.")
+        
+        if not completed_files:
+            return {"documents": [], "success": False, "error": "No completed files available"}
+        
+        all_docs = []
+        valid_files = []
+        # 2. Load and parse file content (reuse existing logic)
+        for file_info in completed_files:
+            file_path = UPLOAD_DIR / file_info['filename']
+            text_content = ""
+            file_type = file_info['file_type']
+            original_filename = file_info['original_filename']
+            
+            logger.info(f"Processing file: {file_path} (Original: {original_filename}, Type: {file_type})")
+            
+            if not file_path.exists():
+                logger.warning(f"File not found: {file_path} for file_info: {original_filename}")
+                try:
+                    await update_file_processing_status(
+                        file_info['id'], 
+                        status=ProcessingStatus.FAILED.value, 
+                        error_message="File not found on disk"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update file status: {e}")
+                continue
+            
+            valid_files.append(file_info)
+            
+            try:
+                if file_type == 'txt':
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        text_content = f.read()
+                elif file_type == 'md':
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        text_content = f.read()
+                elif file_type == 'pdf':
+                    text_content = _extract_text_from_pdf(file_path)
+                elif file_type == 'docx':
+                    text_content = _extract_text_from_docx(file_path)
+                elif file_type == 'csv':
+                    text_content = _extract_text_from_csv_pandas(file_path)
+                elif file_type == 'xlsx':
+                    text_content = _extract_text_from_xlsx_pandas(file_path)
+                else:
+                    logger.info(f"Skipping file {original_filename} due to unsupported file type: {file_type}")
+                    continue
+                
+                if text_content.strip():
+                    doc = Document(page_content=text_content, metadata={"source": original_filename, "file_id": file_info['id']})
+                    all_docs.append(doc)
+                    logger.info(f"Successfully processed and created Document for {original_filename}. Length: {len(text_content)}")
+                else:
+                    logger.warning(f"No text content extracted from {original_filename} (Type: {file_type})")
+                    
+            except Exception as e:
+                logger.error(f"Error processing file {original_filename}: {e}", exc_info=True)
+        
+        if not valid_files:
+            logger.warning("No valid files found. Cannot proceed with RAG retrieval.")
+            return {"documents": [], "success": False, "error": "No valid files found"}
+        
+        if not all_docs:
+            logger.warning("No documents were loaded from files. Cannot proceed with RAG retrieval.")
+            return {"documents": [], "success": False, "error": "No processable content found"}
+        
+        # 3. Text chunking
+        logger.info(f"Splitting {len(all_docs)} documents into chunks.")
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunked_docs = text_splitter.split_documents(all_docs)
+        logger.info(f"Created {len(chunked_docs)} chunks.")
+        
+        if not chunked_docs:
+            logger.warning("No chunks were created from the documents. Cannot proceed with RAG retrieval.")
+            return {"documents": [], "success": False, "error": "Could not extract valid content chunks"}
+        
+        # 4. Create or retrieve cached/persistent vector store (FAISS)
+        cache_key = f"{datasource['id']}_{len(chunked_docs)}"
+        vector_store_path = VECTOR_STORE_DIR / f"datasource_{datasource['id']}.faiss"
+        
+        if cache_key in _vector_store_cache:
+            logger.info(f"Using cached vector store for datasource {datasource['id']}")
+            vector_store = _vector_store_cache[cache_key]
+        elif vector_store_path.exists():
+            try:
+                logger.info(f"Loading persistent vector store for datasource {datasource['id']}")
+                vector_store = FAISS.load_local(str(vector_store_path), embeddings, allow_dangerous_deserialization=True)
+                _vector_store_cache[cache_key] = vector_store
+                logger.info(f"Loaded and cached persistent vector store for datasource {datasource['id']}")
+            except Exception as e:
+                logger.warning(f"Failed to load persistent vector store: {e}, creating new one")
+                vector_store = FAISS.from_documents(chunked_docs, embeddings)
+                vector_store.save_local(str(vector_store_path))
+                _vector_store_cache[cache_key] = vector_store
+                logger.info(f"Created and saved new vector store for datasource {datasource['id']}")
+        else:
+            logger.info("Creating FAISS vector store from chunks...")
+            vector_store = FAISS.from_documents(chunked_docs, embeddings)
+            vector_store.save_local(str(vector_store_path))
+            _vector_store_cache[cache_key] = vector_store
+            logger.info(f"Created, saved and cached vector store for datasource {datasource['id']}")
+        
+        # 5. Perform retrieval with similarity scores
+        logger.info(f"Performing similarity search with k={k}")
+        
+        # Use similarity_search_with_score to get documents with scores
+        docs_with_scores = vector_store.similarity_search_with_score(query, k=k)
+        
+        # Convert to Document objects with score in metadata
+        documents = []
+        for doc, score in docs_with_scores:
+            # Create a copy of the document with score in metadata
+            doc_with_score = Document(
+                page_content=doc.page_content,
+                metadata={**doc.metadata, 'score': float(score)}
+            )
+            documents.append(doc_with_score)
+        
+        logger.info(f"Retrieved {len(documents)} documents with scores")
+        
+        return {
+            "documents": documents,
+            "success": True,
+            "datasource_id": datasource['id'],
+            "datasource_name": datasource['name']
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during RAG retrieval for datasource {datasource['name']}: {e}", exc_info=True)
+        return {
+            "documents": [],
+            "success": False,
+            "error": str(e)
+        }
+
 async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str, Any]:
     """
     Performs RAG retrieval and Q&A for the specified data source.
@@ -908,6 +1061,16 @@ def initialize_app_state():
     try:
         logger.info("Pre-initializing LLM and Embedding models...")
         
+        # Ensure LLM is initialized at startup (cold-start warmup)
+        global llm
+        if not llm:
+            try:
+                from ..models.llm_factory import get_llm as _get_llm
+                llm = _get_llm()
+                logger.info("LLM instance created during startup warmup.")
+            except Exception as init_llm_err:
+                logger.error(f"Failed to initialize LLM during startup: {init_llm_err}")
+        
         # Test LLM connection
         if llm:
             logger.info("Testing LLM connection...")
@@ -922,6 +1085,16 @@ def initialize_app_state():
         else:
             logger.warning("LLM model not initialized. Question answering and report functionality will be limited.")
 
+        # Ensure Embeddings are initialized at startup (cold-start warmup)
+        global embeddings
+        if not embeddings:
+            try:
+                from ..models.embedding_factory import get_embeddings as _get_embeddings
+                embeddings = _get_embeddings()
+                logger.info("Embeddings instance created during startup warmup.")
+            except Exception as init_emb_err:
+                logger.error(f"Failed to initialize Embeddings during startup: {init_emb_err}")
+
         # Test Embeddings connection
         if embeddings:
             logger.info("Testing Embeddings connection...")
@@ -931,7 +1104,15 @@ def initialize_app_state():
         else:
             logger.warning("Embedding model not initialized. RAG functionality will be unavailable.")
             
-        logger.info("LLM and Embeddings pre-initialization completed.")
+        # Preload Cross-Encoder reranker to avoid first-request cold start
+        try:
+            from ..models.reranker import get_cross_encoder as _get_ce
+            _ = _get_ce()
+            logger.info("Cross-Encoder reranker preloaded successfully.")
+        except Exception as ce_warmup_err:
+            logger.warning(f"Cross-Encoder preload skipped/failed: {ce_warmup_err}")
+
+        logger.info("LLM, Embeddings and Reranker pre-initialization completed.")
         
     except Exception as e:
         logger.error(f"LLM/Embeddings pre-initialization failed: {e}", exc_info=True)

@@ -16,7 +16,7 @@ const PieChart = ({ data, config = {}, className, style }) => {
       showMarkers: false
     },
     legend: {
-      position: 'right'
+      position: 'bottom'
     },
     responsive: true,
     interactions: [

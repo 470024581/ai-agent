@@ -70,6 +70,7 @@ coverage.xml
 
 # VS Code
 .vscode/
+.cursorignore
 
 # Ignore server data files
 /server/data/

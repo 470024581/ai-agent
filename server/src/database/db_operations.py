@@ -168,98 +168,15 @@ def initialize_database_schema():
             )
         ''')
         
-        # Create vector_chunks table for RAG
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vector_chunks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                file_id INTEGER NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                metadata TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
-            )
-        ''')
+        # vector_chunks table removed - no longer needed
         
-        # Create datasource_tables table to support multiple tables per datasource
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS datasource_tables (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                datasource_id INTEGER NOT NULL,
-                table_name TEXT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (datasource_id) REFERENCES datasources (id) ON DELETE CASCADE,
-                UNIQUE(datasource_id, table_name)
-            )
-        ''')
+        # datasource_tables table removed - no longer needed
 
-        # HITL tables (ensure create or backfill missing columns before creating indexes)
-        
-        # Create HITL tables
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hitl_interrupts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                execution_id TEXT NOT NULL UNIQUE,
-                user_input TEXT NOT NULL,
-                datasource_id INTEGER,
-                node_name TEXT NOT NULL,
-                reason TEXT,
-                current_state TEXT NOT NULL, -- JSON serialized complete state
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                status TEXT NOT NULL DEFAULT 'interrupted', -- interrupted, resumed, cancelled
-                FOREIGN KEY (datasource_id) REFERENCES datasources(id)
-            )
-        ''')
-
-        # Backfill missing columns on legacy hitl_interrupts
-        ensure_column("hitl_interrupts", "created_at", "ALTER TABLE hitl_interrupts ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
-        ensure_column("hitl_interrupts", "updated_at", "ALTER TABLE hitl_interrupts ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
-        ensure_column("hitl_interrupts", "status", "ALTER TABLE hitl_interrupts ADD COLUMN status TEXT NOT NULL DEFAULT 'interrupted'")
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hitl_parameter_adjustments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                interrupt_id INTEGER NOT NULL,
-                parameter_name TEXT NOT NULL,
-                old_value TEXT,
-                new_value TEXT NOT NULL,
-                adjustment_reason TEXT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (interrupt_id) REFERENCES hitl_interrupts(id) ON DELETE CASCADE
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hitl_execution_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                execution_id TEXT NOT NULL,
-                operation_type TEXT NOT NULL, -- pause, interrupt, resume, cancel
-                node_name TEXT,
-                parameters TEXT, -- JSON serialized parameters
-                timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                user_action TEXT, -- user_initiated, system_initiated
-                FOREIGN KEY (execution_id) REFERENCES hitl_interrupts(execution_id)
-            )
-        ''')
+        # HITL tables removed - no longer needed
         
         # Create indexes for better performance (guarded)
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_files_datasource_id ON files(datasource_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vector_chunks_file_id ON vector_chunks(file_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasources_is_active ON datasources(is_active)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_datasource_tables_datasource_id ON datasource_tables(datasource_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_execution_id ON hitl_interrupts(execution_id)')
-        try:
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_status ON hitl_interrupts(status)')
-        except Exception as _e:
-            print(f"[DB-SQLite] Warning creating index on hitl_interrupts.status: {_e}")
-        try:
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_interrupts_created_at ON hitl_interrupts(created_at)')
-        except Exception as _e:
-            print(f"[DB-SQLite] Warning creating index on hitl_interrupts.created_at: {_e}")
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_parameter_adjustments_interrupt_id ON hitl_parameter_adjustments(interrupt_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_execution_history_execution_id ON hitl_execution_history(execution_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_hitl_execution_history_timestamp ON hitl_execution_history(timestamp)')
         
         # Insert default datasource if not exists
         cursor.execute('''

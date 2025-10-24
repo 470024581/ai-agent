@@ -4,10 +4,10 @@ import { useTranslation } from 'react-i18next';
 /**
  * Rate limiting hook for controlling API access frequency
  * @param {string} key - Key for localStorage
- * @param {number} maxClicks - Maximum clicks allowed per hour
- * @param {number} windowMs - Time window in milliseconds, defaults to 1 hour
+ * @param {number} maxClicks - Maximum clicks allowed per time window
+ * @param {number} windowMs - Time window in milliseconds, defaults to 10 minutes
  */
-const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 60 * 60 * 1000) => {
+const useRateLimit = (key = 'analysis_clicks', maxClicks = 10, windowMs = 10 * 60 * 1000) => {
   const { t } = useTranslation();
   const [isLimited, setIsLimited] = useState(false);
   const [remainingClicks, setRemainingClicks] = useState(maxClicks);

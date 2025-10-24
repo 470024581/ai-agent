@@ -11,23 +11,89 @@ export const convertBackendChartData = (backendData) => {
   if (!backendData) return null;
 
   try {
-    // If it's already in the correct format
-    if (backendData.type && backendData.data) {
+    console.log('convertBackendChartData input:', backendData);
+    
+    // If it's already in the correct format (AntV G2Plot format)
+    if (backendData.type && backendData.data && Array.isArray(backendData.data)) {
+      console.log('Data already in correct format, returning as-is');
       return backendData;
     }
 
-    // Convert from old format
+    // Handle direct Chart.js format (backend sends this directly)
+    if (backendData.type && backendData.data && backendData.data.labels && backendData.data.datasets) {
+      console.log('Converting direct Chart.js format to AntV G2Plot format');
+      const labels = backendData.data.labels;
+      const values = backendData.data.datasets[0]?.data || [];
+      
+      // Convert to AntV G2Plot format
+      const data = labels.map((label, index) => ({
+        category: label,
+        value: values[index] || 0
+      }));
+
+      const result = {
+        type: backendData.type,
+        data: data,
+        title: backendData.options?.plugins?.title?.text || 'Chart',
+        angleField: 'value',
+        colorField: 'category'
+      };
+      
+      console.log('Converted result:', result);
+      return result;
+    }
+
+    // Handle wrapped format (chart_config field)
     const { chart_config, chart_type, chart_data } = backendData;
     
     if (!chart_config) {
       return null;
     }
 
-    // Chart.js format conversion removed - system now uses structured data directly
+    // Handle Chart.js format conversion
+    if (chart_config.type === 'pie' && chart_config.data && chart_config.data.labels && chart_config.data.datasets) {
+      const labels = chart_config.data.labels;
+      const values = chart_config.data.datasets[0]?.data || [];
+      
+      // Convert to AntV G2Plot format
+      const data = labels.map((label, index) => ({
+        category: label,
+        value: values[index] || 0
+      }));
 
-    // Handle other formats
+      return {
+        type: 'pie',
+        data: data,
+        title: chart_config.options?.plugins?.title?.text || 'Chart',
+        angleField: 'value',
+        colorField: 'category',
+        ...chart_config
+      };
+    }
+
+    // Handle other Chart.js formats (bar, line, etc.)
+    if (chart_config.data && chart_config.data.labels && chart_config.data.datasets) {
+      const labels = chart_config.data.labels;
+      const values = chart_config.data.datasets[0]?.data || [];
+      
+      // Convert to AntV G2Plot format
+      const data = labels.map((label, index) => ({
+        x: label,
+        y: values[index] || 0
+      }));
+
+      return {
+        type: chart_config.type || chart_type || 'line',
+        data: data,
+        title: chart_config.options?.plugins?.title?.text || 'Chart',
+        xField: 'x',
+        yField: 'y',
+        ...chart_config
+      };
+    }
+
+    // Handle structured data format
     return {
-      // 优先使用后端明确给出的 chart_config.type，避免被旧字段覆盖
       type: chart_config.type || chart_type || 'line',
       data: chart_data || [],
       title: chart_config.title,

@@ -45,6 +45,17 @@ const ChartRenderer = ({ chartConfig, className = "", style = {} }) => {
         }
       }
 
+      // Auto-detect x/y fields for non-pie charts if backend sent category/value
+      if (type && ['line', 'bar', 'column', 'area'].includes(type.toLowerCase()) && Array.isArray(data) && data.length > 0) {
+        const sample = data[0] || {};
+        const hasCategoryValue = ('category' in sample) && ('value' in sample);
+        if (hasCategoryValue) {
+          // If no explicit xField/yField provided, use category/value
+          if (!config.xField) config.xField = 'category';
+          if (!config.yField) config.yField = 'value';
+        }
+      }
+
       // Create chart based on type
       let chart;
       switch (type.toLowerCase()) {
@@ -111,7 +122,7 @@ const ChartRenderer = ({ chartConfig, className = "", style = {} }) => {
             appendPadding: 12,
             autoFit: true,
             pieStyle: { stroke: '#fff', lineWidth: 1 },
-            // spider 标签更适合长文本，避免重叠和出框
+            // Spider labels are better for long text, avoiding overlap and overflow
             label: {
               type: 'spider',
               labelHeight: 24,
@@ -119,6 +130,16 @@ const ChartRenderer = ({ chartConfig, className = "", style = {} }) => {
                 const name = truncate(datum.category ?? datum.colorField ?? '');
                 const percent = typeof datum.percent === 'number' ? (datum.percent * 100).toFixed(2) : undefined;
                 return percent ? `${name} ${percent}%` : name;
+              },
+              style: {
+                fontSize: 12,
+                fill: '#666'
+              }
+            },
+            labelLine: {
+              style: {
+                lineWidth: 1,
+                stroke: '#999'
               }
             },
             color: config.color || ['#1890ff', '#52c41a', '#faad14', '#f5222d'],
@@ -131,7 +152,7 @@ const ChartRenderer = ({ chartConfig, className = "", style = {} }) => {
               }
             },
             legend: {
-              position: 'right',
+              position: 'bottom',
               itemName: {
                 formatter: (text) => truncate(text)
               }

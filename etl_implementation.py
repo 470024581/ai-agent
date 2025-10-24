@@ -12,7 +12,7 @@ import re
 from typing import List, Dict, Any
 
 class ELTProcessor:
-    def __init__(self, db_path: str = "data/smart.db"):
+    def __init__(self, db_path: str = "server/data/smart.db"):
         """初始化ELT处理器"""
         self.db_path = db_path
         self.batch_id = self.generate_batch_id()
@@ -441,7 +441,7 @@ class ELTProcessor:
             p.price_range,
             s.sale_value_range,
             COUNT(*) as transaction_count,
-            SUM(s.total_amount) as total_revenue,
+            SUM(s.total_amount) as total_amount,
             SUM(s.quantity_sold) as total_quantity,
             AVG(s.total_amount) as avg_transaction_value
         FROM dwd_sales_detail s
@@ -461,7 +461,7 @@ class ELTProcessor:
                 'price_range': record['price_range'],
                 'sale_value_range': record['sale_value_range'],
                 'transaction_count': record['transaction_count'],
-                'total_revenue': round(float(record['total_revenue']), 2),
+                'total_amount': round(float(record['total_amount']), 2),
                 'total_quantity_sold': record['total_quantity'],
                 'avg_transaction_value': round(float(record['avg_transaction_value']), 2),
                 'unique_products': 1,  # 在立方体中每个记录代表一个产品
@@ -476,7 +476,7 @@ class ELTProcessor:
         sql = """
         INSERT OR REPLACE INTO dws_sales_cube (
             sale_date, product_id, category, price_range, sale_value_range,
-            transaction_count, total_quantity_sold, total_revenue, avg_transaction_value,
+            transaction_count, total_quantity_sold, total_amount, avg_transaction_value,
             unique_products, etl_batch_id, etl_timestamp
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """

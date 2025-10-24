@@ -27,6 +27,7 @@ import {
   FaRedo,
   FaPlay,
   FaStop,
+  FaBalanceScale,
 } from 'react-icons/fa';
 import { FaWifi } from 'react-icons/fa6';
 import { TbWifiOff } from 'react-icons/tb';
@@ -75,7 +76,7 @@ function IntelligentAnalysis() {
     recordClick,
     getTimeUntilReset,
     maxClicks
-  } = useRateLimit('analysis_clicks', 10, 60 * 60 * 1000); // 每小时最多10次
+  } = useRateLimit('analysis_clicks', 10, 10 * 60 * 1000); // 每10分钟最多10次
   
   // Local state
   const [query, setQuery] = useState('');
@@ -113,51 +114,44 @@ function IntelligentAnalysis() {
     cancelExecution,
   } = useWorkflowWebSocket();
   
-  // LangGraph nodes and edges definition - New Hybrid Workflow Structure with increased horizontal spacing
+  // LangGraph nodes and edges definition - Updated with merged RAG node
   const langGraphNodes = [
     // Row 1: Start
     { id: 'start_node', name: 'Start', type: 'start', layer: 1, col: 3, totalCols: 6, description: 'Begin analysis process', icon: FaPlay, color: 'emerald' },
     
-    // Row 2: Intent Analysis (New ReAct-based node)
-    { id: 'intent_analysis_node', name: 'Intent Analysis', type: 'decision', layer: 2, col: 3, totalCols: 6, description: 'ReAct reasoning to determine query path', icon: FaBrain, color: 'blue' },
+    // Row 2: RAG Query (merged RAG retrieval, reranking, and answer generation)
+    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 2, col: 3, totalCols: 6, description: 'Retrieve, rerank and generate answer', icon: FaSearch, color: 'cyan' },
     
-    // Row 3: Two parallel paths - RAG Query and SQL Query (with integrated result merge and chart decision)
-    { id: 'rag_query_node', name: 'RAG Query', type: 'process', layer: 3, col: 1, totalCols: 6, description: 'Document retrieval & metadata extraction', icon: FaSearch, color: 'purple' },
-    { id: 'sql_query_node', name: 'SQL Query', type: 'process', layer: 3, col: 3, totalCols: 6, description: 'Database query execution + result merge + chart decision', icon: FaDatabase, color: 'green' },
+    // Row 2.5: SQL-Agent and Router (aligned) - moved up
+    { id: 'sql_agent_node', name: 'SQL Agent', type: 'process', layer: 2.5, col: 2, totalCols: 6, description: 'ReAct SQL exploration', icon: FaRobot, color: 'orange' },
+    { id: 'router_node', name: 'Router', type: 'decision', layer: 2.5, col: 4, totalCols: 6, description: 'Decide if SQL-Agent needed', icon: FaRoute, color: 'amber' },
     
-    // Row 4: Chart Process (moved up since chart decision is now integrated)
-    { id: 'chart_process_node', name: 'Chart Process', type: 'process', layer: 5, col: 3, totalCols: 6, description: 'Generate and render charts', icon: FaChartLine, color: 'orange' },
+    // Row 3: Chart Process and LLM Processing (aligned) - moved up
+    { id: 'chart_process_node', name: 'Chart Process', type: 'process', layer: 3, col: 2, totalCols: 6, description: 'Generate charts if suitable', icon: FaChartLine, color: 'green' },
+    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 3, col: 4, totalCols: 6, description: 'Integrate all inputs', icon: FaBrain, color: 'violet' },
     
-    // Row 5: Final Processing
-    { id: 'llm_processing_node', name: 'LLM Process', type: 'process', layer: 7, col: 3, totalCols: 6, description: 'Generate final response', icon: FaComments, color: 'violet' },
-    
-    // Row 6: End
-    { id: 'end_node', name: 'Complete', type: 'end', layer: 9, col: 3, totalCols: 6, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
+    // Row 4: End
+    { id: 'end_node', name: 'Complete', type: 'end', layer: 4, col: 3, totalCols: 6, description: 'Process completed', icon: FaCheckCircle, color: 'emerald' }
   ];
 
   const langGraphEdges = [
-    // Main flow
-    { from: 'start_node', to: 'intent_analysis_node', label: 'Initialize', color: 'emerald' },
+    // Main flow: start → rag_query → router
+    { from: 'start_node', to: 'rag_query_node', label: 'Start', color: 'cyan' },
+    { from: 'rag_query_node', to: 'router_node', label: 'RAG Complete', color: 'amber' },
     
-    // Intent Analysis to paths
-    { from: 'intent_analysis_node', to: 'rag_query_node', label: 'RAG Only', color: 'purple' },
-    { from: 'intent_analysis_node', to: 'sql_query_node', label: 'SQL Only', color: 'green' },
-    { from: 'intent_analysis_node', to: 'rag_query_node', label: 'Hybrid', color: 'cyan' },
+    // Router decision: need SQL-Agent or not
+    { from: 'router_node', to: 'sql_agent_node', label: 'Need SQL', color: 'orange', condition: 'need_sql' },
+    { from: 'router_node', to: 'llm_processing_node', label: 'RAG Only', color: 'violet', condition: 'no_sql' },
     
-    // Hybrid path connections - RAG Query to SQL Query
-    { from: 'rag_query_node', to: 'sql_query_node', label: 'Metadata', color: 'cyan' },
+    // SQL-Agent flow: sql_agent → chart? → llm_processing
+    { from: 'sql_agent_node', to: 'chart_process_node', label: 'Has Data', color: 'green', condition: 'has_data' },
+    { from: 'sql_agent_node', to: 'llm_processing_node', label: 'No Chart', color: 'violet', condition: 'no_chart' },
     
-    // SQL Query routes based on chart decision (integrated) - ONLY ONE PATH
-    { from: 'sql_query_node', to: 'chart_process_node', label: 'Generate Chart', color: 'orange' },
-    
-    // Chart processing to LLM processing
-    { from: 'chart_process_node', to: 'llm_processing_node', label: 'Chart + Data', color: 'orange' },
-    
-    // RAG Query to LLM processing (for pure RAG)
-    { from: 'rag_query_node', to: 'llm_processing_node', label: 'Documents', color: 'purple' },
+    // Chart process to LLM processing
+    { from: 'chart_process_node', to: 'llm_processing_node', label: 'Chart + Data', color: 'green' },
     
     // Final processing to end
-    { from: 'llm_processing_node', to: 'end_node', label: 'Response', color: 'emerald' }
+    { from: 'llm_processing_node', to: 'end_node', label: 'Complete', color: 'emerald' }
   ];
 
   // Legacy state for backward compatibility (will be removed)
@@ -377,17 +371,17 @@ function IntelligentAnalysis() {
       category: 'SQL',
       color: 'blue',
       examples: [
-        'Show monthly sales trend for 2024.',
-        'Generate a pie chart of sales proportion by product category for July to September 2024.',
-        "List top 10 products by total sales in 2024.",
-        'What are the total sales and average order value for 2024?'
+        'Show monthly sales trend for 2025.',
+        'Generate a pie chart of sales proportion by product category for July to September 2025.',
+        "List top 10 products by total sales in 2025.",
+        'What are the total sales and average order value for 2025?'
       ]
     },
     {
       category: 'RAG',
       color: 'purple',
       examples: [
-        'Do you know LongLiang?',
+        'Do you know Long Liang?',
         'Explain the data warehouse architecture design.',
         'What are the key features of the wide table solution?',
         'Describe the business schema and data relationships.'
@@ -1170,7 +1164,7 @@ function IntelligentAnalysis() {
                 <Button
                   type="submit"
                     disabled={loading || isLimited}
-                    className="w-full bg-gradient-to-r from-blue-500 via-purple-500 to-indigo-600 hover:from-blue-600 hover:via-purple-600 hover:to-indigo-700 text-white py-4 rounded-xl font-semibold text-lg transition-all duration-300 shadow-xl hover:shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
+                    className={`w-full bg-gradient-to-r from-blue-500 via-purple-500 to-indigo-600 hover:from-blue-600 hover:via-purple-600 hover:to-indigo-700 text-white py-4 rounded-xl font-semibold transition-all duration-300 shadow-xl hover:shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98] ${isLimited ? 'text-xs' : 'text-lg'}`}
                 >
                   {loading && !currentExecutionData?.isStreaming ? (
                     <>
@@ -1320,11 +1314,20 @@ function IntelligentAnalysis() {
                 || actualResult?.input?.chart_image
                 || getFromOutput('chart_image')
                 || currentExecutionData?.chart_image;
-              const chartConfig = actualResult?.chart_process_node?.chart_config 
+              const rawChartConfig = actualResult?.chart_process_node?.chart_config 
                 || actualResult?.chart_config 
                 || actualResult?.input?.chart_config
                 || getFromOutput('chart_config')
                 || currentExecutionData?.chart_config;
+              
+              // Convert backend Chart.js format to AntV G2Plot format
+              const chartConfig = rawChartConfig ? convertBackendChartData(rawChartConfig) : null;
+              
+              // Debug logging for chart data conversion
+              if (rawChartConfig) {
+                console.log('Raw chart config from backend:', rawChartConfig);
+                console.log('Converted chart config for frontend:', chartConfig);
+              }
               const structuredData = actualResult?.structured_data 
                 || actualResult?.data 
                 || actualResult?.input?.structured_data

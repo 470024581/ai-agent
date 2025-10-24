@@ -44,7 +44,13 @@ const useWorkflowWebSocket = () => {
       console.log('Message type:', data.type, 'Execution ID:', data.execution_id);
 
       // Define main workflow nodes that should update currentNode
-      const mainNodes = ['rag_query_node', 'sql_query_node', 'intent_analysis_node', 'chart_process_node', 'llm_processing_node'];
+      const mainNodes = [
+        'rag_query_node', 
+        'router_node', 
+        'sql_agent_node', 
+        'chart_process_node', 
+        'llm_processing_node'
+      ];
 
       switch (data.type) {
         case 'execution_started':
@@ -86,6 +92,33 @@ const useWorkflowWebSocket = () => {
             token: data.token,
             nodeId: data.node_id,
             stream_complete: data.stream_complete
+          }));
+          break;
+
+        case 'sql_agent_started':
+          dispatch(startNode({
+            executionId: data.execution_id,
+            nodeId: 'sql_agent_node',
+            timestamp: data.timestamp,
+            nodeType: 'sql_agent'
+          }));
+          break;
+
+        case 'sql_agent_completed':
+          dispatch(completeNode({
+            executionId: data.execution_id,
+            nodeId: 'sql_agent_node',
+            timestamp: data.timestamp,
+            output: data.data
+          }));
+          break;
+
+        case 'sql_agent_error':
+          dispatch(errorNode({
+            executionId: data.execution_id,
+            nodeId: 'sql_agent_node',
+            timestamp: data.timestamp,
+            error: data.error
           }));
           break;
 

@@ -134,7 +134,7 @@ class InventoryResponse(BaseResponse):
 # Report Related Models
 class ProductSalesInfo(BaseModel):
     name: str
-    total_revenue: float
+    total_amount: float
     total_quantity: int
 
 class SalesReportData(BaseModel):

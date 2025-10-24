@@ -10,6 +10,10 @@ Now integrated with LangServe functionality
 
 import sys
 import os
+
+# Mitigate OpenMP runtime duplication on Windows (e.g., libiomp5md.dll vs libomp140)
+# Must be set before importing modules that may initialize OpenMP (e.g., torch, sentence-transformers)
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import subprocess
 from pathlib import Path
 import uvicorn
