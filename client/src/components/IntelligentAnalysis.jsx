@@ -382,7 +382,7 @@ function IntelligentAnalysis() {
       color: 'purple',
       examples: [
         'Do you know Long Liang?',
-        'Explain the data warehouse architecture design.',
+        'What metrics are there in the DWS layer?',
         'What are the key features of the wide table solution?',
         'Describe the business schema and data relationships.'
       ]
