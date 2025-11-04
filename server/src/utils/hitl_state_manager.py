@@ -1,27 +1,24 @@
 """
 HITL (Human-in-the-Loop) State Manager
 
-This module manages HITL workflow states:
+This module manages HITL workflow states with memory storage only:
 - Pause states: Stored in memory for quick access and temporary suspension
-- Interrupt states: Stored in SQLite database for persistence across restarts
+- Interrupt states: Stored in memory for persistence during session
 """
 
 import json
 import time
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime
-import sqlite3
 import threading
 
 logger = logging.getLogger(__name__)
 
 
 class HITLStateManager:
-    """Manages HITL workflow states with memory and database storage"""
+    """Manages HITL workflow states with memory storage only"""
     
-    def __init__(self, db_path: str = "data/smart.db"):
-        self.db_path = db_path
+    def __init__(self):
         self.pause_states: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.RLock()
         
@@ -79,7 +76,7 @@ class HITLStateManager:
                     "state": complete_state,  # Store complete state
                     "node_name": node_name,
                     "reason": reason,
-                    "paused_at": datetime.now().isoformat(),
+                    "paused_at": time.time(),
                     "status": "paused"
                 }
                 
@@ -102,7 +99,7 @@ class HITLStateManager:
     
     def interrupt_execution(self, execution_id: str, state: Dict[str, Any], node_name: str, reason: str = "user_request") -> bool:
         """
-        Interrupt workflow execution and store state in database
+        Interrupt workflow execution and store state in memory
         
         Args:
             execution_id: Unique execution identifier
@@ -115,34 +112,44 @@ class HITLStateManager:
         """
         try:
             with self.lock:
-                # Serialize state data
-                state_json = json.dumps(state, default=str)
+                # Create serializable state snapshot for interrupt - store complete state
+                def make_serializable(obj):
+                    """Convert complex objects to serializable format"""
+                    if isinstance(obj, dict):
+                        return {k: make_serializable(v) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return [make_serializable(item) for item in obj]
+                    elif hasattr(obj, '__dict__'):
+                        # For complex objects, extract basic attributes
+                        try:
+                            return {k: make_serializable(v) for k, v in obj.__dict__.items() 
+                                    if not k.startswith('_')}
+                        except:
+                            return str(obj)
+                    elif hasattr(obj, 'page_content'):
+                        # Handle Document objects from LangChain
+                        return {
+                            'page_content': getattr(obj, 'page_content', ''),
+                            'metadata': getattr(obj, 'metadata', {}),
+                            'type': 'Document'
+                        }
+                    elif hasattr(obj, 'content'):
+                        # Handle other content objects
+                        return {
+                            'content': getattr(obj, 'content', ''),
+                            'type': type(obj).__name__
+                        }
+                    else:
+                        return obj
                 
-                # Store in database
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    INSERT OR REPLACE INTO hitl_interrupts 
-                    (execution_id, node_name, user_input, current_state, status)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    execution_id,
-                    node_name,
-                    state.get("user_input", ""),
-                    state_json,
-                    "interrupted"
-                ))
-                
-                # Log operation in history
-                cursor.execute("""
-                    INSERT INTO hitl_execution_history 
-                    (execution_id, action_type, node_name, parameters)
-                    VALUES (?, ?, ?, ?)
-                """, (execution_id, "interrupt", node_name, ""))
-                
-                conn.commit()
-                conn.close()
+                # Store in memory only
+                self.pause_states[execution_id] = {
+                    "state": make_serializable(state),
+                    "node_name": node_name,
+                    "reason": reason,
+                    "timestamp": time.time(),
+                    "status": "interrupted"
+                }
                 
                 logger.info(f"Workflow execution {execution_id} interrupted at node {node_name}")
                 return True
@@ -213,7 +220,7 @@ class HITLStateManager:
     
     def restore_interrupt(self, execution_id: str, parameters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
-        Restore interrupted execution from database
+        Restore interrupted execution from memory
         
         Args:
             execution_id: Unique execution identifier
@@ -224,64 +231,24 @@ class HITLStateManager:
         """
         try:
             with self.lock:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT current_state, node_name FROM hitl_interrupts 
-                    WHERE execution_id = ? AND status = 'interrupted'
-                """, (execution_id,))
-                
-                result = cursor.fetchone()
-                if not result:
+                if execution_id not in self.pause_states:
                     logger.warning(f"No interrupted execution found for {execution_id}")
-                    conn.close()
                     return None
                 
-                state_json, interrupt_node = result
-                state = json.loads(state_json)
+                interrupt_data = self.pause_states[execution_id]
+                if interrupt_data.get("status") != "interrupted":
+                    logger.warning(f"Execution {execution_id} is not in interrupted status")
+                    return None
+                
+                state = interrupt_data["state"]
                 
                 # Apply parameter updates if provided
                 if parameters:
                     state.update(parameters)
-                    
-                    # Record parameter adjustments
-                    for param_name, new_value in parameters.items():
-                        old_value = state.get(param_name)
-                        cursor.execute("""
-                            INSERT INTO hitl_parameter_adjustments 
-                            (execution_id, parameter_name, original_value, new_value, adjustment_type)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (
-                            execution_id,
-                            param_name,
-                            json.dumps(old_value) if old_value is not None else None,
-                            json.dumps(new_value),
-                            "user_adjustment"
-                        ))
-                    
                     logger.info(f"Applied parameter updates to interrupted execution {execution_id}")
                 
-                # Update status to resumed
-                cursor.execute("""
-                    UPDATE hitl_interrupts SET status = 'resumed', restored_at = CURRENT_TIMESTAMP
-                    WHERE execution_id = ?
-                """, (execution_id,))
-                
-                # Log operation in history
-                cursor.execute("""
-                    INSERT INTO hitl_execution_history 
-                    (execution_id, action_type, node_name, parameters)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    execution_id, 
-                    "resume", 
-                    interrupt_node, 
-                    json.dumps(parameters) if parameters else None
-                ))
-                
-                conn.commit()
-                conn.close()
+                # Remove from memory after restoration
+                del self.pause_states[execution_id]
                 
                 logger.info(f"Workflow execution {execution_id} restored from interrupt")
                 return state
@@ -303,39 +270,12 @@ class HITLStateManager:
         """
         try:
             with self.lock:
-                if execution_type == "pause":
-                    if execution_id in self.pause_states:
-                        del self.pause_states[execution_id]
-                        logger.info(f"Cancelled paused execution {execution_id}")
-                        return True
-                    else:
-                        logger.warning(f"No paused execution found for {execution_id}")
-                        return False
-                
-                elif execution_type == "interrupt":
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    
-                    cursor.execute("""
-                        UPDATE hitl_interrupts SET status = 'cancelled'
-                        WHERE execution_id = ? AND status = 'interrupted'
-                    """, (execution_id,))
-                    
-                    # Log operation in history
-                    cursor.execute("""
-                        INSERT INTO hitl_execution_history 
-                        (execution_id, operation_type, user_action)
-                        VALUES (?, ?, ?)
-                    """, (execution_id, "cancel", "user_initiated"))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    logger.info(f"Cancelled interrupted execution {execution_id}")
+                if execution_id in self.pause_states:
+                    del self.pause_states[execution_id]
+                    logger.info(f"Cancelled {execution_type} execution {execution_id}")
                     return True
-                
                 else:
-                    logger.error(f"Invalid execution type: {execution_type}")
+                    logger.warning(f"No {execution_type} execution found for {execution_id}")
                     return False
                     
         except Exception as e:
@@ -348,32 +288,12 @@ class HITLStateManager:
             return self.pause_states.get(execution_id)
     
     def get_interrupt_state(self, execution_id: str) -> Optional[Dict[str, Any]]:
-        """Get interrupted execution state from database"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT current_state, node_name, reason, interrupted_at, status
-                FROM hitl_interrupts WHERE execution_id = ?
-            """, (execution_id,))
-            
-            result = cursor.fetchone()
-            conn.close()
-            
-            if result:
-                state_json, node_name, reason, created_at, status = result
-                return {
-                    "state": json.loads(state_json),
-                    "node_name": node_name,
-                    "reason": reason,
-                    "created_at": created_at,
-                    "status": status
-                }
-            return None
-            
-        except Exception as e:
-            logger.error(f"Failed to get interrupt state for {execution_id}: {e}")
+        """Get interrupted execution state from memory"""
+        with self.lock:
+            if execution_id in self.pause_states:
+                interrupt_data = self.pause_states[execution_id]
+                if interrupt_data.get("status") == "interrupted":
+                    return interrupt_data
             return None
     
     def list_paused_executions(self) -> List[Dict[str, Any]]:
@@ -382,40 +302,24 @@ class HITLStateManager:
             return list(self.pause_states.values())
     
     def list_interrupted_executions(self) -> List[Dict[str, Any]]:
-        """List all interrupted executions"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT execution_id, user_input, node_name, reason, 
-                       interrupted_at, status, id
-                FROM hitl_interrupts WHERE status = 'interrupted'
-                ORDER BY interrupted_at DESC
-            """)
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [
-                {
-                    "execution_id": row[0],
-                    "user_input": row[1],
-                    "node_name": row[2],
-                    "reason": row[3],
-                    "created_at": row[4],
-                    "status": row[5],
-                    "id": row[6]
-                }
-                for row in results
-            ]
-            
-        except Exception as e:
-            logger.error(f"Failed to list interrupted executions: {e}")
-            return []
+        """List all interrupted executions from memory"""
+        with self.lock:
+            interrupted_executions = []
+            for execution_id, pause_data in self.pause_states.items():
+                if pause_data.get("status") == "interrupted":
+                    interrupted_executions.append({
+                        "execution_id": execution_id,
+                        "user_input": pause_data["state"].get("user_input", ""),
+                        "node_name": pause_data.get("node_name", ""),
+                        "reason": pause_data.get("reason", ""),
+                        "created_at": pause_data.get("timestamp", time.time()),
+                        "status": pause_data.get("status", ""),
+                        "id": execution_id  # Use execution_id as id for memory storage
+                    })
+            return interrupted_executions
     
     def cleanup_old_states(self, max_age_hours: int = 24):
-        """Clean up old paused states and cancelled interrupts"""
+        """Clean up old paused states from memory"""
         try:
             with self.lock:
                 # Clean up old paused states
@@ -423,8 +327,8 @@ class HITLStateManager:
                 to_remove = []
                 
                 for execution_id, pause_data in self.pause_states.items():
-                    paused_at = datetime.fromisoformat(pause_data["paused_at"])
-                    age_hours = (datetime.now() - paused_at).total_seconds() / 3600
+                    paused_at = pause_data.get("paused_at", current_time)
+                    age_hours = (current_time - paused_at) / 3600
                     
                     if age_hours > max_age_hours:
                         to_remove.append(execution_id)
@@ -432,23 +336,6 @@ class HITLStateManager:
                 for execution_id in to_remove:
                     del self.pause_states[execution_id]
                     logger.info(f"Cleaned up old paused execution {execution_id}")
-                
-                # Clean up old cancelled interrupts from database
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    DELETE FROM hitl_interrupts 
-                    WHERE status = 'cancelled' 
-                    AND created_at < datetime('now', '-{} hours')
-                """.format(max_age_hours))
-                
-                deleted_count = cursor.rowcount
-                conn.commit()
-                conn.close()
-                
-                if deleted_count > 0:
-                    logger.info(f"Cleaned up {deleted_count} old cancelled interrupts")
                     
         except Exception as e:
             logger.error(f"Failed to cleanup old states: {e}")

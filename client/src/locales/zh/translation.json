@@ -1,7 +1,7 @@
 {
   "language": "语言",
   "smartAIAssistant": "智能 AI助手",
-  "systemDescription": "一个集成知识库和数据库的增强检索AI系统，支持问答、数据分析和图表可视化的自然语言查询。",
+  "systemDescription": "企业级智能数据分析平台，基于LangGraph工作流编排，具备先进的RAG检索（Top 10 → Top 3重排序）、ReAct模式SQL Agent、自动图表生成和详细的实时执行日志功能。",
   "intelligentQA": "智能问答",
   "dataSourceManagement": "文档数据源管理",
   "createDataSource": "创建文档数据源",
@@ -299,18 +299,22 @@
       "title": "项目信息",
       "description": {
         "title": "功能介绍",
-        "content": "本项目旨在提供一个智能数据分析平台，利用先进的AI技术帮助用户更好地理解和利用他们的数据。"
+        "content": "本项目提供企业级智能数据分析平台，结合LangGraph工作流编排与先进AI技术。采用5节点工作流架构（RAG查询 → 路由 → SQL代理 → 图表处理 → LLM处理），具备智能文档检索（Cross-Encoder重排序）、ReAct模式SQL探索、自动图表生成，以及详细的实时执行日志，实现透明的AI决策过程。"
       },
       "features": {
         "title": "主要特征",
-        "multiModel": "多模型接入实现了云平台OpenAI和OpenRouter的API接入，私有化ollama接入。",
-        "mcpIntegration": "MCP接入实现了基于图表的MCP服务。",
-        "websocket": "WebSocket实现了流程执行状态的实时追踪，可视化。",
-        "multiDataSource": "多数据源隔离，可以自定义多个数据源，数据逻辑互相隔离。"
+        "langgraph": "LangGraph 5节点工作流编排，智能路由RAG和SQL-Agent处理路径。",
+        "ragRetrieval": "先进RAG检索：Top 10文档检索 → Cross-Encoder重排序 → Top 3文档，提升准确性。",
+        "executionLogs": "详细实时执行日志，展示节点推理、文档来源、SQL查询和数据处理细节。",
+        "sqlAgent": "ReAct模式SQL Agent，跟踪中间步骤，自动生成SQL并分析查询结果。",
+        "chartGeneration": "自动图表生成，根据数据特征智能选择图表类型。",
+        "multiModel": "多LLM支持：OpenAI、OpenRouter和Ollama集成，统一配置管理。",
+        "websocket": "基于WebSocket的实时工作流监控，节点级执行追踪和流式更新。",
+        "multiDataSource": "多数据源支持：知识库（RAG）、SQL表和混合数据源，数据逻辑相互隔离。"
       },
       "techStack": {
         "title": "主要技术栈",
-        "content": "React，LangChain，LangGraph，FastAPI，LLM，Embedding Model，Chart MCP。"
+        "content": "前端：React 18、Redux Toolkit、Tailwind CSS、Radix UI、Recharts。后端：FastAPI、LangGraph、LangChain、SQLAlchemy。AI：多LLM（OpenAI/OpenRouter/Ollama）、Sentence Transformers、Cross-Encoder、FAISS。实时通信：WebSocket、AsyncIO。"
       },
       "links": {
         "github": "GitHub项目",

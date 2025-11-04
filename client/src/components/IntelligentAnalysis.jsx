@@ -1247,30 +1247,21 @@ function IntelligentAnalysis() {
               {renderLangGraphDiagram()}
                </div>
                
-               {/* HITL Control Panel (simplified) */}
-               <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
-                 <div className="bg-gradient-to-r from-yellow-50/80 to-orange-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-4 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                   <div className="flex items-center justify-between">
-                     <div className="flex items-center">
-                       <FaCogs className="h-4 w-4 text-yellow-500 mr-2" />
-                       <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                         Human-in-the-Loop (HITL)
-                       </Label>
-                     </div>
-                     <Button
-                       size="sm"
-                       variant="destructive"
-                       onClick={() => handleInterruptExecution(currentNode || 'unknown', executionId)}
-                       disabled={
-                         !executionId ||
-                         (currentExecutionData && currentExecutionData.status !== 'running') ||
-                         (currentExecutionData && currentExecutionData.result && typeof currentExecutionData.result.end_node !== 'undefined')
-                       }
-                       className="flex items-center gap-1"
-                     >
-                       <FaStop className="h-3 w-3" />
-                       Interrupt
-                     </Button>
+               {/* Execution Log Panel */}
+               <div className="mt-1 pt-2 border-t border-gray-200 dark:border-gray-600">
+                 <div className="bg-gradient-to-r from-gray-50/80 to-slate-50/80 dark:from-gray-800/80 dark:to-gray-700/80 backdrop-blur-sm rounded-xl p-2.5 border border-gray-200/20 dark:border-gray-600/30 shadow-lg">
+                   <div className="flex items-center mb-2">
+                     <FaCode className="h-3.5 w-3.5 text-blue-500 mr-2" />
+                     <Label className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                       LangGraph Execution Log
+                     </Label>
+                   </div>
+                   <div className="h-40 overflow-y-auto bg-gray-900 dark:bg-black rounded-lg p-3 font-mono text-xs">
+                     <ExecutionLogDisplay 
+                       executionId={executionId}
+                       currentExecutionData={currentExecutionData}
+                       currentNode={currentNode}
+                     />
                    </div>
                  </div>
                </div>
@@ -1433,6 +1424,963 @@ function IntelligentAnalysis() {
       />
 
       {/* History Restore Dialog disabled without DB */}
+    </div>
+  );
+}
+
+// Execution Log Display Component
+function ExecutionLogDisplay({ executionId, currentExecutionData, currentNode }) {
+  const [logs, setLogs] = React.useState([]);
+
+  // Update logs based on execution data
+  React.useEffect(() => {
+    if (!currentExecutionData) {
+      setLogs([]);
+      return;
+    }
+
+    const newLogs = [];
+    const executionNodes = currentExecutionData.nodes || {};
+    const nodeOrder = [
+      'start_node',
+      'rag_query_node',
+      'router_node',
+      'sql_agent_node',
+      'chart_process_node',
+      'llm_processing_node',
+      'end_node'
+    ];
+
+    // Execution started
+    if (currentExecutionData.id) {
+      newLogs.push({
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'info',
+        node: 'system',
+        message: `🚀 Execution started: ${currentExecutionData.id.substring(0, 8)}...`
+      });
+    }
+
+    // Process each node in order
+    nodeOrder.forEach(nodeId => {
+      const nodeData = executionNodes[nodeId];
+      if (!nodeData) return;
+
+      const nodeName = nodeId.replace('_node', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      
+      if (nodeData.status === 'running') {
+        newLogs.push({
+          timestamp: nodeData.startTime ? new Date(nodeData.startTime).toLocaleTimeString() : new Date().toLocaleTimeString(),
+          type: 'running',
+          node: nodeId,
+          message: `▶️  ${nodeName} started...`
+        });
+
+        // Add reasoning for specific nodes
+        if (nodeId === 'rag_query_node') {
+          // Show RAG retrieval process with detailed document info
+          const retrievedDocs = nodeData.input?.retrieved_documents || 
+                                nodeData.output?.retrieved_documents ||
+                                currentExecutionData?.retrieved_documents;
+          if (retrievedDocs && Array.isArray(retrievedDocs)) {
+            // Show count with sample documents
+            const sampleDocs = retrievedDocs.slice(0, 3);
+            const docNames = sampleDocs.map((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                return fileName;
+              } catch (e) {
+                return `doc${idx + 1}`;
+              }
+            }).filter(Boolean);
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📚 Retrieved ${retrievedDocs.length} documents${docNames.length > 0 ? ` (e.g., ${docNames.join(', ')})` : ''}`
+            });
+            
+            // Show top 3 retrieved documents with details
+            sampleDocs.forEach((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                const score = metadata.score || 0;
+                const content = doc.page_content || doc.content || '';
+                const preview = content.replace(/\n/g, ' ').substring(0, 80);
+                
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      [${idx + 1}] ${fileName} (score: ${score.toFixed(4)})`
+                });
+                if (preview) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `         "${preview}${content.length > 80 ? '...' : ''}"`
+                  });
+                }
+              } catch (e) {
+                // Skip if document structure is unexpected
+              }
+            });
+          }
+          
+          // Show reranking details with top documents
+          const rerankedDocs = nodeData.output?.reranked_documents ||
+                               currentExecutionData?.reranked_documents;
+          if (rerankedDocs && Array.isArray(rerankedDocs)) {
+            // Show count with sample document names
+            const docNames = rerankedDocs.slice(0, 3).map((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                return fileName;
+              } catch (e) {
+                return `doc${idx + 1}`;
+              }
+            }).filter(Boolean);
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   🎯 Reranked to top ${rerankedDocs.length} documents${docNames.length > 0 ? ` (${docNames.join(', ')})` : ''}`
+            });
+            
+            // Show reranked documents with CE scores
+            rerankedDocs.forEach((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                const ceScore = metadata.ce_score || metadata.score || 0;
+                const originalScore = metadata.original_score || metadata.score || 0;
+                const content = doc.page_content || doc.content || '';
+                const preview = content.replace(/\n/g, ' ').substring(0, 80);
+                
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      Top ${idx + 1}: ${fileName} (CE: ${ceScore.toFixed(4)}, orig: ${originalScore.toFixed(4)})`
+                });
+                if (preview) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `         "${preview}${content.length > 80 ? '...' : ''}"`
+                  });
+                }
+              } catch (e) {
+                // Skip if document structure is unexpected
+              }
+            });
+          }
+          
+          // Show answer generation with full result
+          const ragAnswer = nodeData.output?.rag_answer || currentExecutionData?.rag_answer;
+          if (ragAnswer && typeof ragAnswer === 'string') {
+            const preview = ragAnswer.substring(0, 100);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   💬 Answer generation (${ragAnswer.length} chars): "${preview}${ragAnswer.length > 100 ? '...' : ''}"`
+            });
+            
+            // Show full answer in chunks if it's long
+            if (ragAnswer.length > 100) {
+              const chunkSize = 150;
+              for (let i = 100; i < ragAnswer.length; i += chunkSize) {
+                const chunk = ragAnswer.substring(i, i + chunkSize);
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      ${chunk}${i + chunkSize < ragAnswer.length ? '...' : ''}`
+                });
+              }
+            }
+          }
+        }
+
+        if (nodeId === 'router_node') {
+          // Show RAG answer preview for decision context
+          const ragAnswer = nodeData.input?.rag_answer || currentExecutionData?.rag_answer;
+          if (ragAnswer && typeof ragAnswer === 'string') {
+            const preview = ragAnswer.substring(0, 120);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📄 RAG answer preview: ${preview}${ragAnswer.length > 120 ? '...' : ''}`
+            });
+          }
+          
+          // Try to get reasoning from different sources
+          const reasoning = 
+            nodeData.input?.router_reasoning || 
+            nodeData.input?.reasoning ||
+            nodeData.output?.router_reasoning ||
+            nodeData.output?.reasoning ||
+            currentExecutionData?.router_reasoning;
+          if (reasoning) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   💭 Analyzing: ${reasoning}`
+            });
+          }
+        }
+
+        if (nodeId === 'sql_agent_node') {
+          // Try to get intermediate steps from different sources
+          const intermediateSteps = 
+            nodeData.agent_intermediate_steps ||
+            nodeData.output?.agent_intermediate_steps ||
+            currentExecutionData?.agent_intermediate_steps ||
+            [];
+          
+          if (intermediateSteps.length > 0) {
+            // Show step names as examples
+            const stepNames = intermediateSteps.slice(0, 3).map((step, idx) => {
+              const toolName = step?.action?.tool || step?.tool || `step${idx + 1}`;
+              return toolName;
+            }).filter(Boolean);
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   🔄 ReAct loop: ${intermediateSteps.length} step${intermediateSteps.length > 1 ? 's' : ''}${stepNames.length > 0 ? ` (e.g., ${stepNames.join(', ')})` : ''}`
+            });
+          }
+          
+          intermediateSteps.forEach((step, idx) => {
+            if (step && (step.action || step.tool)) {
+              const toolName = step.action?.tool || step.tool || 'unknown';
+              newLogs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `   🔍 Step ${idx + 1}: ${toolName}`
+              });
+              
+              // Show action input if available
+              if (step.action?.tool_input) {
+                const toolInput = typeof step.action.tool_input === 'string' 
+                  ? step.action.tool_input 
+                  : JSON.stringify(step.action.tool_input);
+                // Show full SQL queries even if long
+                if (toolName.includes('sql') || toolName.includes('query')) {
+                  const sqlLines = toolInput.split('\n');
+                  sqlLines.forEach((line, lineIdx) => {
+                    if (line.trim()) {
+                      newLogs.push({
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'reasoning',
+                        node: nodeId,
+                        message: `      ${lineIdx === 0 ? '📥' : '   '} ${line.trim()}`
+                      });
+                    }
+                  });
+                } else if (toolInput.length < 200) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      📥 Input: ${toolInput.substring(0, 150)}${toolInput.length > 150 ? '...' : ''}`
+                  });
+                }
+              }
+              
+              // Show observation if available
+              const observation = step.observation || step.result;
+              if (observation) {
+                const obsText = typeof observation === 'string' 
+                  ? observation 
+                  : JSON.stringify(observation);
+                // Show more details for SQL results
+                if (toolName.includes('sql') || toolName.includes('query')) {
+                  // Try to parse JSON if it's a result set
+                  try {
+                    const parsed = typeof observation === 'string' ? JSON.parse(observation) : observation;
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      newLogs.push({
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'reasoning',
+                        node: nodeId,
+                        message: `      📤 Result: ${parsed.length} row${parsed.length > 1 ? 's' : ''} returned`
+                      });
+                      // Show first row preview
+                      if (parsed[0] && typeof parsed[0] === 'object') {
+                        const cols = Object.keys(parsed[0]);
+                        newLogs.push({
+                          timestamp: new Date().toLocaleTimeString(),
+                          type: 'reasoning',
+                          node: nodeId,
+                          message: `         Columns: ${cols.join(', ')}`
+                        });
+                      }
+                    } else {
+                      newLogs.push({
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'reasoning',
+                        node: nodeId,
+                        message: `      📤 Result: ${obsText.substring(0, 200)}${obsText.length > 200 ? '...' : ''}`
+                      });
+                    }
+                  } catch (e) {
+                    // Not JSON, show as string
+                    newLogs.push({
+                      timestamp: new Date().toLocaleTimeString(),
+                      type: 'reasoning',
+                      node: nodeId,
+                      message: `      📤 Result: ${obsText.substring(0, 200)}${obsText.length > 200 ? '...' : ''}`
+                    });
+                  }
+                } else if (obsText.length < 300) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      📤 Result: ${obsText.substring(0, 200)}${obsText.length > 200 ? '...' : ''}`
+                  });
+                }
+              }
+            }
+          });
+        }
+      } else if (nodeData.status === 'completed') {
+        const duration = nodeData.duration ? `${nodeData.duration.toFixed(2)}s` : '';
+        newLogs.push({
+          timestamp: nodeData.endTime ? new Date(nodeData.endTime).toLocaleTimeString() : new Date().toLocaleTimeString(),
+          type: 'success',
+          node: nodeId,
+          message: `✅ ${nodeName} completed${duration ? ` (${duration})` : ''}`
+        });
+
+        // Add output summary for key nodes
+        if (nodeId === 'rag_query_node' && nodeData.output) {
+          const retrievalSuccess = nodeData.output.retrieval_success;
+          const rerankSuccess = nodeData.output.rerank_success;
+          const ragSuccess = nodeData.output.rag_success;
+          
+          if (retrievalSuccess !== undefined) {
+            const retrievedDocs = nodeData.output.retrieved_documents || currentExecutionData?.retrieved_documents || [];
+            const retrievedCount = nodeData.output.retrieved_count || retrievedDocs.length;
+            
+            // Show document sources
+            const docSources = retrievedDocs.slice(0, 5).map((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                return fileName;
+              } catch (e) {
+                return `doc${idx + 1}`;
+              }
+            }).filter(Boolean);
+            
+            const sourcesText = docSources.length > 0 ? ` from: ${docSources.join(', ')}${retrievedCount > docSources.length ? ` (+${retrievedCount - docSources.length} more)` : ''}` : '';
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: retrievalSuccess ? 'success' : 'error',
+              node: nodeId,
+              message: `   ${retrievalSuccess ? '✅' : '❌'} Retrieval: ${retrievalSuccess ? `success (${retrievedCount} docs${sourcesText})` : 'failed'}`
+            });
+          }
+          
+          if (rerankSuccess !== undefined) {
+            const rerankedDocs = nodeData.output.reranked_documents || currentExecutionData?.reranked_documents || [];
+            const rerankedCount = nodeData.output.reranked_count || rerankedDocs.length;
+            
+            // Show reranked document sources
+            const rerankedSources = rerankedDocs.map((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                const ceScore = metadata.ce_score || metadata.score || 0;
+                return `${fileName}(${ceScore.toFixed(3)})`;
+              } catch (e) {
+                return `doc${idx + 1}`;
+              }
+            }).filter(Boolean);
+            
+            const rerankedText = rerankedSources.length > 0 ? `: ${rerankedSources.join(', ')}` : '';
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: rerankSuccess ? 'success' : 'error',
+              node: nodeId,
+              message: `   ${rerankSuccess ? '✅' : '❌'} Reranking: ${rerankSuccess ? `success (top ${rerankedCount}${rerankedText})` : 'failed'}`
+            });
+          }
+          
+          if (ragSuccess !== undefined) {
+            const answerLength = nodeData.output.answer_length || 
+                                 (nodeData.output.rag_answer?.length || 0);
+            const ragAnswer = nodeData.output.rag_answer || currentExecutionData?.rag_answer;
+            const answerPreview = ragAnswer && typeof ragAnswer === 'string' 
+              ? ragAnswer.substring(0, 80).replace(/\n/g, ' ')
+              : '';
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: ragSuccess ? 'success' : 'error',
+              node: nodeId,
+              message: `   ${ragSuccess ? '✅' : '❌'} Answer generation: ${ragSuccess ? `success (${answerLength} chars)` : 'failed'}${answerPreview ? ` "${answerPreview}..."` : ''}`
+            });
+          }
+          
+          // Show source documents if available
+          const sourceDocs = nodeData.output.rag_source_documents || 
+                             currentExecutionData?.rag_source_documents;
+          if (sourceDocs && Array.isArray(sourceDocs) && sourceDocs.length > 0) {
+            // Show all source document names with full paths if available
+            const docSources = sourceDocs.map((doc, idx) => {
+              try {
+                const metadata = doc.metadata || doc.meta || {};
+                const source = metadata.source || metadata.file_path || 'unknown';
+                const fileName = typeof source === 'string' ? source.split('/').pop() || source : 'unknown';
+                const fullPath = typeof source === 'string' ? source : 'unknown';
+                return { fileName, fullPath };
+              } catch (e) {
+                return { fileName: `doc${idx + 1}`, fullPath: 'unknown' };
+              }
+            }).filter(Boolean);
+            
+            const docNames = docSources.map(d => d.fileName);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'info',
+              node: nodeId,
+              message: `   📄 Source documents (${sourceDocs.length}): ${docNames.join(', ')}`
+            });
+            
+            // Show full paths for first few documents
+            docSources.slice(0, 3).forEach((doc, idx) => {
+              if (doc.fullPath && doc.fullPath !== doc.fileName) {
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      [${idx + 1}] ${doc.fileName} ← ${doc.fullPath}`
+                });
+              }
+            });
+          }
+        }
+
+        if (nodeId === 'router_node' && nodeData.output) {
+          const needSql = nodeData.output.need_sql_agent || nodeData.output.need_sql;
+          const decision = needSql ? 'SQL-Agent needed' : 'RAG-only path';
+          newLogs.push({
+            timestamp: new Date().toLocaleTimeString(),
+            type: 'info',
+            node: nodeId,
+            message: `   → Decision: ${decision}`
+          });
+          
+          // Show reasoning if available in output
+          const reasoning = nodeData.output.router_reasoning || nodeData.output.reasoning;
+          if (reasoning) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   💭 Reasoning: ${reasoning}`
+            });
+          }
+        }
+
+        if (nodeId === 'sql_agent_node' && nodeData.output) {
+          const sqls = nodeData.output.executed_sqls || [];
+          if (sqls.length > 0) {
+            // Show first SQL query preview
+            const firstSqlPreview = sqls[0] && typeof sqls[0] === 'string' 
+              ? sqls[0].replace(/\s+/g, ' ').substring(0, 60).trim()
+              : '';
+            
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'info',
+              node: nodeId,
+              message: `   → Executed ${sqls.length} SQL query${sqls.length > 1 ? 'ies' : ''}${firstSqlPreview ? ` (e.g., ${firstSqlPreview}...)` : ''}`
+            });
+            
+            // Show all SQL queries with table information
+            sqls.forEach((sql, idx) => {
+              if (sql && typeof sql === 'string') {
+                // Extract table names from SQL
+                const tableMatches = sql.match(/(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)/gi) || [];
+                const tables = [...new Set(tableMatches.map(m => m.replace(/(?:FROM|JOIN|INTO|UPDATE)\s+/i, '').trim()))];
+                const tablesText = tables.length > 0 ? ` [tables: ${tables.join(', ')}]` : '';
+                
+                const sqlLines = sql.split('\n').filter(line => line.trim());
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `   📝 SQL ${idx + 1}${tablesText}:`
+                });
+                sqlLines.forEach((line, lineIdx) => {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      ${line.trim()}`
+                  });
+                });
+              }
+            });
+          }
+          
+          // Show SQL execution results
+          const sqlResult = nodeData.output.sql_result || nodeData.output.structured_data;
+          if (sqlResult) {
+            try {
+              const dataArray = Array.isArray(sqlResult) ? sqlResult : sqlResult.data || [];
+              if (dataArray.length > 0) {
+                // Show sample row data in the same line
+                let rowPreview = '';
+                if (dataArray[0] && typeof dataArray[0] === 'object') {
+                  try {
+                    const keys = Object.keys(dataArray[0]);
+                    const sample = keys.slice(0, 3).map(key => {
+                      const value = dataArray[0][key];
+                      const valStr = typeof value === 'string' ? value.substring(0, 20) : String(value).substring(0, 20);
+                      return `${key}=${valStr}`;
+                    }).join(', ');
+                    rowPreview = ` (e.g., {${sample}${keys.length > 3 ? '...' : ''}})`;
+                  } catch (e) {
+                    // Skip if can't format
+                  }
+                }
+                
+                // Show column names
+                const columns = dataArray[0] && typeof dataArray[0] === 'object' 
+                  ? Object.keys(dataArray[0]).join(', ')
+                  : '';
+                
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'info',
+                  node: nodeId,
+                  message: `   📊 Query result: ${dataArray.length} row${dataArray.length > 1 ? 's' : ''}${rowPreview}`
+                });
+                
+                if (columns) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      Columns: ${columns}`
+                  });
+                }
+                
+                // Show first 3 rows as examples
+                dataArray.slice(0, 3).forEach((row, idx) => {
+                  if (row && typeof row === 'object') {
+                    try {
+                      const rowStr = JSON.stringify(row);
+                      const preview = rowStr.substring(0, 120);
+                      newLogs.push({
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'reasoning',
+                        node: nodeId,
+                        message: `      Row ${idx + 1}: ${preview}${rowStr.length > 120 ? '...' : ''}`
+                      });
+                    } catch (e) {
+                      // Skip if can't format
+                    }
+                  }
+                });
+                
+                if (dataArray.length > 3) {
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      ... and ${dataArray.length - 3} more row${dataArray.length - 3 > 1 ? 's' : ''}`
+                  });
+                }
+              }
+            } catch (e) {
+              // Skip if result structure is unexpected
+            }
+          }
+          
+          const sqlSuccess = nodeData.output.sql_execution_success;
+          if (sqlSuccess !== undefined) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: sqlSuccess ? 'success' : 'error',
+              node: nodeId,
+              message: `   ${sqlSuccess ? '✅' : '❌'} SQL execution: ${sqlSuccess ? 'success' : 'failed'}`
+            });
+          }
+          
+          // Show SQL agent answer if available
+          const sqlAnswer = nodeData.output.sql_agent_answer;
+          if (sqlAnswer && typeof sqlAnswer === 'string') {
+            // Show full answer in chunks
+            const answerPreview = sqlAnswer.substring(0, 200);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'info',
+              node: nodeId,
+              message: `   💬 SQL Agent answer (${sqlAnswer.length} chars):`
+            });
+            
+            // Show answer in chunks
+            const chunkSize = 150;
+            for (let i = 0; i < sqlAnswer.length; i += chunkSize) {
+              const chunk = sqlAnswer.substring(i, i + chunkSize);
+              newLogs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `      ${chunk}${i + chunkSize < sqlAnswer.length ? '...' : ''}`
+              });
+            }
+          }
+          
+          // Show datasource information
+          const datasource = nodeData.output.datasource || currentExecutionData?.datasource;
+          if (datasource) {
+            const dsName = datasource.name || 'unknown';
+            const dsType = datasource.type || 'unknown';
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'info',
+              node: nodeId,
+              message: `   🗄️  Data source: ${dsName} (${dsType})`
+            });
+          }
+        }
+
+        if (nodeId === 'chart_process_node') {
+          // Show input data analysis
+          const structuredData = nodeData.input?.structured_data || currentExecutionData?.structured_data;
+          if (structuredData) {
+            try {
+              const dataArray = Array.isArray(structuredData) ? structuredData : structuredData.data || [];
+              if (dataArray.length > 0) {
+                // Show first data point as example
+                let dataPreview = '';
+                if (dataArray[0] && typeof dataArray[0] === 'object') {
+                  const keys = Object.keys(dataArray[0]);
+                  const sampleValues = keys.slice(0, 3).map(key => {
+                    const value = dataArray[0][key];
+                    const valStr = typeof value === 'string' ? value.substring(0, 20) : String(value).substring(0, 20);
+                    return `${key}=${valStr}`;
+                  }).join(', ');
+                  dataPreview = ` (e.g., ${sampleValues}${keys.length > 3 ? '...' : ''})`;
+                }
+                
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `   📊 Analyzing ${dataArray.length} data point${dataArray.length > 1 ? 's' : ''}${dataPreview}`
+                });
+                
+                // Show data structure
+                if (dataArray[0] && typeof dataArray[0] === 'object') {
+                  const keys = Object.keys(dataArray[0]);
+                  newLogs.push({
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'reasoning',
+                    node: nodeId,
+                    message: `      Fields: ${keys.join(', ')}`
+                  });
+                }
+              }
+            } catch (e) {
+              // Skip if data structure is unexpected
+            }
+          }
+          
+          // Show chart generation reasoning
+          const chartSuitable = nodeData.input?.chart_suitable || 
+                                nodeData.output?.chart_suitable ||
+                                currentExecutionData?.chart_suitable;
+          
+          if (chartSuitable === false) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📊 Decision: Data not suitable for chart generation`
+            });
+          } else if (chartSuitable === true) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📊 Decision: Data suitable for visualization`
+            });
+          }
+          
+          if (nodeData.output) {
+            const chartType = nodeData.output.chart_type || nodeData.output.chart_config?.type;
+            if (chartType) {
+              newLogs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'info',
+                node: nodeId,
+                message: `   → Generated ${chartType} chart`
+              });
+            }
+            
+            const chartConfig = nodeData.output.chart_config;
+            if (chartConfig) {
+              const xField = chartConfig.xField || chartConfig.x;
+              const yField = chartConfig.yField || chartConfig.y;
+              if (xField || yField) {
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      Axes: X=${xField || 'N/A'}, Y=${yField || 'N/A'}`
+                });
+              }
+            }
+            
+            const chartData = nodeData.output.chart_data || nodeData.output.chart_config?.data;
+            if (chartData && Array.isArray(chartData)) {
+              // Show sample data points
+              let dataPreview = '';
+              if (chartData[0] && typeof chartData[0] === 'object') {
+                try {
+                  const keys = Object.keys(chartData[0]);
+                  const sample = keys.slice(0, 2).map(key => {
+                    const value = chartData[0][key];
+                    const valStr = typeof value === 'string' ? value.substring(0, 15) : String(value).substring(0, 15);
+                    return `${key}:${valStr}`;
+                  }).join(', ');
+                  dataPreview = ` (e.g., {${sample}})`;
+                } catch (e) {
+                  // Skip if can't format
+                }
+              }
+              
+              newLogs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `   📈 Chart data: ${chartData.length} point${chartData.length > 1 ? 's' : ''}${dataPreview}`
+              });
+              
+              // Show first 3 data points as examples
+              chartData.slice(0, 3).forEach((point, idx) => {
+                if (point && typeof point === 'object') {
+                  try {
+                    const pointStr = JSON.stringify(point);
+                    const preview = pointStr.substring(0, 100);
+                    newLogs.push({
+                      timestamp: new Date().toLocaleTimeString(),
+                      type: 'reasoning',
+                      node: nodeId,
+                      message: `      [${idx + 1}] ${preview}${pointStr.length > 100 ? '...' : ''}`
+                    });
+                  } catch (e) {
+                    // Skip if can't format
+                  }
+                }
+              });
+              
+              if (chartData.length > 3) {
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      ... and ${chartData.length - 3} more point${chartData.length - 3 > 1 ? 's' : ''}`
+                });
+              }
+            }
+          }
+        }
+
+        if (nodeId === 'llm_processing_node') {
+          // Show input sources with details
+          const ragAnswer = nodeData.input?.rag_answer || currentExecutionData?.rag_answer;
+          const sqlAnswer = nodeData.input?.sql_agent_answer || currentExecutionData?.sql_agent_answer;
+          const chartConfig = nodeData.input?.chart_config || currentExecutionData?.chart_config;
+          const structuredData = nodeData.input?.structured_data || currentExecutionData?.structured_data;
+          
+          const sources = [];
+          if (ragAnswer) {
+            sources.push('RAG');
+            const ragPreview = typeof ragAnswer === 'string' ? ragAnswer.substring(0, 80) : JSON.stringify(ragAnswer).substring(0, 80);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📚 RAG input: ${ragPreview}${typeof ragAnswer === 'string' && ragAnswer.length > 80 ? '...' : ''}`
+            });
+          }
+          if (sqlAnswer) {
+            sources.push('SQL');
+            const sqlPreview = typeof sqlAnswer === 'string' ? sqlAnswer.substring(0, 80) : JSON.stringify(sqlAnswer).substring(0, 80);
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   💾 SQL input: ${sqlPreview}${typeof sqlAnswer === 'string' && sqlAnswer.length > 80 ? '...' : ''}`
+            });
+          }
+          if (chartConfig) {
+            sources.push('Chart');
+            const chartType = chartConfig.type || 'unknown';
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   📊 Chart input: ${chartType} chart available`
+            });
+          }
+          if (structuredData) {
+            try {
+              const dataArray = Array.isArray(structuredData) ? structuredData : structuredData.data || [];
+              if (dataArray.length > 0) {
+                // Show sample row data
+                let rowPreview = '';
+                if (dataArray[0] && typeof dataArray[0] === 'object') {
+                  try {
+                    const keys = Object.keys(dataArray[0]);
+                    const sample = keys.slice(0, 2).map(key => {
+                      const value = dataArray[0][key];
+                      const valStr = typeof value === 'string' ? value.substring(0, 15) : String(value).substring(0, 15);
+                      return `${key}:${valStr}`;
+                    }).join(', ');
+                    rowPreview = ` (e.g., {${sample}})`;
+                  } catch (e) {
+                    // Skip if can't format
+                  }
+                }
+                
+                newLogs.push({
+                  timestamp: new Date().toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `   📈 Structured data: ${dataArray.length} row${dataArray.length > 1 ? 's' : ''}${rowPreview}`
+                });
+              }
+            } catch (e) {
+              // Skip if data structure is unexpected
+            }
+          }
+          
+          if (sources.length > 0) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   🧠 Integrating sources: ${sources.join(' + ')}`
+            });
+          }
+          
+          // Show streaming answer generation process
+          const streamingAnswer = currentExecutionData?.streamingAnswer;
+          if (streamingAnswer && streamingAnswer.length > 0) {
+            newLogs.push({
+              timestamp: new Date().toLocaleTimeString(),
+              type: 'reasoning',
+              node: nodeId,
+              message: `   ✍️  Generating response (${streamingAnswer.length} chars so far)...`
+            });
+            
+            // Show last chunk of streaming answer
+            const lastChunk = streamingAnswer.substring(Math.max(0, streamingAnswer.length - 120));
+            if (lastChunk) {
+              newLogs.push({
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `      ...${lastChunk}`
+              });
+            }
+          }
+        }
+      } else if (nodeData.status === 'error') {
+        newLogs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'error',
+          node: nodeId,
+          message: `❌ ${nodeName} failed: ${nodeData.error || 'Unknown error'}`
+        });
+      }
+    });
+
+    // Execution completed
+    if (currentExecutionData.status === 'completed' && currentExecutionData.result) {
+      newLogs.push({
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'success',
+        node: 'system',
+        message: `🎉 Execution completed successfully`
+      });
+    }
+
+    setLogs(newLogs);
+  }, [currentExecutionData, currentNode]);
+
+  // Auto-scroll to bottom when logs update
+  const logEndRef = React.useRef(null);
+  React.useEffect(() => {
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs]);
+
+  const getLogColor = (type) => {
+    switch (type) {
+      case 'success':
+        return 'text-green-400';
+      case 'error':
+        return 'text-red-400';
+      case 'running':
+        return 'text-blue-400';
+      case 'reasoning':
+        return 'text-yellow-300';
+      case 'info':
+        return 'text-cyan-400';
+      default:
+        return 'text-gray-300';
+    }
+  };
+
+  if (logs.length === 0) {
+    return (
+      <div className="text-gray-500 dark:text-gray-400 text-xs">
+        Waiting for execution to start...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      {logs.map((log, index) => (
+        <div key={index} className={`${getLogColor(log.type)} whitespace-pre-wrap`}>
+          <span className="text-gray-500">[{log.timestamp}]</span> {log.message}
+        </div>
+      ))}
+      <div ref={logEndRef} />
     </div>
   );
 }

@@ -4,25 +4,30 @@
 
 ## 🎯 Overview
 
-Smart AI Assistant Backend is a sophisticated Python-based API service that provides intelligent data analysis capabilities through natural language processing. Built on modern technologies including LangGraph workflow orchestration, multi-provider LLM support, and real-time WebSocket communication, it offers comprehensive data source management and advanced AI-driven insights.
+Smart AI Assistant Backend is a sophisticated Python-based API service that provides intelligent data analysis capabilities through natural language processing. Built on modern technologies including LangGraph workflow orchestration, multi-provider LLM support, Cross-Encoder document reranking, and real-time WebSocket communication, it offers comprehensive data source management and advanced AI-driven insights.
 
 ## ✨ Key Features
 
 ### 🧠 Advanced AI Processing
-- **LangGraph Workflow Engine**: Sophisticated multi-step AI processing pipelines
+- **LangGraph Workflow Engine**: Sophisticated multi-step AI processing pipelines with 5 core nodes
 - **Multi-LLM Support**: OpenAI, OpenRouter, and Ollama integration
-- **Intelligent Routing**: SQL vs RAG path determination
+- **RAG Retrieval**: Top 10 document retrieval → Cross-Encoder reranking → Top 3 documents
+- **Intelligent Routing**: SQL vs RAG path determination based on query analysis
+- **SQL Agent**: ReAct-based SQL exploration with intermediate step tracking
+- **Chart Generation**: Automatic chart type selection and data visualization
 - **Quality Validation**: Automated output quality scoring and retry mechanisms
 
 ### 📊 Data Source Management
 - **Multiple Data Types**: Knowledge Base (RAG), SQL Tables, and Hybrid sources
 - **File Processing**: Support for CSV, PDF, TXT, Word, Excel documents
 - **Vector Storage**: FAISS-based document embeddings and similarity search
+- **Document Reranking**: Cross-Encoder (ms-marco-MiniLM-L-6-v2) for improved retrieval quality
 - **Real-time Processing**: Live file processing status updates
 
 ### ⚡ Real-time Features
 - **WebSocket Integration**: Live workflow execution monitoring
 - **Node-level Tracking**: Detailed step-by-step process visualization
+- **Execution Logs**: Comprehensive logging of node reasoning, document sources, SQL queries, and data processing
 - **Event Broadcasting**: Real-time status updates to connected clients
 - **Execution History**: Complete audit trail of all processing activities
 
@@ -45,6 +50,7 @@ Smart AI Assistant Backend is a sophisticated Python-based API service that prov
 - **LangGraph** - Workflow orchestration engine
 - **Transformers** - HuggingFace model integration
 - **Sentence Transformers** - Local embedding models
+- **Cross-Encoder** - Document reranking (ms-marco-MiniLM-L-6-v2)
 - **FAISS** - Vector similarity search
 - **PyTorch** - Deep learning backend
 
@@ -67,16 +73,14 @@ server/
 ├── src/                        # Core application package
 │   ├── agents/                # AI agent implementations
 │   │   ├── __init__.py
-│   │   └── intelligent_agent.py  # Core AI agent with multi-LLM support
+│   │   └── intelligent_agent.py  # Core AI agent with RAG retrieval (Top 10 → Top 3)
 │   ├── api/                   # API endpoints and routes
 │   │   ├── __init__.py
 │   │   └── routes.py          # FastAPI route definitions and handlers
 │   ├── chains/                # LangChain workflow definitions
 │   │   ├── __init__.py
-│   │   ├── enhanced_flow.py           # Enhanced workflow with quality checks
-│   │   ├── enhanced_langgraph_flow.py # Advanced LangGraph implementation
-│   │   ├── langgraph_flow.py         # Base LangGraph workflow
-│   │   └── real_langgraph_flow.py    # Production-ready workflow
+│   │   ├── langgraph_flow.py  # Main LangGraph workflow (5-node architecture)
+│   │   └── ...                # Other workflow implementations
 │   ├── components/            # Reusable components
 │   │   └── __init__.py
 │   ├── config/               # Configuration management
@@ -93,6 +97,7 @@ server/
 │   │   ├── data_models.py         # Pydantic data models and enums
 │   │   ├── embedding_factory.py   # Embedding model provider factory
 │   │   ├── llm_factory.py        # LLM provider factory (OpenAI, Ollama, etc.)
+│   │   ├── reranker.py           # Cross-Encoder reranking implementation
 │   │   └── openrouter_models.py  # OpenRouter model configurations
 │   ├── prompts/            # LLM prompts and templates
 │   │   └── __init__.py
@@ -233,46 +238,73 @@ Choose from multiple embedding providers:
 - **HuggingFace**: Various transformer models
 - **Ollama**: Local model deployment
 
+### Document Reranking
+
+The system uses Cross-Encoder for document reranking:
+
+- **Model**: `cross-encoder/ms-marco-MiniLM-L-6-v2`
+- **Retrieval Strategy**: Top 10 documents → Cross-Encoder reranking → Top 3 documents
+- **Benefits**: Improved relevance and accuracy of retrieved documents
+
 ## 🌊 LangGraph Workflow Engine
 
 ### Workflow Architecture
 
-The system uses LangGraph to orchestrate complex AI processing workflows:
+The system uses LangGraph to orchestrate a 5-node AI processing workflow:
 
 ```mermaid
 graph TD
-    A[User Query] --> B[Router Node]
-    B --> C{Query Type}
-    C -->|SQL| D[SQL Classifier]
-    C -->|RAG| E[RAG Query Node]
-    D --> F[SQL Execution]
-    D --> G[Chart Generation]
-    E --> H[Vector Search]
-    F --> I[LLM Processing]
-    G --> J[Chart Rendering]
-    H --> I
-    I --> K[Validation Node]
-    J --> I
-    K --> L{Quality Score}
-    L -->|< 8| M[Retry Node]
-    L -->|>= 8| N[End Node]
-    M --> I
+    A[Start Node] --> B[RAG Query Node]
+    B --> C[Router Node]
+    C --> D{Need SQL?}
+    D -->|Yes| E[SQL Agent Node]
+    D -->|No| H[LLM Processing Node]
+    E --> F[Chart Process Node]
+    F --> H
+    H --> I[End Node]
 ```
 
 ### Node Types
 
-1. **Router Node**: Determines processing path (SQL vs RAG)
-2. **SQL Classifier**: Categorizes query type (data query vs chart generation)
-3. **Execution Nodes**: Process SQL queries or perform RAG searches
-4. **Chart Nodes**: Generate data visualizations via QuickChart API
-5. **LLM Processing**: Natural language response generation
-6. **Validation Node**: Quality assessment and scoring
-7. **Retry Node**: Error recovery and process improvement
+1. **RAG Query Node**:
+   - Retrieves Top 10 documents from knowledge base using FAISS
+   - Uses Cross-Encoder to rerank to Top 3 documents
+   - Generates answer based on reranked documents
+   - Records document sources, similarity scores, and content previews
+
+2. **Router Node**:
+   - Analyzes user query and RAG answer
+   - Decides whether SQL-Agent is needed
+   - Provides routing decision reasoning
+   - Routes to SQL-Agent path or LLM Processing path
+
+3. **SQL Agent Node**:
+   - ReAct-based SQL exploration
+   - Tracks intermediate steps (tool calls, observations)
+   - Generates and executes SQL queries
+   - Records SQL queries, table names, and query results
+
+4. **Chart Process Node**:
+   - Analyzes if structured data is suitable for visualization
+   - Automatically selects appropriate chart type
+   - Generates chart configuration and data points
+   - Records chart generation decision and data analysis
+
+5. **LLM Processing Node**:
+   - Integrates RAG answer, SQL results, and chart information
+   - Generates final natural language answer
+   - Supports streaming output
+   - Records integration process and answer generation
 
 ### Workflow Tracking
 
 - **Real-time Monitoring**: Live execution tracking via WebSocket
 - **Node-level Details**: Input/output inspection for each step
+- **Execution Logs**: Detailed logging of:
+  - Document retrieval (Top 10 → Top 3)
+  - SQL query execution with table names
+  - Chart generation process
+  - Node reasoning and decision-making
 - **Performance Metrics**: Execution time and resource usage
 - **Error Recovery**: Automatic retry with improved parameters
 
@@ -325,17 +357,36 @@ Connect to `/ws/workflow/{client_id}` for real-time updates:
 {
   "type": "workflow.node.started",
   "execution_id": "uuid", 
-  "node_id": "router_node",
+  "node_id": "rag_query_node",
   "timestamp": 1234567890,
-  "data": {...}
+  "data": {
+    "input": {...}
+  }
 }
 
 {
   "type": "workflow.node.completed",
   "execution_id": "uuid",
-  "node_id": "router_node", 
-  "duration": 0.5,
-  "data": {...}
+  "node_id": "rag_query_node", 
+  "duration": 2.5,
+  "data": {
+    "output": {
+      "retrieved_documents": [...],  // Top 10 documents
+      "reranked_documents": [...],    // Top 3 documents
+      "rag_answer": "...",
+      "retrieval_success": true,
+      "rerank_success": true,
+      "rag_success": true
+    }
+  }
+}
+
+{
+  "type": "workflow.token_stream",
+  "execution_id": "uuid",
+  "node_id": "llm_processing_node",
+  "token": "generated",
+  "text": "partial answer..."
 }
 ```
 
@@ -357,13 +408,15 @@ Connect to `/ws/workflow/{client_id}` for real-time updates:
 
 1. **Knowledge Base (RAG)**
    - Document-based question answering
-   - Vector similarity search
+   - Vector similarity search (FAISS)
+   - Top 10 retrieval → Cross-Encoder reranking → Top 3
    - Multi-document reasoning
 
 2. **SQL Tables**
    - Natural language to SQL conversion
    - Automated chart generation
    - Data aggregation and analysis
+   - ReAct-based SQL exploration
 
 3. **Hybrid Sources**
    - Combined structured and unstructured data
@@ -416,6 +469,12 @@ const ws = new WebSocket('ws://localhost:8000/ws/workflow/client-123');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   console.log('Workflow update:', data);
+  // Handle different event types:
+  // - workflow.execution.started
+  // - workflow.node.started
+  // - workflow.node.completed
+  // - workflow.token_stream
+  // - workflow.execution.completed
 };
 ```
 
@@ -425,10 +484,28 @@ ws.onmessage = (event) => {
 
 1. **Define Node Function**
 ```python
-def custom_node(state: WorkflowState) -> WorkflowState:
+async def custom_node(state: GraphState) -> GraphState:
     """Custom processing node"""
     # Your processing logic here
-    return state
+    # Send WebSocket events for real-time updates
+    await send_websocket_event(
+        execution_id=state["execution_id"],
+        event_type="workflow.node.started",
+        node_id="custom_node",
+        data={"input": state}
+    )
+    
+    # Process...
+    result = process_data(state)
+    
+    await send_websocket_event(
+        execution_id=state["execution_id"],
+        event_type="workflow.node.completed",
+        node_id="custom_node",
+        data={"output": result}
+    )
+    
+    return {**state, "custom_output": result}
 ```
 
 2. **Register in Workflow**
@@ -437,11 +514,27 @@ workflow.add_node("custom_node", custom_node)
 workflow.add_edge("previous_node", "custom_node")
 ```
 
-3. **Add WebSocket Events**
+### RAG Retrieval Configuration
+
+The RAG retrieval process uses a two-stage approach:
+
+1. **Initial Retrieval**: Top 10 documents using FAISS similarity search
+2. **Reranking**: Cross-Encoder reranking to Top 3 documents
+
 ```python
-await tracker.on_node_start("custom_node", input_data)
-# ... processing ...
-await tracker.on_node_end("custom_node", output_data)
+# In intelligent_agent.py
+retrieval_result = await perform_rag_retrieval(
+    query=user_input,
+    datasource=datasource,
+    k=10  # Retrieve Top 10
+)
+
+# In langgraph_flow.py
+reranked_documents = rerank_with_cross_encoder(
+    query=user_input,
+    documents=retrieved_documents,
+    top_k=3  # Rerank to Top 3
+)
 ```
 
 ### Extending LLM Support
@@ -567,9 +660,10 @@ The project includes `vercel.json` for serverless deployment:
 ### Optimization Strategies
 
 - **Connection Pooling**: Efficient database connection management
-- **Caching**: Redis-based caching for frequent queries
+- **Caching**: Vector store caching for faster retrieval
 - **Async Processing**: Non-blocking I/O operations
 - **Model Optimization**: Quantized models for faster inference
+- **Document Reranking**: Efficient Cross-Encoder batch processing
 
 ### Monitoring
 
@@ -577,6 +671,7 @@ The project includes `vercel.json` for serverless deployment:
 - **Metrics Collection**: Performance and usage statistics
 - **Health Checks**: Automated service health monitoring
 - **Error Tracking**: Comprehensive error reporting
+- **Execution Logs**: Detailed workflow execution tracking
 
 ## 🔧 Troubleshooting
 
@@ -585,7 +680,7 @@ The project includes `vercel.json` for serverless deployment:
 1. **LLM Provider Connection**
 ```bash
 # Test LLM configuration
-python -c "from app.llm_factory import get_llm; print(get_llm())"
+python -c "from src.models.llm_factory import get_llm; print(get_llm())"
 ```
 
 2. **Database Initialization**
@@ -605,6 +700,12 @@ netstat -an | grep 8000
 ```bash
 # Pre-download models
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+```
+
+5. **Cross-Encoder Model Download**
+```bash
+# Pre-download Cross-Encoder model
+python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
 ```
 
 ### Debug Mode
@@ -647,7 +748,7 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE) f
 
 - **LangChain Team** - For the powerful AI framework
 - **FastAPI Team** - For the excellent web framework
-- **HuggingFace** - For transformer models and tools
+- **HuggingFace** - For transformer models and Cross-Encoder
 - **OpenAI** - For GPT models and embeddings
 - **LangGraph** - For workflow orchestration capabilities
 
@@ -658,4 +759,4 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE) f
 🔗 **Links**
 - [Frontend Documentation](../client/README.md)
 - [API Documentation](http://localhost:8000/docs)
-- [Project Root](../README.md) 
+- [Project Root](../README.md)

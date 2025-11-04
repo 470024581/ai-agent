@@ -1,7 +1,7 @@
 {
   "language": "Language",
   "smartAIAssistant": "Smart AI Assistant",
-  "systemDescription": "A retrieval-augmented AI system that integrates both knowledge bases and databases to support natural language queries for Q&A, data analysis, and chart visualization.",
+  "systemDescription": "An enterprise-grade intelligent data analysis platform powered by LangGraph workflow orchestration, featuring advanced RAG retrieval (Top 10 → Top 3 reranking), SQL Agent with ReAct pattern, automatic chart generation, and detailed real-time execution logs.",
   "intelligentQA": "Intelligent Q&A",
   "dataSourceManagement": "Document Data Source Management",
   "createDataSource": "Create Document Data Source",
@@ -336,18 +336,22 @@
       "title": "Project Information",
       "description": {
         "title": "Function Introduction",
-        "content": "This project aims to provide an intelligent data analysis platform that leverages advanced AI technologies to help users better understand and utilize their data."
+        "content": "This project provides an enterprise-grade intelligent data analysis platform that combines LangGraph workflow orchestration with advanced AI technologies. It features a sophisticated 5-node workflow architecture (RAG Query → Router → SQL Agent → Chart Process → LLM Processing), intelligent document retrieval with Cross-Encoder reranking, ReAct-based SQL exploration, automatic chart generation, and comprehensive real-time execution logs for transparent AI decision-making."
       },
       "features": {
         "title": "Main Features",
-        "multiModel": "Multi-model integration with cloud platform OpenAI and OpenRouter API access, private Ollama integration.",
-        "mcpIntegration": "MCP integration implements chart-based MCP services.",
-        "websocket": "WebSocket enables real-time tracking and visualization of process execution status.",
-        "multiDataSource": "Multi-data source isolation, allowing custom multiple data sources with mutually isolated data logic."
+        "langgraph": "LangGraph 5-node workflow orchestration with intelligent routing between RAG and SQL-Agent paths.",
+        "ragRetrieval": "Advanced RAG retrieval: Top 10 document retrieval → Cross-Encoder reranking → Top 3 documents for improved accuracy.",
+        "executionLogs": "Detailed real-time execution logs showing node reasoning, document sources, SQL queries, and data processing details.",
+        "sqlAgent": "ReAct-based SQL Agent with intermediate step tracking, automatic SQL generation, and query result analysis.",
+        "chartGeneration": "Automatic chart generation with intelligent chart type selection based on data characteristics.",
+        "multiModel": "Multi-LLM support: OpenAI, OpenRouter, and Ollama integration with unified configuration.",
+        "websocket": "WebSocket-based real-time workflow monitoring with node-level execution tracking and streaming updates.",
+        "multiDataSource": "Multi-data source support: Knowledge Base (RAG), SQL Tables, and Hybrid sources with isolated data logic."
       },
       "techStack": {
         "title": "Main Technology Stack",
-        "content": "React, LangChain, LangGraph, FastAPI, LLM, Embedding Model, Chart MCP."
+        "content": "Frontend: React 18, Redux Toolkit, Tailwind CSS, Radix UI, Recharts. Backend: FastAPI, LangGraph, LangChain, SQLAlchemy. AI: Multi-LLM (OpenAI/OpenRouter/Ollama), Sentence Transformers, Cross-Encoder, FAISS. Real-time: WebSocket, AsyncIO."
       },
       "links": {
         "github": "GitHub Project",

@@ -226,10 +226,18 @@ class GraphState(TypedDict):
     # === Node outputs tracking ===
     node_outputs: Dict[str, Any]  # Track outputs from each node
     
-    # === Legacy fields (for backward compatibility) ===
-    query_type: Optional[str]  # "sql" or "rag" - deprecated but kept for compatibility
+    # === Legacy fields (removed - not used in current workflow) ===
+    # query_type and sql_task_type are no longer needed as routing is based on need_sql_agent and chart_suitable
 
 # LangGraph native interrupt implementation
+def router_decision_node(state: GraphState) -> GraphState:
+    """Router decision node - just passes through the state"""
+    return state
+
+def sql_agent_decision_node(state: GraphState) -> GraphState:
+    """SQL agent decision node - just passes through the state"""
+    return state
+
 def check_interrupt_status(state: GraphState) -> str:
     """Check if execution should be interrupted"""
     execution_id = state.get("execution_id")
@@ -432,13 +440,13 @@ def _fallback_router_decision(state: GraphState) -> GraphState:
     return {
         **state,
         "need_sql_agent": need_sql,
-        "router_reasoning": "Fallback rule-based decision",
+        "router_reasoning": f"Fallback rule-based decision: {'SQL needed' if need_sql else 'LLM-only'}",
         "node_outputs": {
             **state.get("node_outputs", {}),
             "router": {
                 "status": "completed",
                 "decision": "sql_agent" if need_sql else "llm_only",
-                "reasoning": "Fallback rule-based decision",
+                "reasoning": f"Fallback: {'SQL signals detected' if need_sql else 'Conceptual/document Q&A'}",
                 "timestamp": time.time()
             }
         }
@@ -1173,7 +1181,7 @@ async def rag_query_node(state: GraphState) -> GraphState:
         logger.info(f"RAG Query Node - Retrieving documents for: {user_input}")
         from ..agents.intelligent_agent import perform_rag_retrieval
         
-        retrieval_result = await perform_rag_retrieval(user_input, datasource, k=20)
+        retrieval_result = await perform_rag_retrieval(user_input, datasource, k=10)
         
         if not retrieval_result["success"]:
             logger.error(f"RAG retrieval failed: {retrieval_result.get('error', 'Unknown error')}")
@@ -2717,33 +2725,85 @@ def create_workflow():
     
     # Workflow connection: start → rag_query → router
     workflow.add_edge("start_node", "rag_query_node")
-    workflow.add_edge("rag_query_node", "router_node")
-
-    # Router node routing: Determine if SQL-Agent is needed
+    
+    # Add interrupt check after rag_query_node
+    workflow.add_conditional_edges(
+        "rag_query_node",
+        check_interrupt_status,
+        {
+            "continue": "router_node",
+            "interrupt": "interrupt_node"
+        }
+    )
+    
+    # Add interrupt check after router_node
     workflow.add_conditional_edges(
         "router_node",
+        check_interrupt_status,
+        {
+            "continue": "router_decision_node",
+            "interrupt": "interrupt_node"
+        }
+    )
+    
+    # Add router decision node
+    workflow.add_node("router_decision_node", router_decision_node)
+    
+    # Router decision routes to either sql_agent or llm_processing
+    workflow.add_conditional_edges(
+        "router_decision_node",
         lambda state: "sql_agent_node" if state.get("need_sql_agent", False) else "llm_processing_node",
         {
-            "sql_agent_node": "sql_agent_node",  # Needs SQL-Agent
-            "llm_processing_node": "llm_processing_node"  # No SQL-Agent needed
+            "sql_agent_node": "sql_agent_node",
+            "llm_processing_node": "llm_processing_node"
         }
     )
 
-    # SQL-Agent node routing: Determine if chart is needed
+    # Add interrupt check after sql_agent_node
     workflow.add_conditional_edges(
         "sql_agent_node",
-        lambda state: "chart_process_node" if state.get("chart_suitable", False) else "llm_processing_node",
+        check_interrupt_status,
         {
-            "chart_process_node": "chart_process_node",  # Needs chart
-            "llm_processing_node": "llm_processing_node"  # No chart needed
+            "continue": "sql_agent_decision_node",
+            "interrupt": "interrupt_node"
         }
     )
-
-    # Chart processing node → LLM processing node
-    workflow.add_edge("chart_process_node", "llm_processing_node")
-
-    # LLM processing node → End
-    workflow.add_edge("llm_processing_node", "end_node")
+    
+    # Add sql agent decision node
+    workflow.add_node("sql_agent_decision_node", sql_agent_decision_node)
+    
+    # SQL agent decision routes to either chart_process or llm_processing
+    workflow.add_conditional_edges(
+        "sql_agent_decision_node",
+        lambda state: "chart_process_node" if state.get("chart_suitable", False) else "llm_processing_node",
+        {
+            "chart_process_node": "chart_process_node",
+            "llm_processing_node": "llm_processing_node"
+        }
+    )
+    
+    # Add interrupt check after chart_process_node
+    workflow.add_conditional_edges(
+        "chart_process_node",
+        check_interrupt_status,
+        {
+            "continue": "llm_processing_node",
+            "interrupt": "interrupt_node"
+        }
+    )
+    
+    # Add interrupt check after llm_processing_node
+    workflow.add_conditional_edges(
+        "llm_processing_node",
+        check_interrupt_status,
+        {
+            "continue": "end_node",
+            "interrupt": "interrupt_node"
+        }
+    )
+    
+    # Interrupt node goes to end (workflow stops)
+    workflow.add_edge("interrupt_node", "end_node")
 
     # Compile the workflow
     app = workflow.compile()
@@ -2751,21 +2811,6 @@ def create_workflow():
     logger.info("New workflow created with 6 nodes: start → rag_query → router → [sql_agent → chart?] → llm_processing → end")
     
     return app
-
-    # Chart process node goes to LLM processing
-    workflow.add_edge("chart_process_node", "llm_processing_node")
-    
-    # LLM processing goes to end
-    workflow.add_edge("llm_processing_node", "end_node")
-    
-    # Interrupt node goes to end (workflow stops)
-    workflow.add_edge("interrupt_node", "end_node")
-
-    # Set finish point
-    workflow.set_finish_point("end_node")
-
-    # Compile the graph
-    return workflow.compile()
 # Chart Decision Node - determines if chart should be generated
 def chart_decision_node(state: GraphState) -> GraphState:
     """Chart Decision Node: determine if chart should be generated based on query path and data"""
@@ -3055,6 +3100,29 @@ async def resume_workflow_from_paused_state(
                 state = await llm_processing_node(state)
                 await _emit(state)
 
+            elif paused_node == "rag_query_node":
+                # Continue from RAG query to router
+                state = router_node(state)
+                await _emit(state)
+                    
+                # Then continue based on router decision
+                need_sql_agent = state.get("need_sql_agent", False)
+                if need_sql_agent:
+                    state = await sql_agent_node(state)
+                    await _emit(state)
+                    
+                    chart_suitable = state.get("chart_suitable", False)
+                    if chart_suitable:
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                else:
+                    # RAG only path - go directly to LLM processing
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+
             elif paused_node == "rag_answer_node":
                 # Continue from RAG answer to router
                 state = router_node(state)
@@ -3071,6 +3139,29 @@ async def resume_workflow_from_paused_state(
                         state = chart_process_node(state)
                         await _emit(state)
                     
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                else:
+                    # RAG only path - go directly to LLM processing
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+
+            elif paused_node == "router_node":
+                # Continue from router based on decision
+                need_sql_agent = state.get("need_sql_agent", False)
+                if need_sql_agent:
+                    state = await sql_agent_node(state)
+                    await _emit(state)
+                    
+                    chart_suitable = state.get("chart_suitable", False)
+                    if chart_suitable:
+                        state = chart_process_node(state)
+                        await _emit(state)
+                    
+                    state = await llm_processing_node(state)
+                    await _emit(state)
+                else:
+                    # RAG only path - go directly to LLM processing
                     state = await llm_processing_node(state)
                     await _emit(state)
 
@@ -3131,8 +3222,6 @@ async def process_intelligent_query(
             initial_state["datasource"] = datasource
         logger.info(f"Using restored state for execution {execution_id}")
         logger.info(f"Restored state keys: {list(initial_state.keys())}")
-        logger.info(f"Restored query_type: {initial_state.get('query_type', 'NOT_SET')}")
-        logger.info(f"Restored sql_task_type: {initial_state.get('sql_task_type', 'NOT_SET')}")
     else:
         initial_state = {
         "user_input": user_input,
@@ -3733,8 +3822,6 @@ def get_execution_final_state(execution_id: str) -> Dict[str, Any]:
     state = _execution_states.get(execution_id, {})
     logger.info(f"📊 [BACKEND-LG] get_execution_final_state found state for execution {execution_id}")
     logger.info(f"📊 [BACKEND-LG] get_execution_final_state state keys: {list(state.keys())}")
-    logger.info(f"📊 [BACKEND-LG] get_execution_final_state query_type: {state.get('query_type', 'NOT_SET')}")
-    logger.info(f"📊 [BACKEND-LG] get_execution_final_state sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
     
     logger.info(f"�?[BACKEND-LG] get_execution_final_state completed successfully")
     return state
@@ -3747,7 +3834,5 @@ def set_execution_final_state(execution_id: str, state: Dict[str, Any]):
     
     _execution_states[execution_id] = state
     logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored state for execution {execution_id}")
-    logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored query_type: {state.get('query_type', 'NOT_SET')}")
-    logger.info(f"📊 [BACKEND-LG] set_execution_final_state stored sql_task_type: {state.get('sql_task_type', 'NOT_SET')}")
     
     logger.info(f"✅ [BACKEND-LG] set_execution_final_state completed successfully")

@@ -39,6 +39,19 @@ class WebSocketManager:
                         if not k.startswith('_')}
             except:
                 return str(obj)
+        elif hasattr(obj, 'page_content'):
+            # Handle Document objects from LangChain
+            return {
+                'page_content': getattr(obj, 'page_content', ''),
+                'metadata': getattr(obj, 'metadata', {}),
+                'type': 'Document'
+            }
+        elif hasattr(obj, 'content'):
+            # Handle other content objects
+            return {
+                'content': getattr(obj, 'content', ''),
+                'type': type(obj).__name__
+            }
         else:
             return obj
     
@@ -367,21 +380,26 @@ class WebSocketManager:
                 import asyncio
                 from ..chains.langgraph_flow import get_execution_final_state
                 
-                # Wait up to 5 seconds for LangGraph interrupt_node to complete
+                # Wait up to 3 seconds for LangGraph interrupt_node to complete
+                # Use exponential backoff to reduce polling frequency
                 lg_state = {}
-                for attempt in range(50):  # 50 * 0.1s = 5s max
-                    await asyncio.sleep(0.1)
+                wait_times = [0.05, 0.1, 0.2, 0.3, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]  # Total ~3s
+                total_wait = 0
+                
+                for i, wait_time in enumerate(wait_times):
+                    await asyncio.sleep(wait_time)
+                    total_wait += wait_time
                     lg_state = get_execution_final_state(execution_id) or {}
                     # Check if we have meaningful state (not just empty dict)
-                    if lg_state and any(lg_state.get(k) for k in ["user_input", "query_type", "sql_task_type", "structured_data", "chart_config"]):
-                        logger.info(f"✅ Found LangGraph state after {(attempt + 1) * 0.1:.1f}s: {list(lg_state.keys())}")
+                    if lg_state and any(lg_state.get(k) for k in ["user_input", "structured_data", "chart_config"]):
+                        logger.info(f"✅ Found LangGraph state after {total_wait:.1f}s: {list(lg_state.keys())}")
                         # Use LangGraph state as the primary source
                         interrupt_state = lg_state.copy()
                         break
                 
                 # If we didn't get LangGraph state, fall back to execution_state
                 if not interrupt_state:
-                    logger.warning(f"⚠️ LangGraph state not ready after 5s, using execution_state as fallback")
+                    logger.warning(f"⚠️ LangGraph state not ready after {total_wait:.1f}s, using execution_state as fallback")
                     interrupt_state = {
                         "execution_id": execution_id,
                         "user_input": execution_state.get("user_input", ""),
@@ -389,8 +407,6 @@ class WebSocketManager:
                         "status": execution_state.get("status"),
                         "structured_data": execution_state.get("structured_data"),
                         "chart_config": execution_state.get("chart_config"),
-                        "query_type": execution_state.get("query_type"),
-                        "sql_task_type": execution_state.get("sql_task_type"),
                         "answer": execution_state.get("answer", ""),
                         "error": execution_state.get("error"),
                         "quality_score": execution_state.get("quality_score", 0),
@@ -404,7 +420,7 @@ class WebSocketManager:
                     elif node_name and isinstance(lg_state.get(node_name), dict):
                         preferred_snapshot = lg_state.get(node_name) or {}
 
-                    for k in ["query_type", "sql_task_type", "structured_data", "chart_config", "answer", "datasource"]:
+                    for k in ["structured_data", "chart_config", "answer", "datasource"]:
                         v = preferred_snapshot.get(k)
                         if v is not None and v != "":
                             interrupt_state[k] = v
@@ -420,8 +436,6 @@ class WebSocketManager:
                     interrupt_state["current_node"] = node_name
                 
                 logger.info(f"📊 Final interrupt_state keys: {list(interrupt_state.keys())}")
-                logger.info(f"📊 query_type: {interrupt_state.get('query_type', 'NOT_SET')}")
-                logger.info(f"📊 sql_task_type: {interrupt_state.get('sql_task_type', 'NOT_SET')}")
                 
             except Exception as e:
                 logger.error(f"❌ Error waiting for LangGraph state: {e}")
@@ -480,7 +494,7 @@ class WebSocketManager:
             try:
                 from ..chains.langgraph_flow import get_execution_final_state
                 lg_state = get_execution_final_state(execution_id) or {}
-                for k in ["datasource", "user_input", "query_type", "sql_task_type", "structured_data", "chart_config", "answer"]:
+                for k in ["datasource", "user_input", "structured_data", "chart_config", "answer"]:
                     if (base_state.get(k) in (None, "", {})) and lg_state.get(k) not in (None, ""):
                         base_state[k] = lg_state.get(k)
             except Exception:
@@ -623,7 +637,9 @@ class WebSocketManager:
         try:
             if client_id in self.active_connections:
                 websocket = self.active_connections[client_id]
-                await websocket.send_text(json.dumps(message, ensure_ascii=False))
+                # Ensure message is JSON serializable
+                serializable_message = self.make_serializable(message)
+                await websocket.send_text(json.dumps(serializable_message, ensure_ascii=False))
                 logger.debug(f"Sent message to client {client_id}: {message.get('type', 'unknown')}")
         except Exception as e:
             logger.error(f"Error sending message to client {client_id}: {e}")
@@ -659,8 +675,6 @@ class WebSocketManager:
                 "chart_image",
                 "answer",
                 "datasource",
-                "query_type",
-                "sql_task_type",
                 "error",
                 "chart_type",
                 "chart_data",

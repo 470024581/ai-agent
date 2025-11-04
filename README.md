@@ -15,11 +15,12 @@ Smart AI Assistant is a sophisticated full-stack platform that demonstrates the 
 ### 🌟 Key Highlights
 
 - **🧠 Advanced AI Processing**: LangGraph-powered workflow orchestration with multi-step reasoning
-- **🔄 Real-time Monitoring**: WebSocket-based live workflow execution tracking
+- **🔄 Real-time Monitoring**: WebSocket-based live workflow execution tracking with detailed execution logs
 - **📊 Intelligent Data Analysis**: Natural language queries with automated chart generation
 - **🗂️ Multi-source Data Integration**: SQL databases, document repositories, and hybrid data sources
 - **🌐 Modern Architecture**: React 18 frontend with FastAPI backend and enterprise-grade scalability
 - **🔧 Multi-LLM Support**: OpenAI, OpenRouter, and Ollama integration with unified configuration
+- **📝 Detailed Execution Logs**: Real-time display of node reasoning, document sources, and data processing details
 
 ## 🏗️ System Architecture
 
@@ -30,39 +31,55 @@ graph TB
         B[Redux Toolkit]
         C[Tailwind CSS + Radix UI]
         D[WebSocket Client]
+        E[Execution Log Display]
     end
     
     subgraph "Backend Layer"
-        E[FastAPI Server]
-        F[LangGraph Engine]
-        G[WebSocket Manager]
-        H[Multi-LLM Factory]
+        F[FastAPI Server]
+        G[LangGraph Engine]
+        H[WebSocket Manager]
+        I[Multi-LLM Factory]
+    end
+    
+    subgraph "LangGraph Workflow"
+        J[RAG Query Node]
+        K[Router Node]
+        L[SQL Agent Node]
+        M[Chart Process Node]
+        N[LLM Processing Node]
     end
     
     subgraph "Data Layer"
-        I[SQLite/PostgreSQL]
-        J[FAISS Vector Store]
-        K[File Storage]
+        O[SQLite/PostgreSQL]
+        P[FAISS Vector Store]
+        Q[File Storage]
     end
     
     subgraph "AI Services"
-        L[OpenAI GPT]
-        M[OpenRouter Models]
-        N[Ollama Local]
-        O[HuggingFace Embeddings]
+        R[OpenAI GPT]
+        S[OpenRouter Models]
+        T[Ollama Local]
+        U[HuggingFace Embeddings]
     end
     
-    A --> E
-    D --> G
-    E --> F
-    F --> H
-    H --> L
-    H --> M
-    H --> N
-    E --> I
-    E --> J
-    E --> K
-    J --> O
+    A --> F
+    D --> H
+    E --> H
+    F --> G
+    G --> J
+    J --> K
+    K --> L
+    K --> N
+    L --> M
+    M --> N
+    G --> I
+    I --> R
+    I --> S
+    I --> T
+    F --> O
+    F --> P
+    F --> Q
+    P --> U
 ```
 
 ## 🚀 Features
@@ -74,9 +91,15 @@ graph TB
 - **📊 Interactive Visualizations**: Real-time charts and data dashboards
 - **⚡ Real-time Updates**: Live workflow monitoring with WebSocket integration
 - **🔍 Node Inspection**: Detailed workflow step analysis and debugging tools
+- **📝 Execution Logs**: Real-time display of LangGraph node reasoning, document retrieval, SQL queries, and data processing details
 
 ### Backend Capabilities
 - **🔄 LangGraph Workflows**: Sophisticated AI processing pipelines with error recovery
+  - **RAG Query Node**: Retrieves top 10 documents, reranks to top 3, and generates answers
+  - **Router Node**: Intelligently decides whether SQL-Agent is needed based on query analysis
+  - **SQL Agent Node**: ReAct-based SQL exploration with intermediate step tracking
+  - **Chart Process Node**: Automatic chart generation for suitable data
+  - **LLM Processing Node**: Integrates all inputs (RAG, SQL, Chart) into final answer
 - **🤖 Multi-LLM Integration**: Seamless switching between OpenAI, OpenRouter, and Ollama
 - **📁 Intelligent File Processing**: Support for CSV, PDF, Word, Excel, and text documents
 - **🔍 Hybrid Data Sources**: SQL queries, document search, and combined reasoning
@@ -95,6 +118,7 @@ graph TB
 | **Internationalization** | i18next | Multi-language support |
 | **HTTP Client** | Axios | API communication |
 | **Real-time** | WebSocket | Live data updates |
+| **Charts** | Recharts | Data visualization |
 
 ### Backend Technologies
 | Category | Technology | Purpose |
@@ -107,6 +131,7 @@ graph TB
 | **Document Processing** | PyPDF2, python-docx, openpyxl | File parsing |
 | **Embeddings** | Sentence Transformers | Local text embeddings |
 | **Real-time** | WebSocket Manager | Connection management |
+| **Reranking** | Cross-Encoder | Document reranking with ms-marco-MiniLM-L-6-v2 |
 
 ## 📦 Project Structure
 
@@ -116,11 +141,14 @@ smart-ai-assistant/
 │   ├── src/
 │   │   ├── components/         # React components
 │   │   │   ├── Dashboard.jsx   # Main dashboard interface
-│   │   │   ├── IntelligentAnalysis.jsx # AI workflow interface
+│   │   │   ├── IntelligentAnalysis.jsx # AI workflow interface with execution logs
 │   │   │   ├── DataSourceManager.jsx  # Data source management
 │   │   │   └── ui/            # Reusable UI components
 │   │   ├── hooks/             # Custom React hooks
+│   │   │   └── useWorkflowWebSocket.js # WebSocket hook for workflow updates
 │   │   ├── store/             # Redux store configuration
+│   │   │   └── slices/
+│   │   │       └── workflowSlice.js # Workflow state management
 │   │   ├── services/          # API service layer
 │   │   └── locales/           # Internationalization files
 │   ├── package.json           # Frontend dependencies
@@ -128,13 +156,16 @@ smart-ai-assistant/
 ├── server/                     # FastAPI Backend Application
 │   ├── src/                   # Core application package
 │   │   ├── agents/           # AI agent implementations
+│   │   │   └── intelligent_agent.py # RAG retrieval and SQL agent
 │   │   ├── api/              # API endpoints and routes
 │   │   ├── chains/           # LangChain workflow definitions
+│   │   │   └── langgraph_flow.py # Main LangGraph workflow
 │   │   ├── components/       # Reusable components
 │   │   ├── config/          # Configuration management
 │   │   ├── database/        # Database operations
 │   │   ├── document_loaders/ # File processing and loading
 │   │   ├── models/          # Data models and factories
+│   │   │   └── reranker.py  # Cross-encoder reranking
 │   │   ├── prompts/         # LLM prompts and templates
 │   │   ├── utils/           # Utility functions
 │   │   ├── vectorstores/    # Vector storage implementations
@@ -254,7 +285,7 @@ The system supports sophisticated natural language queries across different data
 
 ### Workflow Monitoring
 
-Track AI processing in real-time:
+Track AI processing in real-time with detailed execution logs:
 
 ```javascript
 // Connect to WebSocket for live updates
@@ -264,6 +295,11 @@ ws.onmessage = (event) => {
   const update = JSON.parse(event.data);
   console.log('Workflow Progress:', update);
   // Handle workflow node updates, completion, errors
+  // Execution logs show:
+  // - Document retrieval (top 10 → reranked to top 3)
+  // - SQL query execution with table names
+  // - Chart generation details
+  // - Node reasoning processes
 };
 ```
 
@@ -326,6 +362,12 @@ VITE_WS_URL=ws://localhost:8000/ws
 - **Interactive Query Interface**: Natural language input with intelligent suggestions
 - **Result Visualization**: Charts, tables, and formatted responses
 - **Node Inspection**: Detailed view of each processing step with input/output data
+- **Execution Log Display**: Real-time scrolling log showing:
+  - Document retrieval details (source files, scores, content previews)
+  - Reranking results with Cross-Encoder scores
+  - SQL query execution with table names and results
+  - Chart generation process and data points
+  - Node reasoning and decision-making processes
 
 ### Data Source Management
 - **Multi-type Support**: Knowledge bases, SQL tables, and hybrid sources
@@ -395,6 +437,7 @@ CMD ["python", "start.py"]
 - **Health Checks**: Automated system health monitoring
 - **WebSocket Monitoring**: Connection status and message tracking
 - **Database Metrics**: Query performance and connection pooling
+- **Execution Logs**: Detailed node-by-node execution tracking
 
 ## 🧪 Testing
 
@@ -465,8 +508,12 @@ We welcome contributions! Please follow these steps:
 - ✅ Multi-LLM provider support
 - ✅ Real-time WebSocket communication
 - ✅ Intelligent workflow orchestration
-- ✅ Document processing and RAG
+- ✅ Document processing and RAG (top 10 retrieval → top 3 reranking)
 - ✅ Internationalization support
+- ✅ Detailed execution logs with node reasoning
+- ✅ SQL Agent with ReAct pattern
+- ✅ Automatic chart generation
+- ✅ Cross-Encoder document reranking
 
 ### Planned Features 🔄
 - 🔄 User authentication and authorization
@@ -531,4 +578,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Made with ❤️ by the Smart AI Assistant team
 
-</div> 
+</div>

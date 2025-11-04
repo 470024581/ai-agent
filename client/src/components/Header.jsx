@@ -174,6 +174,16 @@ function Header() {
                 </h3>
                 
                 <div className="space-y-6">
+                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-100">
+                    <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+                      <span className="text-blue-500">📋</span>
+                      {t('about.projectInfo.description.title')}
+                    </h4>
+                    <p className="text-gray-700 leading-relaxed">
+                      {t('about.projectInfo.description.content')}
+                    </p>
+                  </div>
+                  
                   <div className="bg-gray-50 p-4 rounded-lg">
                     <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
                       <span className="text-blue-500">⚡</span>
@@ -182,11 +192,27 @@ function Header() {
                     <ul className="space-y-2 text-gray-600">
                       <li className="flex items-start gap-2">
                         <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
-                        <span>{t('about.projectInfo.features.multiModel')}</span>
+                        <span>{t('about.projectInfo.features.langgraph')}</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
-                        <span>{t('about.projectInfo.features.mcpIntegration')}</span>
+                        <span>{t('about.projectInfo.features.ragRetrieval')}</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                        <span>{t('about.projectInfo.features.executionLogs')}</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                        <span>{t('about.projectInfo.features.sqlAgent')}</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                        <span>{t('about.projectInfo.features.chartGeneration')}</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                        <span>{t('about.projectInfo.features.multiModel')}</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
