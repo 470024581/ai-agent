@@ -402,6 +402,60 @@ async def get_datasource_files(datasource_id: int):
             data=[]
         )
 
+@router.get("/api/v1/datasources/{datasource_id}/files/{file_id}/download", summary="Download File from Data Source")
+async def download_file(datasource_id: int, file_id: int):
+    """Download a file from a specific data source"""
+    try:
+        # Verify data source exists
+        datasource = await get_datasource(datasource_id)
+        if not datasource:
+            raise HTTPException(status_code=404, detail="Data source not found")
+        
+        # Get file information from database
+        files = await get_files_by_datasource(datasource_id)
+        file_info = next((f for f in files if f['id'] == file_id), None)
+        
+        if not file_info:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Construct file path
+        file_path = UPLOAD_DIR / file_info['filename']
+        
+        if not os.path.exists(file_path):
+            logger.error(f"File not found at path: {file_path}")
+            raise HTTPException(
+                status_code=404,
+                detail="File not found on server"
+            )
+        
+        # Determine media type based on file extension
+        file_ext = os.path.splitext(file_info['original_filename'])[1].lower()
+        media_type_map = {
+            '.pdf': 'application/pdf',
+            '.txt': 'text/plain',
+            '.md': 'text/markdown',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.csv': 'text/csv',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel'
+        }
+        
+        media_type = media_type_map.get(file_ext, 'application/octet-stream')
+        
+        # Return the file
+        return FileResponse(
+            path=str(file_path),
+            filename=file_info['original_filename'],
+            media_type=media_type
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
+
 @router.delete("/api/v1/datasources/{datasource_id}/files/{file_id}", response_model=BaseResponse, summary="Delete File from Data Source")
 async def delete_file_from_datasource(datasource_id: int, file_id: int):
     """Delete a specific file and its associated data from a data source."""

@@ -129,7 +129,10 @@
       "noFileChosen": "未选择任何文件"
     },
     "uploadSuccess": "文件已上传并开始处理。",
-    "deleteSuccess": "文件 ID {{fileId}} 及其关联数据已成功删除。"
+    "deleteSuccess": "文件 ID {{fileId}} 及其关联数据已成功删除。",
+    "download": "下载",
+    "downloadSuccess": "文件 '{{fileName}}' 下载成功。",
+    "downloadFailed": "文件 '{{fileName}}' 下载失败。"
   },
   "unknown": "未知",
   "fileProcessingFailedError": "文件 '{{fileName}}' 处理失败。错误: {{error}}",

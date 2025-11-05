@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FaDatabase, FaPlus, FaEdit, FaTrash, FaCheck, FaUpload, FaFile, FaExclamationTriangle, FaTimes, FaLightbulb } from 'react-icons/fa';
+import { FaDatabase, FaPlus, FaEdit, FaTrash, FaCheck, FaUpload, FaFile, FaExclamationTriangle, FaTimes, FaLightbulb, FaDownload } from 'react-icons/fa';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -142,6 +142,38 @@ function DataSourceManager() {
     } finally {
       setShowDeleteModal(false);
       setDeleteTarget(null);
+    }
+  };
+
+  const handleDownloadFile = async (datasourceId, fileId, fileName) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/datasources/${datasourceId}/files/${fileId}/download`);
+      
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+      
+      // Get the blob from the response
+      const blob = await response.blob();
+      
+      // Create a temporary URL for the blob
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create a temporary anchor element and trigger download
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Cleanup
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      setAlertMessage({ type: 'success', message: t('file.downloadSuccess', { fileName }) });
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      setAlertMessage({ type: 'danger', message: t('file.downloadFailed', { fileName }) });
     }
   };
 
@@ -651,7 +683,7 @@ function DataSourceManager() {
                               <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-24 text-center">{t('fileSize')}</TableHead>
                               <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-32 text-center">{t('processingStatus')}</TableHead>
                               <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-40 text-center">{t('uploadedAt')}</TableHead>
-                              <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-20 text-center">{t('actions')}</TableHead>
+                              <TableHead className="py-3 px-3 font-semibold text-gray-700 text-sm w-28 text-center">{t('actions')}</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -667,15 +699,26 @@ function DataSourceManager() {
                                 <TableCell className="py-2 px-3 text-center">{getStatusBadge(file.processing_status)}</TableCell>
                                 <TableCell className="py-2 px-3 text-gray-600 text-xs text-center">{new Date(file.uploaded_at).toLocaleString()}</TableCell>
                                 <TableCell className="py-2 px-3 text-center">
-                                  <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    onClick={() => handleDeleteFile(selectedDatasource.id, file.id, file.original_filename)}
-                                    title={`${t('deleteFile')}: ${file.original_filename}`}
-                                    className="border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 h-8 w-8 p-0"
-                                  >
-                                    <FaTrash className="h-3 w-3" />
-                                  </Button>
+                                  <div className="flex items-center justify-center gap-2">
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => handleDownloadFile(selectedDatasource.id, file.id, file.original_filename)}
+                                      title={`${t('file.download') || 'Download'}: ${file.original_filename}`}
+                                      className="border-blue-200 text-blue-500 hover:bg-blue-50 hover:border-blue-300 h-8 w-8 p-0"
+                                    >
+                                      <FaDownload className="h-3 w-3" />
+                                    </Button>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      onClick={() => handleDeleteFile(selectedDatasource.id, file.id, file.original_filename)}
+                                      title={`${t('deleteFile')}: ${file.original_filename}`}
+                                      className="border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 h-8 w-8 p-0"
+                                    >
+                                      <FaTrash className="h-3 w-3" />
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             ))}

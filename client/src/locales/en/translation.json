@@ -166,7 +166,10 @@
       "noFileChosen": "No file chosen"
     },
     "uploadSuccess": "File uploaded and processing started.",
-    "deleteSuccess": "File ID {{fileId}} and its associated data deleted successfully."
+    "deleteSuccess": "File ID {{fileId}} and its associated data deleted successfully.",
+    "download": "Download",
+    "downloadSuccess": "File '{{fileName}}' downloaded successfully.",
+    "downloadFailed": "Failed to download file '{{fileName}}'."
   },
   "unknown": "Unknown",
   "fileProcessingFailedError": "File '{{fileName}}' processing failed. Error: {{error}}",
