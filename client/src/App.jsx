@@ -1,6 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Header from './components/Header'
-import QueryForm from './components/QueryForm'
 import DataSourceManager from './components/DataSourceManager'
 import IntelligentAnalysis from './components/IntelligentAnalysis'
 
@@ -11,9 +10,9 @@ function App() {
       <main className="container mx-auto px-6 py-1">
         <Routes>
           <Route path="/" element={<Navigate replace to="/intelligent-analysis" />} />
-          <Route path="/query" element={<QueryForm />} />
           <Route path="/intelligent-analysis" element={<IntelligentAnalysis />} />
           <Route path="/datasources" element={<DataSourceManager />} />
+          <Route path="*" element={<Navigate replace to="/intelligent-analysis" />} />
         </Routes>
       </main>
     </div>

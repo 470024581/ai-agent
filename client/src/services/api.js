@@ -35,19 +35,6 @@ api.interceptors.response.use(
   }
 );
 
-// 智能问答API
-export const queryAPI = {
-  // 发送自然语言查询
-  sendQuery: async (query) => {
-    try {
-      const response = await api.post('/query', { query });
-      return response.data;
-    } catch (error) {
-      throw new Error('查询失败: ' + error.message);
-    }
-  }
-};
-
 // 库存管理API
 export const inventoryAPI = {
   // 获取库存列表

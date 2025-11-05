@@ -19,8 +19,7 @@ from fastapi import Request
 import time
 
 # Import from the restructured modules
-from .models.data_models import QueryRequest, QueryResponse
-from .agents.intelligent_agent import initialize_app_state, get_answer_from
+from .agents.intelligent_agent import initialize_app_state
 from .api.routes import router
 
 # ===== CRITICAL FIX: Configure logging in worker process =====
@@ -179,30 +178,6 @@ async def health():
         }
     }
 
-# Core API endpoints - Intelligent Q&A
-@app.post("/api/v1/query", response_model=QueryResponse, tags=["Intelligent Q&A"])
-async def intelligent_query(request: QueryRequest):
-    """
-    Intelligent Q&A API - Natural language queries
-    
-    Supports:
-    - Sales data queries
-    - Inventory status queries  
-    - Data source queries (SQL/RAG)
-    - Natural language processing
-    """
-    try:
-        result = await get_answer_from(request.query, "general")
-        return QueryResponse(
-            answer=result.get("answer", "No answer generated"),
-            data_for_chart=result.get("chart_data"),
-            success=result.get("success", True),
-            data=result.get("data", {}),
-            suggestions=result.get("suggestions", [])
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
-
 # API information endpoint
 @app.get("/api/v1/info", tags=["System Info"])
 async def api_info():
@@ -220,7 +195,6 @@ async def api_info():
         },
         "endpoints": [
             "GET / (Frontend)" if frontend_available else None,
-            "POST /api/v1/query",
             "GET /api/v1/datasources",
             "POST /api/v1/datasources",
             "POST /api/v1/datasources/{id}/files/upload"

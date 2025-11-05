@@ -6,7 +6,6 @@ import uuid
 import aiofiles
 from pathlib import Path
 from ..models.data_models import (
-    QueryRequest, QueryResponse, 
     BaseResponse,
     DataSourceCreate, DataSourceUpdate, DataSource, DataSourceResponse, DataSourceListResponse,
     FileInfo, FileListResponse, ProcessingStatus, FileType, DataSourceType,
@@ -15,7 +14,6 @@ from ..models.data_models import (
     NodeStatus,
 )
 from ..agents.intelligent_agent import (
-    get_answer_from, 
     initialize_app_state
 )
 from ..chains.langgraph_flow import process_intelligent_query
@@ -32,7 +30,7 @@ from ..database.db_operations import (
     create_hitl_execution_history, get_hitl_execution_history
 )
 from ..utils.common_utils import (
-    create_api_response, parse_query_intent
+    create_api_response
 )
 from ..document_loaders.file_processor import process_uploaded_file
 from ..config.config import DATA_DIR
@@ -469,59 +467,6 @@ async def delete_file_from_datasource(datasource_id: int, file_id: int):
         raise
     except Exception as e:
         return BaseResponse(success=False, error=f"An internal server error occurred while deleting File ID {file_id}: {str(e)}")
-
-# ==================== Intelligent Q&A API ====================
-
-@router.post("/api/v1/query", response_model=Dict[str, Any], summary="Intelligent Q&A")
-async def query_endpoint(request: QueryRequest):
-    """
-    Generic intelligent Q&A interface - query  data using natural language.
-    
-    Supported query types:
-    - Sales data queries
-    - Inventory status queries
-    - Document/knowledge base queries
-    - SQL table queries
-    """
-    try:
-        intent = parse_query_intent(request.query)
-        active_datasource_dict = await get_active_datasource()
-        ds_id_for_response = active_datasource_dict['id'] if active_datasource_dict else 1
-        
-        query_type_for_agent = intent['type']
-        # Intelligent routing logic based on intent
-        if intent['type'] in ["sales", "inventory", "product", "order", "customer", "report"]:
-            # Business data queries use built-in ERP database
-            query_type_for_agent = "sales"  # Use sales agent for all business data queries
-        elif active_datasource_dict and active_datasource_dict['type'] in [DataSourceType.KNOWLEDGE_BASE.value, DataSourceType.HYBRID.value]:
-            # Document queries use active document datasource
-            query_type_for_agent = "rag"
-        else:
-            # Default fallback to sales for business queries
-            query_type_for_agent = "sales"
-
-        result = await get_answer_from(request.query, query_type_for_agent, active_datasource=active_datasource_dict)
-        
-        return create_api_response(
-            success=True,
-            query=request.query,
-            query_type=result.get("query_type", intent['type']),
-            intent=intent,
-            answer=result.get("answer", "No answer could be generated."),
-            data=result.get("data", {}),
-            charts=result.get("chart_data"),
-            suggestions=result.get("suggestions", []),
-            datasource_id=ds_id_for_response,
-            source_datasource_name=result.get("source_datasource_name", "Default ")
-        )
-        
-    except Exception as e:
-        return create_api_response(
-            success=False,
-            error=f"Query processing failed: {str(e)}",
-            query=request.query,
-            datasource_id=request.datasource_id if hasattr(request, 'datasource_id') else None
-        )
 
 # ==================== LangGraph Intelligent Analysis API ====================
 
