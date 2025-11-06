@@ -32,6 +32,7 @@ from ..database.db_operations import (
 from ..utils.common_utils import (
     create_api_response
 )
+from ..utils.rate_limiter import rate_limit
 from ..document_loaders.file_processor import process_uploaded_file
 from ..config.config import DATA_DIR
 import json
@@ -522,7 +523,8 @@ async def process_query(query: str, datasource_id: int, execution_id: str) -> Di
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/api/v1/intelligent-analysis")
-async def intelligent_analysis(data: IntelligentAnalysisRequest):
+@rate_limit
+async def intelligent_analysis(request: Request, data: IntelligentAnalysisRequest):
     logger.info(f"Intelligent analysis request - query: {data.query[:50]}..., datasource: {data.datasource_id}")
     
     try:

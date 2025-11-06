@@ -21,6 +21,7 @@ import time
 # Import from the restructured modules
 from .agents.intelligent_agent import initialize_app_state
 from .api.routes import router
+from .utils.rate_limiter import start_cleanup_task, stop_cleanup_task
 
 # ===== CRITICAL FIX: Configure logging in worker process =====
 # Uvicorn reload spawns worker processes that don't inherit log_config from parent
@@ -149,6 +150,10 @@ async def startup_event():
     print("Application starting up...")
     initialize_app_state()
     
+    # Start rate limit cleanup task
+    start_cleanup_task()
+    print("Rate limit cleanup task started")
+    
     # Check if frontend is available
     frontend_available = static_dir.exists()
     print(f"Frontend available: {frontend_available}")
@@ -159,6 +164,14 @@ async def startup_event():
         print("Frontend not found. Only API will be available.")
     
     print("Application startup completed.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown."""
+    print("Application shutting down...")
+    stop_cleanup_task()
+    print("Rate limit cleanup task stopped")
+    print("Application shutdown completed.")
 
 @app.get("/ping", tags=["Health Check"])
 async def ping():

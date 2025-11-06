@@ -81,7 +81,7 @@ const Circle = forwardRef(({ className, children, icon: Icon, color = 'blue', is
           'scale-110',
           'shadow-2xl'
         ],
-        isCompleted && 'opacity-60 scale-95',
+        isCompleted && 'opacity-85 hover:opacity-100',
         'transition-all duration-500 ease-in-out',
         'hover:scale-105 cursor-pointer',
         className,
@@ -265,6 +265,7 @@ export function AnimatedWorkflowDiagram({
               left: `${pos.x}px`,
               top: `${pos.y}px`,
               transform: 'translate(-50%, -50%)',
+              zIndex: 10,
             }}
             className="flex flex-col items-center gap-1.5 transition-all duration-300"
             ref={nodeContainerRefs.current[node.id]}
