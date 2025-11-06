@@ -1,35 +1,35 @@
-fastapi
-uvicorn[standard]
-langchain
-langchain-core
-langchain-community
-langchain-openai
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+langchain==0.3.25
+langchain-core==0.3.74
+langchain-community==0.3.25
+langchain-openai==0.3.19
 # For Langchain SQL Agent and DB interaction
-sqlalchemy
+sqlalchemy==2.0.41
 # For Pydantic models
-pydantic
+pydantic==2.11.5
 # For loading .env files
-python-dotenv
+python-dotenv==1.1.0
 # For file upload and handling
-aiofiles
-python-multipart
+aiofiles==24.1.0
+python-multipart==0.0.20
 # For RAG with FAISS
-faiss-cpu
+faiss-cpu==1.11.0
 # For parsing different file types
-pypdf2
-python-docx>=0.8.11
-pyecharts>=2.0.8
-openpyxl
-pandas
+pypdf2==3.0.1
+python-docx==1.1.2
+pyecharts==2.0.8
+openpyxl==3.1.5
+pandas==2.2.3
 # For local embeddings
-sentence-transformers
-torch
-transformers
+sentence-transformers==4.1.0
+torch==2.8.0
+transformers==4.57.0
 # For LangGraph
-langgraph
+langgraph==0.4.8
 # For HTTP requests (chart generation)
-requests
+requests==2.32.3
 # For AWS Bedrock integration
-boto3>=1.34.0
-botocore>=1.34.0
-langchain-aws>=0.1.0 
+boto3==1.40.16
+botocore==1.40.16
+langchain-aws==0.2.31 
