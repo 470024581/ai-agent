@@ -145,7 +145,8 @@ export function AnimatedWorkflowDiagram({
     const width = rect.width;
     const height = rect.height;
     const paddingX = 40; // left/right padding for layout
-    const paddingY = 0; // top/bottom padding for layout (reduced to increase vertical spacing)
+    const paddingYTop = 0; // top padding to push nodes down
+    const paddingYBottom = 20; // bottom padding
 
     // Group nodes by layer if layer is provided
     const layers = new Map();
@@ -170,7 +171,7 @@ export function AnimatedWorkflowDiagram({
     const layerCount = sortedLayers.length;
     // For left-to-right layout: spread layers along X axis, and nodes within a layer along Y axis
     const availableWidth = Math.max(1, width - paddingX * 2);
-    const availableHeight = Math.max(1, height - paddingY * 2);
+    const availableHeight = Math.max(1, height - paddingYTop - paddingYBottom);
     const layerGap = layerCount > 1 ? availableWidth / (layerCount - 1) : availableWidth / 2;
 
     const positions = {};
@@ -183,21 +184,26 @@ export function AnimatedWorkflowDiagram({
         // If node.col provided, treat it as row index (1-based); else spread evenly
         const row = node.col != null ? Number(node.col) - 1 : indexInLayer;
         const totalRows = node.totalCols != null ? Number(node.totalCols) : rowCount;
-        let y = paddingY + (availableHeight * (row + 1)) / (totalRows + 1);
+        let y = paddingYTop + (availableHeight * (row + 1)) / (totalRows + 1);
         
         // Apply specific upward shifts for better alignment
         if (node.id === 'sql_agent_node' || node.id === 'chart_process_node') {
           y -= 40; // Move SQL Agent and Chart Process up by 40 pixels
         }
 
-        // Force alignment for RAG, Router, and LLM nodes to share the same Y level
+        // Force alignment for RAG, Router, and LLM nodes to share the same Y level (moved down)
         if (node.id === 'rag_query_node' || node.id === 'router_node' || node.id === 'llm_processing_node') {
-          y = (height * 3) / 7;
+          y = paddingYTop + (height * 0.45); // Moved down from (height * 3) / 7 ≈ 0.43 to 0.45
+        }
+
+        // Align Start and Complete nodes to the same horizontal line as RAG/Router/LLM nodes
+        if (node.id === 'start_node' || node.id === 'end_node') {
+          y = paddingYTop + (height * 0.45); // Same Y level as RAG/Router/LLM nodes
         }
         
         // Ensure x and y are within bounds
         const clampedX = Math.max(paddingX, Math.min(width - paddingX, x));
-        const clampedY = Math.max(paddingY, Math.min(height - paddingY, y));
+        const clampedY = Math.max(paddingYTop, Math.min(height - paddingYBottom, y));
         
         positions[node.id] = { x: clampedX, y: clampedY };
       });
@@ -228,7 +234,7 @@ export function AnimatedWorkflowDiagram({
   }, []);
 
   return (
-    <div className="relative w-full h-full min-h-[320px] max-h-[360px] flex items-center justify-center overflow-hidden bg-transparent rounded-xl p-3" ref={containerRef}>
+    <div className="relative w-full h-full min-h-[320px] max-h-[360px] flex items-start justify-center overflow-hidden bg-transparent rounded-xl pt-3 px-3 pb-1" ref={containerRef}>
       <style>{`
         @keyframes pulse-strong {
           0%, 100% {

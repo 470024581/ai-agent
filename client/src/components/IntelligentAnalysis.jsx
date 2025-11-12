@@ -1242,13 +1242,13 @@ function IntelligentAnalysis() {
          <div className="space-y-4 h-full flex flex-col lg:col-span-4">
           {/* Flow chart */}
            <Card className="shadow-2xl border-0 bg-white/70 dark:bg-gray-800/70 backdrop-blur-xl rounded-2xl flex-1">
-             <CardContent className="p-6 h-full flex flex-col">
-          <div className="flex-1">
+             <CardContent className="pt-6 px-6 pb-2 h-full flex flex-col">
+          <div className="flex-1 pb-0">
               {renderLangGraphDiagram()}
                </div>
                
                {/* Execution Log Panel */}
-               <div className="mt-1 pt-2 border-t border-gray-200 dark:border-gray-600">
+               <div className="-mt-[120px] pt-1 border-t border-gray-200 dark:border-gray-600">
                  <div className="bg-gradient-to-r from-gray-50/80 to-slate-50/80 dark:from-gray-800/80 dark:to-gray-700/80 backdrop-blur-sm rounded-xl p-2.5 border border-gray-200/20 dark:border-gray-600/30 shadow-lg">
                    <div className="flex items-center mb-2">
                      <FaCode className="h-3.5 w-3.5 text-blue-500 mr-2" />
@@ -1256,7 +1256,7 @@ function IntelligentAnalysis() {
                        LangGraph Execution Log
                      </Label>
                    </div>
-                   <div className="h-40 overflow-y-auto bg-gray-900 dark:bg-black rounded-lg p-3 font-mono text-xs">
+                   <div className="h-56 overflow-y-auto bg-gray-900 dark:bg-black rounded-lg p-3 font-mono text-xs">
                      <ExecutionLogDisplay 
                        executionId={executionId}
                        currentExecutionData={currentExecutionData}

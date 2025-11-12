@@ -796,8 +796,75 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                         stream_data = event.get("data", {})
                         chunk = stream_data.get("chunk", {})
                         
-                        # Check if chunk contains actions (structured format)
-                        if isinstance(chunk, dict) and "actions" in chunk:
+                        # Check if chunk contains steps (AgentStep objects with action and observation)
+                        if isinstance(chunk, dict) and "steps" in chunk:
+                            steps = chunk["steps"]
+                            if isinstance(steps, list) and len(steps) > 0:
+                                # Process each step
+                                for step_obj in steps:
+                                    # Extract action and observation from AgentStep
+                                    action_obj = getattr(step_obj, "action", None) if hasattr(step_obj, "action") else None
+                                    observation = getattr(step_obj, "observation", None) if hasattr(step_obj, "observation") else None
+                                    
+                                    if action_obj:
+                                        tool_name = getattr(action_obj, "tool", None) if hasattr(action_obj, "tool") else None
+                                        tool_input_raw = getattr(action_obj, "tool_input", None) if hasattr(action_obj, "tool_input") else None
+                                        
+                                        if tool_name:
+                                            # Format tool_input as dict
+                                            if isinstance(tool_input_raw, dict):
+                                                tool_input_dict = tool_input_raw
+                                            elif isinstance(tool_input_raw, str):
+                                                tool_input_dict = {"query": tool_input_raw} if tool_name == "sql_db_query" else {"input": tool_input_raw}
+                                            else:
+                                                tool_input_dict = {"input": str(tool_input_raw) if tool_input_raw else ""}
+                                            
+                                            # Check if we already have this action step
+                                            existing_step_idx = None
+                                            for idx, step in enumerate(intermediate_steps):
+                                                if step.get("tool") == tool_name:
+                                                    existing_step_idx = idx
+                                                    break
+                                            
+                                            if existing_step_idx is None:
+                                                # New action step
+                                                step_counter += 1
+                                                logger.info(f"Captured action from on_chain_stream steps: tool={tool_name}, input_type={type(tool_input_raw).__name__}")
+                                                
+                                                tool_input_str = json.dumps(tool_input_dict, ensure_ascii=False, indent=2) if isinstance(tool_input_dict, dict) else str(tool_input_dict)
+                                                content = f"Calling tool: {tool_name}\nInput: {tool_input_str[:200]}{'...' if len(tool_input_str) > 200 else ''}"
+                                                
+                                                await websocket_manager.stream_react_step(
+                                                    execution_id=execution_id,
+                                                    step_type="action",
+                                                    step_index=step_counter,
+                                                    content=content,
+                                                    node_id="sql_agent_node",
+                                                    tool_name=tool_name,
+                                                    tool_input=tool_input_dict
+                                                )
+                                                
+                                                intermediate_steps.append({
+                                                    "step": "action",
+                                                    "tool": tool_name,
+                                                    "input": tool_input_dict,
+                                                    "observation": str(observation) if observation else ""
+                                                })
+                                            else:
+                                                # Update existing step with observation
+                                                if observation:
+                                                    intermediate_steps[existing_step_idx]["observation"] = str(observation)
+                                                    logger.info(f"Updated step {existing_step_idx} with observation: tool={tool_name}, observation_length={len(str(observation))}")
+                                                    
+                                                    # Try to parse structured_data from observation if it's a SQL query
+                                                    if tool_name == "sql_db_query" and observation:
+                                                        parsed = _parse_agent_query_result(str(observation))
+                                                        if parsed:
+                                                            structured_data = parsed
+                                                            logger.info(f"Parsed structured_data from steps observation: {len(parsed.get('rows', []))} rows")
+                        
+                        # Check if chunk contains actions (structured format) - fallback
+                        elif isinstance(chunk, dict) and "actions" in chunk:
                             actions = chunk["actions"]
                             if isinstance(actions, list) and len(actions) > 0:
                                 # Get the first action (AgentAction object)
@@ -2381,10 +2448,49 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         
         Data summary: {data_summary}
         
-        You MUST return a complete JSON configuration for the chart. Analyze the user's requirements and provide ALL required fields:
+        You MUST return a complete JSON configuration for the chart. Analyze the user's requirements and provide ALL required fields.
+        
+        CHART TYPE SELECTION RULES (CRITICAL):
+        1. Use "line" chart for:
+           - Time series data (trends over time)
+           - Queries containing: "trend", "monthly", "yearly", "daily", "weekly", "over time", "时间", "趋势", "月度", "年度"
+           - Data showing changes over time periods (months, years, days, etc.)
+           - Sequential time-based comparisons
+           - When categories represent time periods (e.g., months: "01", "02", ..., "12")
+        
+        2. Use "pie" chart for:
+           - Proportions and distributions
+           - Queries explicitly asking for "proportion", "distribution", "percentage", "share"
+           - Comparing parts of a whole
+           - Category-based data WITHOUT time dimension
+        
+        3. Use "bar" chart for:
+           - Comparing categories (non-time-based)
+           - Ranking and comparisons
+           - When neither trend nor proportion is the focus
+        
+        TIME SERIES DETECTION:
+        - If query contains "trend", "monthly", "yearly", "daily", "weekly", "over time", "时间", "趋势", "月度", "年度"
+        - OR if data has time-based categories (months: "01"-"12", years: "2025", dates: "2025-01-15", etc.)
+        - THEN set is_time_series: true, time_grouping: "month"/"year"/"day" as appropriate, chart_type: "line"
+        
+        Example for TIME SERIES (trend query):
+        {{
+            "chart_type": "line",
+            "title": "Monthly Sales Trend for 2025",
+            "x_axis_label": "Month",
+            "y_axis_label": "Sales Revenue ($)",
+            "data_field_for_labels": "category",
+            "data_field_for_values": "sales_revenue",
+            "aggregation_method": "sum",
+            "time_grouping": "month",
+            "is_time_series": true
+        }}
+        
+        Example for PROPORTION (pie chart):
         {{
             "chart_type": "pie",
-            "title": "Sales Proportion by Product Category (July-September 2025)",
+            "title": "Sales Proportion by Product Category",
             "x_axis_label": "Product Category",
             "y_axis_label": "Sales Revenue ($)",
             "data_field_for_labels": "category",
@@ -2395,13 +2501,12 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         }}
         
         IMPORTANT: 
-        1. For pie charts about sales proportion, use chart_type: "pie"
-        2. Always provide a meaningful title based on the query - NEVER leave title empty
-        3. Title should be descriptive and include relevant time periods if mentioned
-        4. For sales data, include time period in title (e.g., "July-September 2025")
-        5. For sales data, use y_axis_label: "Sales Revenue ($)" or "Sales Amount ($)"
-        6. For category data, use x_axis_label: "Product Category" or similar
-        7. Return ONLY valid JSON, no additional text
+        1. Always provide a meaningful title based on the query - NEVER leave title empty
+        2. Title should be descriptive and include relevant time periods if mentioned
+        3. For time series queries, use chart_type: "line" and set is_time_series: true
+        4. For sales data, use y_axis_label: "Sales Revenue ($)" or "Sales Amount ($)"
+        5. For time series, use x_axis_label: "Month", "Year", "Date", etc.
+        6. Return ONLY valid JSON, no additional text
         
         Based on the query "{user_input}", return the complete JSON configuration:
         """
@@ -2503,12 +2608,48 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         detected_type = chart_analysis.get("chart_type", "bar")
         user_input_lower = user_input.lower()
         
+        # Check if this is a time series query (trend, monthly, yearly, etc.)
+        is_time_series_query = any(kw in user_input_lower for kw in [
+            'trend', 'monthly', 'yearly', 'daily', 'weekly', 'over time', 
+            '时间', '趋势', '月度', '年度', '日期', '天', '周'
+        ])
+        
+        # Check if data indicates time series (categories are months, years, dates)
+        data_summary_lower = (data_summary or "").lower()
+        has_time_categories = any(indicator in data_summary_lower for indicator in [
+            'month', 'year', 'date', '01', '02', '03', '12', '2025', '2024'
+        ])
+        
+        # Priority-based chart type detection
         if "pie chart" in user_input_lower or "pie" in user_input_lower:
-            detected_type = "pie"
+            # Only use pie if explicitly requested AND not a time series query
+            if not is_time_series_query and not has_time_categories:
+                detected_type = "pie"
+            else:
+                detected_type = "line"  # Override to line for time series
+                logger.info("Overriding pie chart to line chart for time series query")
         elif "line chart" in user_input_lower or "line" in user_input_lower:
             detected_type = "line"
         elif "bar chart" in user_input_lower or "bar" in user_input_lower:
             detected_type = "bar"
+        elif is_time_series_query or has_time_categories:
+            # Force line chart for time series queries
+            detected_type = "line"
+            # Update chart_analysis to reflect time series detection
+            chart_analysis["is_time_series"] = True
+            if chart_analysis.get("time_grouping", "none") == "none":
+                # Detect time grouping from query
+                if "monthly" in user_input_lower or "month" in user_input_lower:
+                    chart_analysis["time_grouping"] = "month"
+                elif "yearly" in user_input_lower or "year" in user_input_lower:
+                    chart_analysis["time_grouping"] = "year"
+                elif "daily" in user_input_lower or "day" in user_input_lower:
+                    chart_analysis["time_grouping"] = "day"
+                elif "weekly" in user_input_lower or "week" in user_input_lower:
+                    chart_analysis["time_grouping"] = "week"
+                else:
+                    chart_analysis["time_grouping"] = "month"  # Default for trend queries
+            logger.info(f"Detected time series query/data, forcing chart_type to 'line', time_grouping: {chart_analysis.get('time_grouping')}")
         
         # Generate intelligent chart title
         chart_title = chart_analysis.get("title", "")
@@ -2699,6 +2840,7 @@ def extract_data_summary(data: Dict[str, Any]) -> str:
 
 def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: Dict[str, Any], user_input: str = "") -> tuple:
     """Extract chart data - simplified logic without fallback"""
+    import re
     try:
         labels = []
         values = []
@@ -2712,18 +2854,126 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         logger.info(f"Processing sample row: {sample_row}, type: {type(sample_row)}")
         
         # Handle dictionary format with category/value keys (from parsed string results)
-        if isinstance(sample_row, dict) and "category" in sample_row and "value" in sample_row:
-            logger.info(f"Processing {len(rows)} rows of category-value data")
+        # Support various value field names: "value", "sales_revenue", etc.
+        value_field_names = ["value", "sales_revenue", "revenue", "amount", "total", "sum"]
+        value_field = None
+        if isinstance(sample_row, dict) and "category" in sample_row:
+            # Find the value field
+            for field_name in value_field_names:
+                if field_name in sample_row:
+                    value_field = field_name
+                    break
+            # If no standard field found, try to find the second numeric field
+            if not value_field:
+                for key, val in sample_row.items():
+                    if key != "category" and isinstance(val, (int, float)):
+                        value_field = key
+                        break
+        
+        if isinstance(sample_row, dict) and "category" in sample_row and value_field:
+            logger.info(f"Processing {len(rows)} rows of category-value data (value field: {value_field})")
             
-            # Simple processing: sort by value descending and take all data points
-            sorted_rows = sorted(rows, key=lambda x: float(x.get("value", 0)), reverse=True)
-            processed_rows = sorted_rows  # Remove the limit to show all data points
+            # Detect if this is time series data
+            # First check chart_analysis and user_input (most reliable)
+            user_input_lower = (user_input or "").lower()
+            is_time_series_from_analysis = (
+                chart_analysis.get("is_time_series", False) or 
+                chart_analysis.get("time_grouping", "none") != "none" or
+                any(kw in user_input_lower for kw in ['trend', 'monthly', 'yearly', 'daily', 'weekly', 'over time', '时间', '趋势', '月度', '年度', '日期', '天', '周'])
+            )
+            
+            # Check sample categories to detect time format (even if analysis doesn't suggest it)
+            is_time_series = is_time_series_from_analysis
+            time_sort_keys = {}
+            sample_categories = [str(row.get("category", "")) for row in rows[:min(5, len(rows))]]
+            
+            # Always check category format to detect time series, regardless of analysis
+            for cat in sample_categories:
+                ts_detected, sort_key = _detect_time_series_category(cat, chart_analysis, user_input)
+                if ts_detected and sort_key is not None:
+                    is_time_series = True
+                    # Update chart_analysis if it wasn't set correctly
+                    if not chart_analysis.get("is_time_series", False):
+                        chart_analysis["is_time_series"] = True
+                    if chart_analysis.get("time_grouping", "none") == "none":
+                        # Detect time grouping from category format
+                        if re.match(r'^(0?[1-9]|1[0-2])$', str(cat)):
+                            chart_analysis["time_grouping"] = "month"
+                        elif re.match(r'^\d{4}$', str(cat)):
+                            chart_analysis["time_grouping"] = "year"
+                    break
+            
+            # Build sort keys for all rows
+            for row in rows:
+                category = str(row.get("category", ""))
+                ts_detected, sort_key = _detect_time_series_category(category, chart_analysis, user_input)
+                logger.info(f"Category '{category}': ts_detected={ts_detected}, sort_key={sort_key}, chart_analysis.is_time_series={chart_analysis.get('is_time_series')}, time_grouping={chart_analysis.get('time_grouping')}")
+                if ts_detected and sort_key is not None:
+                    time_sort_keys[category] = sort_key
+                    if not is_time_series:
+                        is_time_series = True
+                        # Update chart_analysis
+                        chart_analysis["is_time_series"] = True
+                        if chart_analysis.get("time_grouping", "none") == "none":
+                            if re.match(r'^(0?[1-9]|1[0-2])$', category):
+                                chart_analysis["time_grouping"] = "month"
+                            elif re.match(r'^\d{4}$', category):
+                                chart_analysis["time_grouping"] = "year"
+                else:
+                    # Log when detection fails for debugging
+                    logger.warning(f"Time series detection failed for category '{category}': ts_detected={ts_detected}, sort_key={sort_key}, chart_analysis={chart_analysis.get('is_time_series')}, time_grouping={chart_analysis.get('time_grouping')}")
+            
+            logger.info(f"Time series detection result: is_time_series={is_time_series}, time_sort_keys={len(time_sort_keys)} keys, sample_keys={list(time_sort_keys.items())[:5] if time_sort_keys else []}")
+            
+            # Sort rows based on data type
+            if is_time_series and time_sort_keys:
+                # Sort by time order (ascending for chronological order)
+                def time_sort_key(row):
+                    category = str(row.get("category", ""))
+                    return time_sort_keys.get(category, float('inf'))
+                sorted_rows = sorted(rows, key=time_sort_key)
+                logger.info(f"Is time series: True, Time grouping: {chart_analysis.get('time_grouping', 'none')}, time_sort_keys count: {len(time_sort_keys)}")
+                logger.info("Sorted by time (chronological order)")
+            else:
+                # Sort by value descending for non-time series data
+                sorted_rows = sorted(rows, key=lambda x: float(x.get(value_field, 0)), reverse=True)
+                logger.info(f"Sorted by value (descending), value_field: {value_field}")
+            
+            processed_rows = sorted_rows  # Use all data points
             
             # Extract final labels and values
             for row in processed_rows:
                 try:
-                    label = str(row["category"]) if row["category"] else f"Item{len(labels)+1}"
-                    value = float(row["value"]) if isinstance(row["value"], (int, float)) else 0
+                    category = str(row["category"]) if row["category"] else f"Item{len(labels)+1}"
+                    value = float(row[value_field]) if isinstance(row.get(value_field), (int, float)) else 0
+                    
+                    # Format label based on context (especially for time series)
+                    if is_time_series:
+                        # Format time labels appropriately
+                        time_grouping = chart_analysis.get("time_grouping", "none")
+                        if time_grouping == "month" and category.isdigit() and 1 <= int(category) <= 12:
+                            # Format month number as month name (English)
+                            month_names = ["January", "February", "March", "April", "May", "June",
+                                          "July", "August", "September", "October", "November", "December"]
+                            month_num = int(category)
+                            label = month_names[month_num - 1]
+                        elif time_grouping == "day" or time_grouping == "daily":
+                            # Format as date
+                            label = _format_date_label(category)
+                        elif time_grouping != "none":
+                            # Use time formatting function if available
+                            label = _format_time_label(category, time_grouping) if time_grouping != "none" else category
+                        else:
+                            # Try to detect date format even if time_grouping is not set
+                            import re
+                            if re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', category) or \
+                               re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', category) or \
+                               re.match(r'^(\d{8})$', category):
+                                label = _format_date_label(category)
+                            else:
+                                label = category
+                    else:
+                        label = category
                     
                     labels.append(label)
                     values.append(value)
@@ -2733,7 +2983,8 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
                     logger.warning(f"Error processing row: {e}")
                     continue
             
-            logger.info(f"Successfully extracted {len(labels)} data points using simplified analysis")
+            logger.info(f"Successfully extracted {len(labels)} data points using {'time-series' if is_time_series else 'value-based'} analysis")
+            logger.info(f"Final chart data: labels={labels}, values={values}")
             return labels, values
         
         # Handle original logic for other data formats
@@ -3011,6 +3262,132 @@ def extract_chart_data_with_llm_guidance(data: Dict[str, Any], chart_analysis: D
         logger.error(f"Traceback: {traceback.format_exc()}")
         return [], []
 
+def _detect_time_series_category(category: str, chart_analysis: Dict[str, Any], user_input: str = "") -> tuple:
+    """
+    Detect if a category value represents time series data and return sorting key
+    
+    Returns:
+        (is_time_series, sort_key) tuple
+        - is_time_series: bool indicating if this is time series data
+        - sort_key: value to use for sorting (time-based or None)
+    """
+    if not category:
+        return False, None
+    
+    category_str = str(category).strip()
+    import re
+    
+    # First, try to detect time format directly from category (most reliable)
+    # This doesn't depend on chart_analysis state
+    
+    # Month format: '01', '02', ..., '12' (1-12) - check this first as it's common
+    if re.match(r'^(0?[1-9]|1[0-2])$', category_str):
+        month_num = int(category_str)
+        return True, month_num
+    
+    # Check chart_analysis and user input for additional context
+    is_time_series = chart_analysis.get("is_time_series", False)
+    time_grouping = chart_analysis.get("time_grouping", "none")
+    
+    # Check user input for time-related keywords
+    user_input_lower = (user_input or "").lower()
+    has_time_keywords = any(kw in user_input_lower for kw in [
+        'trend', 'monthly', 'yearly', 'daily', 'weekly', 'over time', 
+        'date', 'day', '时间', '趋势', '月度', '年度', '日期', '天', '周'
+    ])
+    
+    # If explicitly marked as time series or has time grouping, treat as time series
+    if is_time_series or time_grouping != "none" or has_time_keywords:
+        # Detect other time formats and create sort key
+        
+        # Date format: '2025-01-15', '2025/01/15' (YYYY-MM-DD or YYYY/MM/DD)
+        date_match_iso = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', category_str)
+        if date_match_iso:
+            year = int(date_match_iso.group(1))
+            month = int(date_match_iso.group(2))
+            day = int(date_match_iso.group(3))
+            if 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31:
+                # Return YYYYMMDD as integer for sorting
+                return True, year * 10000 + month * 100 + day
+        
+        # Date format: '01-15-2025', '01/15/2025' (MM-DD-YYYY or MM/DD/YYYY) - US format
+        date_match_us = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', category_str)
+        if date_match_us:
+            month = int(date_match_us.group(1))
+            day = int(date_match_us.group(2))
+            year = int(date_match_us.group(3))
+            if 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31:
+                return True, year * 10000 + month * 100 + day
+        
+        # Date format: '15-01-2025', '15/01/2025' (DD-MM-YYYY or DD/MM/YYYY) - EU format
+        date_match_eu = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', category_str)
+        if date_match_eu:
+            # Try to distinguish: if first part > 12, it's likely DD-MM-YYYY
+            first_part = int(date_match_eu.group(1))
+            second_part = int(date_match_eu.group(2))
+            year = int(date_match_eu.group(3))
+            if first_part > 12 and 1 <= second_part <= 12:
+                # DD-MM-YYYY format
+                day = first_part
+                month = second_part
+                if 1900 <= year <= 2100 and 1 <= day <= 31:
+                    return True, year * 10000 + month * 100 + day
+        
+        # Date format: '20250115' (YYYYMMDD) - compact format
+        date_match_compact = re.match(r'^(\d{8})$', category_str)
+        if date_match_compact:
+            year = int(category_str[:4])
+            month = int(category_str[4:6])
+            day = int(category_str[6:8])
+            if 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31:
+                return True, year * 10000 + month * 100 + day
+        
+        # Month format: '01', '02', ..., '12' (1-12)
+        if re.match(r'^(0?[1-9]|1[0-2])$', category_str):
+            month_num = int(category_str)
+            return True, month_num
+        
+        # Year-month format: '2025-01', '2025-1', etc.
+        year_month_match = re.match(r'^(\d{4})[-/]?(\d{1,2})$', category_str)
+        if year_month_match:
+            year = int(year_month_match.group(1))
+            month = int(year_month_match.group(2))
+            if 1 <= month <= 12:
+                return True, year * 100 + month
+        
+        # Year format: '2025', '2024', etc.
+        if re.match(r'^\d{4}$', category_str):
+            year = int(category_str)
+            if 1900 <= year <= 2100:
+                return True, year
+        
+        # Quarter format: '2025-Q1', 'Q1-2025', etc.
+        quarter_match = re.match(r'(\d{4})[-/]?Q(\d)|Q(\d)[-/]?(\d{4})', category_str, re.IGNORECASE)
+        if quarter_match:
+            if quarter_match.group(1):  # Year-Q format
+                year = int(quarter_match.group(1))
+                quarter = int(quarter_match.group(2))
+            else:  # Q-Year format
+                quarter = int(quarter_match.group(3))
+                year = int(quarter_match.group(4))
+            if 1 <= quarter <= 4:
+                return True, year * 10 + quarter
+        
+        # Week format: '2025-W01', '2025-W1', etc.
+        week_match = re.match(r'(\d{4})[-/]?W(\d{1,2})', category_str, re.IGNORECASE)
+        if week_match:
+            year = int(week_match.group(1))
+            week = int(week_match.group(2))
+            if 1 <= week <= 53:
+                return True, year * 100 + week
+        
+        # If time_grouping is set but format doesn't match, still treat as time series
+        # and use string comparison as fallback
+        if time_grouping != "none":
+            return True, category_str
+    
+    return False, None
+
 def _detect_year_labels(labels: list) -> bool:
     """Detect if labels represent years by checking if they are numeric values in reasonable year range"""
     if not labels:
@@ -3051,6 +3428,61 @@ def _extract_year_from_label(label) -> int:
     except:
         raise ValueError(f"Cannot extract year from label: {label}")
 
+def _format_date_label(date_str: str) -> str:
+    """Format date string for display"""
+    import re
+    try:
+        # ISO format: '2025-01-15' or '2025/01/15'
+        date_match_iso = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', date_str)
+        if date_match_iso:
+            year = int(date_match_iso.group(1))
+            month = int(date_match_iso.group(2))
+            day = int(date_match_iso.group(3))
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            if 1 <= month <= 12:
+                return f"{month_names[month - 1]} {day}, {year}"
+        
+        # US format: '01-15-2025' or '01/15/2025'
+        date_match_us = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', date_str)
+        if date_match_us:
+            month = int(date_match_us.group(1))
+            day = int(date_match_us.group(2))
+            year = int(date_match_us.group(3))
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            if 1 <= month <= 12:
+                return f"{month_names[month - 1]} {day}, {year}"
+        
+        # EU format: '15-01-2025' or '15/01/2025' (if first part > 12)
+        date_match_eu = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', date_str)
+        if date_match_eu:
+            first_part = int(date_match_eu.group(1))
+            second_part = int(date_match_eu.group(2))
+            year = int(date_match_eu.group(3))
+            if first_part > 12 and 1 <= second_part <= 12:
+                day = first_part
+                month = second_part
+                month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                return f"{month_names[month - 1]} {day}, {year}"
+        
+        # Compact format: '20250115'
+        date_match_compact = re.match(r'^(\d{8})$', date_str)
+        if date_match_compact:
+            year = int(date_str[:4])
+            month = int(date_str[4:6])
+            day = int(date_str[6:8])
+            month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            if 1 <= month <= 12:
+                return f"{month_names[month - 1]} {day}, {year}"
+        
+        # If no match, return original
+        return date_str
+    except:
+        return date_str
+
 def _format_time_label(time_key: str, time_grouping: str) -> str:
     """Format time key for display based on grouping type"""
     try:
@@ -3071,7 +3503,16 @@ def _format_time_label(time_key: str, time_grouping: str) -> str:
         elif time_grouping == "quarter":
             year, quarter = time_key.split('-Q')
             return f"Q{quarter} {year}"
+        elif time_grouping == "day" or time_grouping == "daily":
+            # Try to format as date
+            return _format_date_label(time_key)
         else:
+            # Try to detect if it's a date format
+            import re
+            if re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', time_key) or \
+               re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', time_key) or \
+               re.match(r'^(\d{8})$', time_key):
+                return _format_date_label(time_key)
             return time_key
     except:
         return time_key
