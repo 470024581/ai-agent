@@ -46,6 +46,7 @@ const workflowSlice = createSlice({
         nodes: {},
         activeEdges: [],
         currentNode: null,
+        reactSteps: [], // Array to store ReAct steps
       };
       state.executions[id] = newExecution;
       
@@ -186,6 +187,32 @@ const workflowSlice = createSlice({
             state.executions[executionId].activeEdges = [];
         }
     },
+    addReactStep: (state, action) => {
+        const { executionId, stepIndex, stepType, content, toolName, toolInput, timestamp } = action.payload;
+        if (state.executions[executionId]) {
+            const execution = state.executions[executionId];
+            
+            // Initialize reactSteps array if not exists
+            if (!execution.reactSteps) {
+                execution.reactSteps = [];
+            }
+            
+            // Create step object
+            const step = {
+                stepIndex,
+                stepType, // 'thought', 'action', 'observation'
+                content,
+                toolName,
+                toolInput,
+                timestamp: timestamp || Date.now()
+            };
+            
+            // Add step to array (maintain order by stepIndex)
+            execution.reactSteps.push(step);
+            // Sort by stepIndex to ensure correct order
+            execution.reactSteps.sort((a, b) => a.stepIndex - b.stepIndex);
+        }
+    },
     resetCurrentExecution: (state) => {
       // Don't clear the previous execution data - just reset current pointer
       // The previous execution data will be preserved for viewing
@@ -277,6 +304,7 @@ export const {
   errorNode,
   activateEdge,
   clearActiveEdges,
+  addReactStep,
   resetCurrentExecution,
   resetAllStates,
   clearExecutionHistory,

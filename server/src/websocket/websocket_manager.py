@@ -186,6 +186,78 @@ class WebSocketManager:
         for websocket, client_id in disconnected_clients:
             self.disconnect(websocket, client_id)
     
+    async def stream_react_step(
+        self, 
+        execution_id: str, 
+        step_type: str, 
+        step_index: int,
+        content: str,
+        node_id: str = "sql_agent_node",
+        tool_name: Optional[str] = None,
+        tool_input: Optional[Dict[str, Any]] = None
+    ):
+        """Stream a ReAct step (thought, action, or observation) to all connections for an execution.
+        
+        Args:
+            execution_id: Execution ID
+            step_type: Step type ("thought", "action", "observation")
+            step_index: Step sequence number
+            content: Step content/description
+            node_id: Node ID generating the step (default: sql_agent_node)
+            tool_name: Tool name (for action steps)
+            tool_input: Tool input (for action steps)
+        """
+        from ..models.data_models import WorkflowEvent, WorkflowEventType
+        import time
+        
+        if execution_id not in self.execution_to_client:
+            logger.warning(f"No active WebSocket connections for execution {execution_id} to stream ReAct step.")
+            return
+        
+        # Map step_type to event type
+        event_type_map = {
+            "thought": WorkflowEventType.REACT_STEP_THOUGHT,
+            "action": WorkflowEventType.REACT_STEP_ACTION,
+            "observation": WorkflowEventType.REACT_STEP_OBSERVATION
+        }
+        
+        event_type = event_type_map.get(step_type)
+        if not event_type:
+            logger.error(f"Invalid ReAct step type: {step_type}")
+            return
+        
+        # Create ReAct step event
+        event = WorkflowEvent(
+            type=event_type,
+            execution_id=execution_id,
+            timestamp=time.time(),
+            node_id=node_id,
+            react_step_type=step_type,
+            react_step_index=step_index,
+            react_step_content=content,
+            react_tool_name=tool_name,
+            react_tool_input=self.make_serializable(tool_input) if tool_input else None
+        )
+        
+        # Prepare message
+        message = event.dict()
+        
+        # Send to all connected clients for this execution
+        disconnected_clients = []
+        for cid, websocket in self.active_connections.items():
+            if self.execution_to_client.get(execution_id) == cid:
+                try:
+                    await self.send_to_websocket(websocket, message)
+                except WebSocketDisconnect:
+                    disconnected_clients.append((websocket, cid))
+                except Exception as e:
+                    logger.error(f"Error streaming ReAct step to WebSocket: {e}")
+                    disconnected_clients.append((websocket, cid))
+        
+        # Clean up disconnected WebSockets
+        for websocket, client_id in disconnected_clients:
+            self.disconnect(websocket, client_id)
+    
     def update_execution_state(self, execution_id: str, event: WorkflowEvent):
         """Update execution state based on event"""
         if execution_id not in self.execution_states:

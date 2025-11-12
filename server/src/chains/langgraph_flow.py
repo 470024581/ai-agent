@@ -18,9 +18,85 @@ import difflib
 from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus, DataSourceType
 from ..database.db_operations import get_active_datasource
 from ..agents.intelligent_agent import DB_URI
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.agents import AgentAction, AgentFinish
+from langchain_core.outputs import LLMResult
 # Removed unused import
 
 logger = logging.getLogger(__name__)
+
+# ==================== ReAct Callback Handler ====================
+
+class ReActStepCallback(BaseCallbackHandler):
+    """Callback handler for collecting ReAct steps (steps will be streamed via astream_events)"""
+    
+    def __init__(self, execution_id: str, websocket_manager=None):
+        super().__init__()
+        self.execution_id = execution_id
+        self.websocket_manager = websocket_manager
+        self.step_index = 0
+        self.current_thought = ""
+        self.current_action = None
+        self.steps_queue = []  # Queue for steps to be streamed
+        
+    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs: Any) -> None:
+        """Called when LLM starts generating (thinking step)"""
+        self.current_thought = ""
+        self.step_index += 1
+    
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        """Called when LLM finishes generating"""
+        if self.current_thought:
+            self.steps_queue.append({
+                "type": "thought",
+                "index": self.step_index,
+                "content": self.current_thought
+            })
+    
+    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+        """Called when LLM generates a new token (for thought streaming)"""
+        self.current_thought += token
+    
+    def on_agent_action(self, action: AgentAction, **kwargs: Any) -> None:
+        """Called when agent takes an action (tool call)"""
+        self.step_index += 1
+        tool_name = action.tool
+        tool_input = action.tool_input
+        
+        # Format tool input for display
+        tool_input_str = json.dumps(tool_input, ensure_ascii=False, indent=2) if isinstance(tool_input, dict) else str(tool_input)
+        content = f"Calling tool: {tool_name}\nInput: {tool_input_str}"
+        
+        self.steps_queue.append({
+            "type": "action",
+            "index": self.step_index,
+            "content": content,
+            "tool_name": tool_name,
+            "tool_input": tool_input
+        })
+        
+        self.current_action = action
+    
+    def on_agent_finish(self, finish: AgentFinish, **kwargs: Any) -> None:
+        """Called when agent finishes"""
+        self.steps_queue.append({
+            "type": "thought",
+            "index": self.step_index + 1,
+            "content": f"Agent finished. Final answer: {finish.return_values.get('output', 'N/A')[:200]}..."
+        })
+    
+    def on_tool_end(self, output: str, **kwargs: Any) -> None:
+        """Called when tool execution ends (observation step)"""
+        self.step_index += 1
+        # Truncate long outputs for display
+        display_output = output[:500] + "..." if len(output) > 500 else output
+        
+        self.steps_queue.append({
+            "type": "observation",
+            "index": self.step_index,
+            "content": f"Tool result: {display_output}",
+            "tool_name": self.current_action.tool if self.current_action else None
+        })
 
 # ==================== Streaming LLM Utility ====================
 
@@ -617,6 +693,9 @@ async def sql_agent_node(state: GraphState) -> GraphState:
     
     logger.info(f"SQL Agent Node - Starting ReAct exploration for: {user_input}")
     
+    # Get WebSocket manager for streaming ReAct steps
+    from ..websocket.websocket_manager import websocket_manager
+    
     try:
         # 1. Extract relevant table names from RAG answer
         relevant_tables = extract_table_names_from_rag(rag_answer, user_input)
@@ -644,17 +723,463 @@ async def sql_agent_node(state: GraphState) -> GraphState:
         db = SQLDatabase.from_uri(
             f"sqlite:///{os.path.abspath('data/smart.db')}",
             include_tables=include_tables,
-            sample_rows_in_table_info=3
+            sample_rows_in_table_info=0  # Set to 0 to avoid Decimal type conversion errors
         )
         
-        # 2. Create SQL Toolkit
+        # 3. Try to use ReAct mode with create_sql_agent
+        use_react_mode = False
+        react_fallback_reason = None
+        
+        if llm:
+            try:
+                from langchain_community.agent_toolkits import create_sql_agent
+                from langchain.agents import AgentType
+                
+                # Create callback for streaming ReAct steps
+                react_callback = ReActStepCallback(execution_id=execution_id, websocket_manager=websocket_manager)
+                
+                # Try to create SQL agent with ReAct mode
+                logger.info("Attempting to create SQL agent with ReAct mode...")
+                agent = create_sql_agent(
+                    llm=llm,
+                    db=db,
+                    agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+                    verbose=True,
+                    callbacks=[react_callback]
+                )
+                
+                # Check if agent was created successfully
+                # We'll test during actual execution instead of here to avoid double execution
+                use_react_mode = True
+                logger.info("ReAct agent created successfully, will attempt execution")
+                    
+            except Exception as e:
+                react_fallback_reason = f"Failed to create ReAct agent: {str(e)}"
+                logger.warning(f"ReAct mode not available, will fallback: {react_fallback_reason}")
+                use_react_mode = False
+        
+        # 4. Execute using ReAct mode or fallback to manual mode
+        if use_react_mode:
+            logger.info("Executing SQL Agent in ReAct mode...")
+            try:
+                # Build input with context
+                agent_input = f"{user_input}\n\nBackground knowledge from knowledge base: {rag_answer}"
+                
+                # Stream agent execution
+                intermediate_steps = []
+                final_answer = ""
+                executed_sqls = []
+                structured_data = None
+                
+                # Use astream_events to capture intermediate steps and stream them
+                step_counter = 0
+                logger.info(f"Starting astream_events iteration for ReAct agent...")
+                
+                # Try to capture all events, including internal ones
+                event_count = 0
+                async for event in agent.astream_events(
+                    {"input": agent_input},
+                    version="v2"
+                ):
+                    event_count += 1
+                    # Stream ReAct steps in real-time
+                    event_name = event.get("event")
+                    event_name_str = event.get("name", "")
+                    
+                    # Only log important events to reduce noise
+                    if event_name in ["on_agent_action", "on_tool_start", "on_tool_end", "on_chain_stream", "on_chain_end"]:
+                        logger.info(f"ReAct event #{event_count}: {event_name}, name: {event_name_str}, event_keys: {list(event.keys())}")
+                    
+                    # Handle on_chain_stream events which contain action information for SQL Agent
+                    # The chunk contains structured action objects, not text
+                    if event_name == "on_chain_stream" and event_name_str == "SQL Agent Executor":
+                        stream_data = event.get("data", {})
+                        chunk = stream_data.get("chunk", {})
+                        
+                        # Check if chunk contains actions (structured format)
+                        if isinstance(chunk, dict) and "actions" in chunk:
+                            actions = chunk["actions"]
+                            if isinstance(actions, list) and len(actions) > 0:
+                                # Get the first action (AgentAction object)
+                                action_obj = actions[0]
+                                
+                                # Extract tool name and input from AgentAction object
+                                tool_name = getattr(action_obj, "tool", None) if hasattr(action_obj, "tool") else None
+                                tool_input_raw = getattr(action_obj, "tool_input", None) if hasattr(action_obj, "tool_input") else None
+                                
+                                if tool_name:
+                                    # Format tool_input as dict for WebSocket
+                                    if isinstance(tool_input_raw, dict):
+                                        tool_input_dict = tool_input_raw
+                                    elif isinstance(tool_input_raw, str):
+                                        # If tool_input is a string (like SQL query), wrap it in dict
+                                        tool_input_dict = {"query": tool_input_raw} if tool_name == "sql_db_query" else {"input": tool_input_raw}
+                                    else:
+                                        tool_input_dict = {"input": str(tool_input_raw) if tool_input_raw else ""}
+                                    
+                                    # Check if we already have this action step
+                                    if not intermediate_steps or intermediate_steps[-1].get("tool") != tool_name:
+                                        step_counter += 1
+                                        logger.info(f"Captured action from on_chain_stream: tool={tool_name}, input_type={type(tool_input_raw).__name__}")
+                                        
+                                        # Format content for display
+                                        tool_input_str = json.dumps(tool_input_dict, ensure_ascii=False, indent=2) if isinstance(tool_input_dict, dict) else str(tool_input_dict)
+                                        content = f"Calling tool: {tool_name}\nInput: {tool_input_str[:200]}{'...' if len(tool_input_str) > 200 else ''}"
+                                        
+                                        await websocket_manager.stream_react_step(
+                                            execution_id=execution_id,
+                                            step_type="action",
+                                            step_index=step_counter,
+                                            content=content,
+                                            node_id="sql_agent_node",
+                                            tool_name=tool_name,
+                                            tool_input=tool_input_dict  # Always pass as dict
+                                        )
+                                        
+                                        intermediate_steps.append({
+                                            "step": "action",
+                                            "tool": tool_name,
+                                            "input": tool_input_dict
+                                        })
+                        else:
+                            # Fallback: Try to parse from text if chunk is text-based
+                            chunk_text = ""
+                            if isinstance(chunk, dict):
+                                chunk_text = chunk.get("content", chunk.get("text", chunk.get("output", str(chunk))))
+                            elif isinstance(chunk, str):
+                                chunk_text = chunk
+                            else:
+                                chunk_text = str(chunk)
+                            
+                            # Check if this chunk contains action information as text
+                            if chunk_text and ("Action:" in chunk_text or "Action Input:" in chunk_text):
+                                logger.info(f"Found action text in on_chain_stream: {chunk_text[:200]}")
+                                
+                                # Parse action from text
+                                import re
+                                action_match = re.search(r"Action:\s*(\w+)", chunk_text)
+                                action_input_match = re.search(r"Action Input:\s*(.+?)(?:\n|$)", chunk_text, re.DOTALL)
+                                
+                                if action_match:
+                                    tool_name = action_match.group(1)
+                                    tool_input_str = action_input_match.group(1).strip() if action_input_match else ""
+                                    
+                                    # Format as dict
+                                    tool_input_dict = {"query": tool_input_str} if tool_name == "sql_db_query" else {"input": tool_input_str}
+                                    
+                                    # Check if we already have this action step
+                                    if not intermediate_steps or intermediate_steps[-1].get("tool") != tool_name:
+                                        step_counter += 1
+                                        logger.info(f"Captured action from on_chain_stream text: tool={tool_name}, input_length={len(tool_input_str)}")
+                                        
+                                        content = f"Calling tool: {tool_name}\nInput: {tool_input_str[:200]}{'...' if len(tool_input_str) > 200 else ''}"
+                                        
+                                        await websocket_manager.stream_react_step(
+                                            execution_id=execution_id,
+                                            step_type="action",
+                                            step_index=step_counter,
+                                            content=content,
+                                            node_id="sql_agent_node",
+                                            tool_name=tool_name,
+                                            tool_input=tool_input_dict  # Always pass as dict
+                                        )
+                                        
+                                        intermediate_steps.append({
+                                            "step": "action",
+                                            "tool": tool_name,
+                                            "input": tool_input_dict
+                                        })
+                    
+                    if event_name == "on_llm_start":
+                        step_counter += 1
+                        await websocket_manager.stream_react_step(
+                            execution_id=execution_id,
+                            step_type="thought",
+                            step_index=step_counter,
+                            content="Thinking about the query...",
+                            node_id="sql_agent_node"
+                        )
+                    elif event_name == "on_agent_action":
+                        step_counter += 1
+                        # Fix: event structure for on_agent_action
+                        action_data = event.get("data", {})
+                        logger.info(f"on_agent_action event - full event keys: {list(event.keys())}, data keys: {list(action_data.keys())}")
+                        
+                        # Try different possible structures - check the actual event structure
+                        action = None
+                        if "output" in action_data:
+                            action = action_data["output"]
+                        elif "action" in action_data:
+                            action = action_data["action"]
+                        else:
+                            action = action_data
+                        
+                        # Log the full action structure for debugging
+                        logger.info(f"Action structure: {type(action).__name__}, content: {str(action)[:200]}")
+                        
+                        if isinstance(action, dict):
+                            tool_name = action.get("tool", action.get("name", event.get("name", "unknown")))
+                            tool_input = action.get("tool_input", action.get("input", action.get("tool_input_str", "")))
+                        else:
+                            # Fallback: try to extract from event directly
+                            tool_name = event.get("name", "unknown")
+                            tool_input = action_data.get("input", action_data.get("tool_input", ""))
+                        
+                        logger.info(f"Captured action step {step_counter}: tool={tool_name}, input_type={type(tool_input).__name__}, input_preview={str(tool_input)[:100]}")
+                        
+                        tool_input_str = json.dumps(tool_input, ensure_ascii=False, indent=2) if isinstance(tool_input, dict) else str(tool_input)
+                        content = f"Calling tool: {tool_name}\nInput: {tool_input_str}"
+                        
+                        await websocket_manager.stream_react_step(
+                            execution_id=execution_id,
+                            step_type="action",
+                            step_index=step_counter,
+                            content=content,
+                            node_id="sql_agent_node",
+                            tool_name=tool_name,
+                            tool_input=tool_input
+                        )
+                        
+                        intermediate_steps.append({
+                            "step": "action",
+                            "tool": tool_name,
+                            "input": tool_input
+                        })
+                    elif event_name == "on_tool_end":
+                        step_counter += 1
+                        # Fix: event structure for on_tool_end
+                        tool_data = event.get("data", {})
+                        tool_name_from_event = event_name_str  # The tool name is in the event name
+                        logger.info(f"on_tool_end event - tool: {tool_name_from_event}, data keys: {list(tool_data.keys())}")
+                        
+                        # Try different possible structures
+                        observation = ""
+                        if "output" in tool_data:
+                            observation = tool_data["output"]
+                        elif "result" in tool_data:
+                            observation = str(tool_data["result"])
+                        else:
+                            observation = str(tool_data) if tool_data else ""
+                        
+                        logger.info(f"Tool observation length: {len(observation)}, preview: {str(observation)[:200]}")
+                        display_output = observation[:500] + "..." if len(observation) > 500 else observation
+                        
+                        await websocket_manager.stream_react_step(
+                            execution_id=execution_id,
+                            step_type="observation",
+                            step_index=step_counter,
+                            content=f"Tool result: {display_output}",
+                            node_id="sql_agent_node"
+                        )
+                        
+                        # If no matching action step found, create one from tool_end event
+                        if not intermediate_steps or intermediate_steps[-1].get("tool") != tool_name_from_event:
+                            logger.warning(f"No matching action step found for tool {tool_name_from_event}, creating one from tool_end event")
+                            # Try to extract input from tool_data
+                            tool_input = tool_data.get("input", "")
+                            # If tool_input is a dict and contains "query", extract it
+                            if isinstance(tool_input, dict):
+                                if "query" in tool_input:
+                                    tool_input = tool_input["query"]
+                                elif "tool_input" in tool_input:
+                                    tool_input = tool_input["tool_input"]
+                                elif len(tool_input) == 1:
+                                    # If dict has only one key-value pair, use the value
+                                    tool_input = list(tool_input.values())[0]
+                            
+                            # Format input for sql_db_query
+                            formatted_input = {"query": tool_input} if tool_name_from_event == "sql_db_query" and isinstance(tool_input, str) else tool_input
+                            
+                            intermediate_steps.append({
+                                "step": "action",
+                                "tool": tool_name_from_event,
+                                "input": formatted_input,
+                                "observation": observation
+                            })
+                            logger.info(f"Created action step from tool_end: tool={tool_name_from_event}, input_type={type(tool_input).__name__}, input_preview={str(tool_input)[:100]}")
+                            
+                            # Try to parse structured_data from observation immediately
+                            if tool_name_from_event == "sql_db_query" and observation:
+                                parsed = _parse_agent_query_result(observation)
+                                if parsed:
+                                    structured_data = parsed
+                                    logger.info(f"Parsed structured_data from tool_end observation: {len(parsed.get('rows', []))} rows")
+                        else:
+                            # Update the last step with observation
+                            intermediate_steps[-1]["observation"] = observation
+                            logger.info(f"Updated existing action step with observation: tool={intermediate_steps[-1].get('tool')}")
+                            
+                            # Try to parse structured_data from observation if it's a SQL query
+                            if intermediate_steps[-1].get("tool") == "sql_db_query" and observation:
+                                parsed = _parse_agent_query_result(observation)
+                                if parsed:
+                                    structured_data = parsed
+                                    logger.info(f"Parsed structured_data from updated observation: {len(parsed.get('rows', []))} rows")
+                    elif event_name == "on_chain_end":
+                        # Check if this is the AgentExecutor chain end
+                        chain_name = event.get("name", "")
+                        if chain_name == "AgentExecutor" or "AgentExecutor" in str(chain_name):
+                            chain_data = event.get("data", {})
+                            output = chain_data.get("output", {})
+                            if isinstance(output, dict):
+                                final_answer = output.get("output", str(output))
+                            else:
+                                final_answer = str(output) if output else ""
+                
+                logger.info(f"astream_events completed - total events: {event_count}, intermediate_steps: {len(intermediate_steps)}")
+                
+                # Extract SQL queries from intermediate steps
+                logger.info(f"Processing {len(intermediate_steps)} intermediate steps to extract SQL queries...")
+                for idx, step in enumerate(intermediate_steps):
+                    tool_name = step.get("tool", "")
+                    tool_input = step.get("input", {})
+                    logger.info(f"Step {idx}: tool={tool_name}, input_type={type(tool_input).__name__}")
+                    
+                    # Handle different input formats
+                    if isinstance(tool_input, str):
+                        # If input is a string, try to extract query
+                        if "sql_db_query" in tool_name or "query" in tool_name.lower() or "sql" in tool_name.lower():
+                            executed_sqls.append(tool_input)
+                            logger.info(f"Added SQL query from string input: {tool_input[:100]}")
+                    elif isinstance(tool_input, dict):
+                        query = tool_input.get("query", tool_input.get("tool_input", ""))
+                        if query and ("sql_db_query" in tool_name or "query" in tool_name.lower() or "sql" in tool_name.lower()):
+                            executed_sqls.append(query)
+                            logger.info(f"Added SQL query from dict input: {query[:100]}")
+                        # Parse result if available
+                        if step.get("observation"):
+                            parsed = _parse_agent_query_result(step["observation"])
+                            if parsed:
+                                structured_data = parsed
+                                logger.info(f"Parsed structured_data from observation: {len(parsed.get('rows', []))} rows")
+                
+                # If no intermediate steps captured, try to use ainvoke and parse the result
+                if len(intermediate_steps) == 0:
+                    logger.warning("No intermediate steps captured from astream_events, falling back to ainvoke...")
+                    result = await agent.ainvoke({"input": agent_input})
+                    logger.info(f"ainvoke result type: {type(result).__name__}, keys: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                    
+                    if isinstance(result, dict):
+                        final_answer = result.get("output", str(result))
+                        # Try to extract intermediate steps from result
+                        if "intermediate_steps" in result:
+                            intermediate_steps = result["intermediate_steps"]
+                            logger.info(f"Found intermediate_steps in result: {len(intermediate_steps)} steps")
+                    else:
+                        final_answer = str(result)
+                
+                # If no final answer, try invoke
+                if not final_answer:
+                    logger.warning("No final answer from astream_events, trying ainvoke...")
+                    result = await agent.ainvoke({"input": agent_input})
+                    if isinstance(result, dict):
+                        final_answer = result.get("output", str(result))
+                    else:
+                        final_answer = str(result)
+                
+                logger.info(f"ReAct mode completed - {len(intermediate_steps)} steps, {len(executed_sqls)} SQL queries")
+                logger.info(f"Intermediate steps details: {[step.get('tool', 'N/A') for step in intermediate_steps]}")
+                logger.info(f"Executed SQLs: {executed_sqls}")
+                logger.info(f"Structured data available: {structured_data is not None}, type: {type(structured_data).__name__}")
+                
+                # If no structured_data extracted from steps, try to parse from final_answer
+                if not structured_data and executed_sqls:
+                    # Try to extract data from the last SQL query result
+                    for step in reversed(intermediate_steps):
+                        if step.get("observation"):
+                            parsed = _parse_agent_query_result(step["observation"])
+                            if parsed:
+                                structured_data = parsed
+                                logger.info(f"Parsed structured_data from reversed step observation: {len(parsed.get('rows', []))} rows")
+                                break
+                    
+                    # If still no structured_data, try to parse from final_answer text
+                    if not structured_data and final_answer:
+                        logger.info("Attempting to parse structured_data from final_answer text...")
+                        # Try to extract SQL result from final_answer
+                        import re
+                        # Look for patterns like [('Office Supplies', 71), ('Audio', 69), ...]
+                        pattern = r"\[\([^)]+\)(?:,\s*\([^)]+\))*\]"
+                        matches = re.findall(pattern, final_answer)
+                        if matches:
+                            logger.info(f"Found potential data pattern in final_answer: {matches[0][:200]}")
+                            # Try to parse it
+                            try:
+                                import ast
+                                parsed_data = ast.literal_eval(matches[0])
+                                if isinstance(parsed_data, list) and len(parsed_data) > 0:
+                                    # Convert to structured format
+                                    if isinstance(parsed_data[0], tuple):
+                                        # Convert tuples to dicts
+                                        keys = ["category", "sales"] if len(parsed_data[0]) == 2 else [f"col{i}" for i in range(len(parsed_data[0]))]
+                                        rows = [dict(zip(keys, row)) for row in parsed_data]
+                                        structured_data = {"rows": rows, "columns": keys}
+                                        logger.info(f"Successfully parsed structured_data from final_answer: {len(rows)} rows")
+                            except Exception as e:
+                                logger.warning(f"Failed to parse data from final_answer: {e}")
+                
+                # Determine chart suitability
+                chart_suitable = False
+                if user_input:
+                    chart_keywords = ["chart", "pie", "bar", "line", "graph", "visualization", "proportion", "distribution", "trend"]
+                    has_chart_intent = any(keyword.lower() in user_input.lower() for keyword in chart_keywords)
+                    # Check structured_data in different formats
+                    data_rows = None
+                    if structured_data:
+                        if isinstance(structured_data, dict):
+                            data_rows = structured_data.get("rows") or structured_data.get("data", [])
+                        elif isinstance(structured_data, list):
+                            data_rows = structured_data
+                    if has_chart_intent and data_rows and len(data_rows) >= 2:
+                        chart_suitable = True
+                        logger.info(f"Chart suitable: intent={has_chart_intent}, rows={len(data_rows)}")
+                    else:
+                        logger.info(f"Chart not suitable: intent={has_chart_intent}, rows={len(data_rows) if data_rows else 0}")
+                
+                return {
+                    **state,
+                    "sql_agent_answer": final_answer,
+                    "executed_sqls": executed_sqls,
+                    "structured_data": structured_data,
+                    "chart_suitable": chart_suitable,
+                    "agent_intermediate_steps": intermediate_steps,
+                    "sql_execution_success": True,
+                    "react_mode_used": True,
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "sql_agent": {
+                            "status": "completed",
+                            "queries_count": len(executed_sqls),
+                            "steps_count": len(intermediate_steps),
+                            "chart_suitable": chart_suitable,
+                            "react_mode": True,
+                            "timestamp": time.time()
+                        }
+                    }
+                }
+                
+            except Exception as react_error:
+                logger.error(f"ReAct mode execution failed: {react_error}", exc_info=True)
+                react_fallback_reason = f"ReAct execution error: {str(react_error)}"
+                logger.info(f"Falling back to manual mode due to: {react_fallback_reason}")
+                # Continue to fallback mode
+        
+        # 5. Fallback to manual ReAct Loop Implementation
+        logger.info("Using manual ReAct SQL exploration (fallback mode)...")
+        if react_fallback_reason:
+            await websocket_manager.stream_react_step(
+                execution_id=execution_id,
+                step_type="thought",
+                step_index=0,
+                content=f"Note: ReAct mode not available ({react_fallback_reason}), using manual mode",
+                node_id="sql_agent_node"
+            )
+        
+        # Create SQL Toolkit
         from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
         
         toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         tools = toolkit.get_tools()
-        
-        # 3. Manual ReAct Loop Implementation
-        logger.info("Starting manual ReAct SQL exploration...")
         
         # Step 1: List all tables
         list_tables_tool = None
@@ -960,20 +1485,23 @@ JOIN RESTRICTIONS:
         logger.info(f"SQL Agent completed - Executed {len(executed_sqls)} queries, chart_suitable={chart_suitable}")
         
         return {
-                **state,
+            **state,
             "sql_agent_answer": final_answer,
             "executed_sqls": executed_sqls,
-                "structured_data": structured_data,
+            "structured_data": structured_data,
             "chart_suitable": chart_suitable,
             "agent_intermediate_steps": [{"step": "manual_react", "tables": tables_result, "query": sql_query, "result": query_result}],
             "sql_execution_success": True,
-                "node_outputs": {
-                    **state.get("node_outputs", {}),
+            "react_mode_used": False,
+            "react_fallback_reason": react_fallback_reason,
+            "node_outputs": {
+                **state.get("node_outputs", {}),
                 "sql_agent": {
-                        "status": "completed",
+                    "status": "completed",
                     "queries_count": len(executed_sqls),
                     "steps_count": 1,
                     "chart_suitable": chart_suitable,
+                    "react_mode": False,
                     "timestamp": time.time()
                 }
             }

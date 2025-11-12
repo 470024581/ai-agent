@@ -1645,14 +1645,67 @@ function ExecutionLogDisplay({ executionId, currentExecutionData, currentNode })
         }
 
         if (nodeId === 'sql_agent_node') {
-          // Try to get intermediate steps from different sources
+          // First, show ReAct steps if available (real-time streaming)
+          // Show ReAct steps regardless of node status (running or completed)
+          const reactSteps = currentExecutionData?.reactSteps || [];
+          if (reactSteps.length > 0) {
+            reactSteps.forEach((step) => {
+              const stepType = step.stepType || 'unknown';
+              const stepIcon = stepType === 'thought' ? '🤔' : stepType === 'action' ? '🔧' : '👁️';
+              const stepLabel = stepType === 'thought' ? 'Thinking' : stepType === 'action' ? 'Action' : 'Observation';
+              
+              newLogs.push({
+                timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `   ${stepIcon} [Step ${step.stepIndex}] ${stepLabel}: ${step.content?.substring(0, 200)}${step.content?.length > 200 ? '...' : ''}`
+              });
+              
+              // Show tool details for action steps
+              if (stepType === 'action' && step.toolName) {
+                newLogs.push({
+                  timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      Tool: ${step.toolName}`
+                });
+                if (step.toolInput) {
+                  const toolInputStr = typeof step.toolInput === 'string' 
+                    ? step.toolInput 
+                    : JSON.stringify(step.toolInput, null, 2);
+                  if (step.toolName.includes('sql') || step.toolName.includes('query')) {
+                    // Show SQL queries line by line
+                    toolInputStr.split('\n').forEach((line, lineIdx) => {
+                      if (line.trim()) {
+                        newLogs.push({
+                          timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                          type: 'reasoning',
+                          node: nodeId,
+                          message: `         ${line.trim()}`
+                        });
+                      }
+                    });
+                  } else if (toolInputStr.length < 150) {
+                    newLogs.push({
+                      timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                      type: 'reasoning',
+                      node: nodeId,
+                      message: `      Input: ${toolInputStr}`
+                    });
+                  }
+                }
+              }
+            });
+          }
+          
+          // Fallback: Try to get intermediate steps from different sources (for manual mode)
           const intermediateSteps = 
             nodeData.agent_intermediate_steps ||
             nodeData.output?.agent_intermediate_steps ||
             currentExecutionData?.agent_intermediate_steps ||
             [];
           
-          if (intermediateSteps.length > 0) {
+          if (intermediateSteps.length > 0 && reactSteps.length === 0) {
             // Show step names as examples
             const stepNames = intermediateSteps.slice(0, 3).map((step, idx) => {
               const toolName = step?.action?.tool || step?.tool || `step${idx + 1}`;
@@ -1762,7 +1815,7 @@ function ExecutionLogDisplay({ executionId, currentExecutionData, currentNode })
             }
           });
         }
-      } else if (nodeData.status === 'completed') {
+      } else if (nodeData.status === 'completed' || nodeData.status === 'success') {
         const duration = nodeData.duration ? `${nodeData.duration.toFixed(2)}s` : '';
         newLogs.push({
           timestamp: nodeData.endTime ? new Date(nodeData.endTime).toLocaleTimeString() : new Date().toLocaleTimeString(),
@@ -1770,6 +1823,60 @@ function ExecutionLogDisplay({ executionId, currentExecutionData, currentNode })
           node: nodeId,
           message: `✅ ${nodeName} completed${duration ? ` (${duration})` : ''}`
         });
+
+        // Show ReAct steps for sql_agent_node even when completed
+        if (nodeId === 'sql_agent_node') {
+          const reactSteps = currentExecutionData?.reactSteps || [];
+          if (reactSteps.length > 0) {
+            reactSteps.forEach((step) => {
+              const stepType = step.stepType || 'unknown';
+              const stepIcon = stepType === 'thought' ? '🤔' : stepType === 'action' ? '🔧' : '👁️';
+              const stepLabel = stepType === 'thought' ? 'Thinking' : stepType === 'action' ? 'Action' : 'Observation';
+              
+              newLogs.push({
+                timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                type: 'reasoning',
+                node: nodeId,
+                message: `   ${stepIcon} [Step ${step.stepIndex}] ${stepLabel}: ${step.content?.substring(0, 200)}${step.content?.length > 200 ? '...' : ''}`
+              });
+              
+              // Show tool details for action steps
+              if (stepType === 'action' && step.toolName) {
+                newLogs.push({
+                  timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                  type: 'reasoning',
+                  node: nodeId,
+                  message: `      Tool: ${step.toolName}`
+                });
+                if (step.toolInput) {
+                  const toolInputStr = typeof step.toolInput === 'string' 
+                    ? step.toolInput 
+                    : JSON.stringify(step.toolInput, null, 2);
+                  if (step.toolName.includes('sql') || step.toolName.includes('query')) {
+                    // Show SQL queries line by line
+                    toolInputStr.split('\n').forEach((line) => {
+                      if (line.trim()) {
+                        newLogs.push({
+                          timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                          type: 'reasoning',
+                          node: nodeId,
+                          message: `         ${line.trim()}`
+                        });
+                      }
+                    });
+                  } else if (toolInputStr.length < 150) {
+                    newLogs.push({
+                      timestamp: new Date(step.timestamp || Date.now()).toLocaleTimeString(),
+                      type: 'reasoning',
+                      node: nodeId,
+                      message: `      Input: ${toolInputStr}`
+                    });
+                  }
+                }
+              }
+            });
+          }
+        }
 
         // Add output summary for key nodes
         if (nodeId === 'rag_query_node' && nodeData.output) {

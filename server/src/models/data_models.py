@@ -196,6 +196,9 @@ class WorkflowEventType(str, Enum):
     EXECUTION_COMPLETED = "execution_completed"
     EXECUTION_ERROR = "execution_error"
     TOKEN_STREAM = "token_stream"  # NEW: Token-level streaming
+    REACT_STEP_THOUGHT = "react_step_thought"  # NEW: ReAct thinking step
+    REACT_STEP_ACTION = "react_step_action"  # NEW: ReAct action step
+    REACT_STEP_OBSERVATION = "react_step_observation"  # NEW: ReAct observation step
 
 class WorkflowEvent(BaseModel):
     """Workflow event message"""
@@ -213,6 +216,12 @@ class WorkflowEvent(BaseModel):
     quality_score: Optional[int] = None
     token: Optional[str] = None  # NEW: For TOKEN_STREAM events, contains the token text
     stream_complete: Optional[bool] = None  # NEW: Indicates if streaming is complete
+    # NEW: ReAct step fields
+    react_step_type: Optional[str] = None  # "thought", "action", "observation"
+    react_step_index: Optional[int] = None  # Step sequence number
+    react_step_content: Optional[str] = None  # Step content/description
+    react_tool_name: Optional[str] = None  # Tool name (for action steps)
+    react_tool_input: Optional[Dict[str, Any]] = None  # Tool input (for action steps)
 
 class NodeExecutionDetails(BaseModel):
     """Detailed node execution information"""

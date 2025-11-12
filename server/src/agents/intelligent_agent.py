@@ -676,7 +676,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 "customers", "products", "orders", "sales", "inventory"
             ]
             logger.info(f"Initializing SQLDatabase for built-in ERP tables: {builtin_tables} using URI: {DB_URI}")
-            db = SQLDatabase.from_uri(DB_URI, include_tables=builtin_tables, sample_rows_in_table_info=3)
+            db = SQLDatabase.from_uri(DB_URI, include_tables=builtin_tables, sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
         else:
             if not db_table_name:
                 logger.error(f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.")
@@ -687,7 +687,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     "error": "Missing db_table_name for SQL_TABLE_FROM_FILE datasource."
                 }
             logger.info(f"Initializing SQLDatabase for table: {db_table_name} using URI: {DB_URI}")
-            db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=3)
+            db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
         
         # Get schema info for validation
         schema_info = db.get_table_info()

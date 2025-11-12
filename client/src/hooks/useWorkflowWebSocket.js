@@ -13,6 +13,7 @@ import {
   streamToken,
   errorNode,
   activateEdge,
+  addReactStep,
   openHITLPanel,
   updateHITLExecutionState,
 } from '../store/workflowSlice';
@@ -92,6 +93,21 @@ const useWorkflowWebSocket = () => {
             token: data.token,
             nodeId: data.node_id,
             stream_complete: data.stream_complete
+          }));
+          break;
+
+        case 'react_step_thought':
+        case 'react_step_action':
+        case 'react_step_observation':
+          // Handle ReAct step events
+          dispatch(addReactStep({
+            executionId: data.execution_id,
+            stepIndex: data.react_step_index || 0,
+            stepType: data.react_step_type || data.type.replace('react_step_', ''),
+            content: data.react_step_content || '',
+            toolName: data.react_tool_name,
+            toolInput: data.react_tool_input,
+            timestamp: data.timestamp
           }));
           break;
 
