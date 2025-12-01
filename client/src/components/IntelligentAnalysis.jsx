@@ -1089,22 +1089,12 @@ function IntelligentAnalysis() {
                              {/* Current data source display and switching */}
                {availableDataSources.length > 0 && (
                  <div className="bg-gradient-to-r from-blue-50/80 to-purple-50/80 dark:from-gray-700/80 dark:to-gray-600/80 backdrop-blur-sm rounded-xl p-4 border border-white/20 dark:border-gray-600/30 shadow-lg">
-                   <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center">
-                     <FaDatabase className="h-4 w-4 text-blue-500 mr-2" />
-                     {t('intelligentAnalysis.currentDataSource')}
-                   </Label>
-                   <div className="space-y-3">
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-800 dark:text-gray-200 font-semibold text-lg">
-                         {activeDataSource?.name || t('intelligentAnalysis.noDataSource')}
-                       </span>
-                       {activeDataSource && (
-                         <Badge variant="secondary" className="bg-gradient-to-r from-green-400 to-emerald-500 text-white text-xs px-3 py-1 rounded-full shadow-md">
-                           Active
-                         </Badge>
-                       )}
-                     </div>
-                    <div className="relative">
+                  <Label className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center">
+                    <FaDatabase className="h-4 w-4 text-blue-500 mr-2" />
+                    {t('intelligentAnalysis.currentDataSource')}
+                  </Label>
+                  <div className="space-y-3">
+                   <div className="relative">
                       <Select value={activeDataSource ? String(activeDataSource.id) : undefined} onValueChange={(val) => val && handleDataSourceChange(parseInt(val))} disabled={loading}>
                         <SelectTrigger className="w-full h-12 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-0 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500/50 overflow-hidden">
                           <div className="flex items-center w-full text-gray-800 dark:text-gray-200 min-w-0">
