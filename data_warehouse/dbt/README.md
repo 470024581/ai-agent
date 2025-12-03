@@ -1,139 +1,89 @@
-# dbt Project - Shanghai Transport Data Warehouse
+# Shanghai Transport dbt Project
 
 ## Quick Start
 
-### 1. Install Dependencies
-
+### Prerequisites
+1. Create `.env` file in `data_warehouse` directory with:
 ```bash
-cd data_warehouse
-pip install dbt-databricks
+DATABRICKS_SERVER_HOSTNAME=your-workspace.cloud.databricks.com
+DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
+DATABRICKS_TOKEN=your_token
 ```
 
-### 2. Install dbt Packages
-
+### Local Testing
 ```bash
-cd dbt
-dbt deps
+cd data_warehouse/dbt
+.\test_local_with_env.bat
 ```
 
-### 3. Test Connection
+## Project Structure
+- `models/staging/` - Staging layer (raw data cleaning)
+- `models/dimensions/` - Dimension tables
+- `models/facts/` - Fact tables
+- `models/marts/` - Business metrics and aggregations
 
+## Important Notes
+
+### File Encoding
+⚠️ **All SQL files must be saved as UTF-8 without BOM**
+
+If you encounter `PARSE_SYNTAX_ERROR` in Databricks, check for BOM:
+```powershell
+# Check for BOM
+$bytes = [System.IO.File]::ReadAllBytes("file.sql")
+$hasBOM = ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+
+# Remove BOM
+$content = Get-Content "file.sql" -Raw
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText("file.sql", $content, $utf8NoBom)
+```
+
+### Source Tables
+Source tables in Databricks have `src_` prefix:
+- `workspace.public.src_users`
+- `workspace.public.src_stations`
+- `workspace.public.src_routes`
+- `workspace.public.src_transactions`
+- `workspace.public.src_topups`
+
+## dbt Commands
 ```bash
+# Test connection
 dbt debug --profiles-dir .
-```
 
-### 4. Run Models
-
-```bash
-# Run all staging models
-dbt run --select staging.*
+# Install dependencies
+dbt deps
 
 # Run all models
 dbt run
 
-# Run specific model
-dbt run --select stg_users
-```
+# Run specific layer
+dbt run --select staging.*
+dbt run --select dimensions.*
+dbt run --select facts.*
+dbt run --select marts.*
 
-### 5. Run Tests
-
-```bash
-# Test all staging models
-dbt test --select staging.*
-
-# Test all models
+# Run tests
 dbt test
 
-# Test specific model
-dbt test --select stg_users
-```
-
-### 6. Generate Documentation
-
-```bash
+# Generate documentation
 dbt docs generate
 dbt docs serve
 ```
 
-## Project Structure
+## Troubleshooting
 
-```
-dbt/
-├── dbt_project.yml          # Project configuration
-├── packages.yml             # dbt packages (dbt_utils)
-├── profiles.yml             # Connection profiles
-├── models/
-│   ├── sources.yml          # Source table definitions
-│   ├── staging/             # Staging models (views)
-│   │   ├── schema.yml       # Tests and documentation
-│   │   ├── stg_users.sql
-│   │   ├── stg_stations.sql
-│   │   ├── stg_routes.sql
-│   │   ├── stg_transactions.sql
-│   │   └── stg_topups.sql
-│   ├── dimensions/          # Dimension models (tables)
-│   ├── facts/               # Fact models (tables)
-│   └── marts/               # Marts models (tables)
-└── tests/                   # Custom tests
-```
+### Connection Issues
+- Ensure Databricks SQL Warehouse is running
+- Verify environment variables are set correctly
+- Check token is valid
 
-## Schema Structure
+### Compilation Errors
+- Clear cache: `Remove-Item -Recurse -Force target,logs`
+- Check for BOM in SQL files
+- Verify source table names have `src_` prefix
 
-- **Source**: `workspace.public` (Airbyte synced tables)
-- **Staging**: `workspace.staging` (cleaned data, views)
-- **Dimensions**: `workspace.dimensions` (dimension tables)
-- **Facts**: `workspace.facts` (fact tables, partitioned)
-- **Marts**: `workspace.marts` (business metrics tables)
-
-## Environment Variables
-
-Ensure `.env` file in `data_warehouse` directory contains:
-
-```bash
-DATABRICKS_SERVER_HOSTNAME=your-workspace.cloud.databricks.com
-DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
-DATABRICKS_TOKEN=your_databricks_token
-```
-
-## Common Commands
-
-```bash
-# List all models
-dbt list
-
-# Compile without running
-dbt compile
-
-# Run with specific target
-dbt run --target prod
-
-# Run models and downstream dependencies
-dbt run --select stg_users+
-
-# Run models and upstream dependencies
-dbt run --select +fact_transactions
-
-# Run models by tag
-dbt run --select tag:daily
-
-# Fresh check (for sources)
-dbt source freshness
-```
-
-## Documentation
-
-See `docs/` directory for detailed guides:
-
-- `dbt_setup.md` - Initial setup guide
-- `dbt_staging_models.md` - Staging models guide
-- `dbt_dimension_models.md` - Dimension models guide (coming next)
-- `dbt_fact_models.md` - Fact models guide
-- `dbt_marts_models.md` - Marts models guide
-- `dbt_tests.md` - Testing guide
-
-## Next Steps
-
-1. ✅ Run staging models: `dbt run --select staging.*`
-2. ✅ Test staging models: `dbt test --select staging.*`
-3. ➡️ Create dimension models (Step 10)
-
+### dbt Cloud
+- Set "Project subdirectory" to `data_warehouse/dbt`
+- Configure environment variables in dbt Cloud project settings

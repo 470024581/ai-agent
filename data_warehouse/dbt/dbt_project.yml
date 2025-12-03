@@ -5,6 +5,11 @@ config-version: 2
 # Profile name (must match profiles.yml)
 profile: 'shanghai_transport'
 
+# Flags for Databricks compatibility
+flags:
+  use_materialization_v2: true
+  use_managed_iceberg: true
+
 # Model paths
 model-paths: ["models"]
 analysis-paths: ["analyses"]
@@ -23,37 +28,33 @@ clean-targets:
 vars:
   source_catalog: "workspace"
   source_schema: "public"
-  staging_schema: "staging"
-  dimensions_schema: "dimensions"
-  facts_schema: "facts"
-  marts_schema: "marts"
 
 # Model configurations
 models:
   shanghai_transport:
-    # Staging models - views in staging schema
+    # Staging models - tables in staging schema (changed from view to fix Databricks SQL syntax error)
     staging:
-      +materialized: view
-      +schema: "{{ var('staging_schema') }}"
+      +materialized: table
+      +schema: staging
       +enabled: true
     
     # Dimension models - tables in dimensions schema
     dimensions:
       +materialized: table
-      +schema: "{{ var('dimensions_schema') }}"
+      +schema: dimensions
       +enabled: true
     
     # Fact models - incremental tables in facts schema
     facts:
       +materialized: table
-      +schema: "{{ var('facts_schema') }}"
+      +schema: facts
       +incremental_strategy: merge
       +enabled: true
     
     # Marts models - tables in marts schema
     marts:
       +materialized: table
-      +schema: "{{ var('marts_schema') }}"
+      +schema: marts
       +enabled: true
 
 # Seeds configuration

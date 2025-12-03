@@ -10,9 +10,9 @@ shanghai_transport:
       method: token
       catalog: "workspace"
       schema: "staging"  # Default schema, will be overridden by model configs
-      host: "${DATABRICKS_SERVER_HOSTNAME}"
-      http_path: "${DATABRICKS_HTTP_PATH}"
-      token: "${DATABRICKS_TOKEN}"
+      host: "{{ env_var('DATABRICKS_SERVER_HOSTNAME') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
       threads: 4
       connect_timeout: 10
       retry_all: true
@@ -22,9 +22,9 @@ shanghai_transport:
       method: token
       catalog: "workspace"
       schema: "staging"
-      host: "${DATABRICKS_SERVER_HOSTNAME}"
-      http_path: "${DATABRICKS_HTTP_PATH}"
-      token: "${DATABRICKS_TOKEN}"
+      host: "{{ env_var('DATABRICKS_SERVER_HOSTNAME') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
       threads: 8
       connect_timeout: 10
       retry_all: true

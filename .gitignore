@@ -75,6 +75,14 @@ coverage.xml
 # Ignore server data files
 /server/data/
 /data_warehouse/postgres_data/*
+# dbt artifacts and dependencies
+/data_warehouse/dbt/dbt_packages/
+/data_warehouse/dbt/target/
+/data_warehouse/dbt/logs/
+/data_warehouse/dbt/dbt_modules/
+/data_warehouse/dbt/.user.yml
+/data_warehouse/dbt/package-lock.yml
+/data_warehouse/dbt/logs/*
 
 # Server-specific ignores
 # Langchain/ChromaDB

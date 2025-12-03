@@ -18,6 +18,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Regular', 'Student', 'Senior', 'Disabled']
       - name: is_verified
         description: "Whether user is verified"
@@ -45,6 +48,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Metro', 'Bus', 'Ferry', 'Other']
       - name: latitude
         description: "Geographic latitude"
@@ -74,6 +80,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Metro', 'Bus', 'Ferry', 'Other']
       - name: created_at
         description: "Record creation timestamp"
@@ -124,6 +133,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Entry', 'Exit', 'Transfer', 'Top-up', 'Refund']
 
   - name: stg_topups
@@ -160,5 +172,8 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Cash', 'Card', 'Mobile', 'Online', 'Other']
 

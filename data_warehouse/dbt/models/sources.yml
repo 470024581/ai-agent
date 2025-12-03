@@ -6,7 +6,7 @@ sources:
     database: workspace
     schema: public
     tables:
-      - name: users
+      - name: src_users
         description: "User information and transport card details"
         columns:
           - name: user_id
@@ -18,7 +18,7 @@ sources:
           - name: is_verified
             description: "Whether user is verified"
       
-      - name: stations
+      - name: src_stations
         description: "Station/stop information"
         columns:
           - name: station_id
@@ -32,7 +32,7 @@ sources:
           - name: longitude
             description: "Geographic longitude"
       
-      - name: routes
+      - name: src_routes
         description: "Route/line information"
         columns:
           - name: route_id
@@ -42,7 +42,7 @@ sources:
           - name: route_type
             description: "Route type: Metro, Bus, Ferry, Other"
       
-      - name: transactions
+      - name: src_transactions
         description: "Transaction records"
         columns:
           - name: transaction_id
@@ -62,7 +62,7 @@ sources:
           - name: transaction_type
             description: "Transaction type: Entry, Exit, Transfer, Top-up, Refund"
       
-      - name: topups
+      - name: src_topups
         description: "Top-up records"
         columns:
           - name: topup_id

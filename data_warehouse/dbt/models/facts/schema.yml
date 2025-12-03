@@ -57,6 +57,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Entry', 'Exit', 'Transfer', 'Top-up', 'Refund']
       - name: created_at
         description: "Record creation timestamp"
@@ -107,6 +110,9 @@ models:
         tests:
           - not_null
           - accepted_values:
+              config:
+                severity: error
+              arguments:
               values: ['Cash', 'Card', 'Mobile', 'Online', 'Other']
       - name: created_at
         description: "Record creation timestamp"
