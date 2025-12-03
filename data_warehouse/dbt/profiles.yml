@@ -1,0 +1,38 @@
+# dbt Profiles Configuration
+# This file is used by dbt Core locally
+# For dbt Cloud, configure connection in dbt Cloud UI
+
+shanghai_transport:
+  target: dev
+  outputs:
+    dev:
+      type: databricks
+      method: token
+      catalog: "workspace"
+      schema: "staging"  # Default schema, will be overridden by model configs
+      host: "${DATABRICKS_SERVER_HOSTNAME}"
+      http_path: "${DATABRICKS_HTTP_PATH}"
+      token: "${DATABRICKS_TOKEN}"
+      threads: 4
+      connect_timeout: 10
+      retry_all: true
+      
+    prod:
+      type: databricks
+      method: token
+      catalog: "workspace"
+      schema: "staging"
+      host: "${DATABRICKS_SERVER_HOSTNAME}"
+      http_path: "${DATABRICKS_HTTP_PATH}"
+      token: "${DATABRICKS_TOKEN}"
+      threads: 8
+      connect_timeout: 10
+      retry_all: true
+
+# Environment Variables Required (set in .env file):
+# DATABRICKS_SERVER_HOSTNAME=your-workspace.cloud.databricks.com
+# DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
+# DATABRICKS_TOKEN=your_databricks_token
+
+# Note: dbt will use environment variables automatically
+# Make sure .env file is in data_warehouse directory

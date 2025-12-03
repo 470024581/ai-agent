@@ -74,6 +74,7 @@ coverage.xml
 
 # Ignore server data files
 /server/data/
+/data_warehouse/postgres_data/*
 
 # Server-specific ignores
 # Langchain/ChromaDB

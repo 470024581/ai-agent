@@ -1,0 +1,35 @@
+# Supabase Configuration Template
+# Copy this file and fill in your actual values
+# Or use environment variables (recommended)
+
+supabase:
+  # Project URL (from Supabase Dashboard > Settings > API)
+  project_url: "https://your-project.supabase.co"
+  
+  # API Key (from Supabase Dashboard > Settings > API)
+  # Use anon public key for client-side, service_role key for server-side
+  api_key: "${SUPABASE_API_KEY}"
+  
+  # Database Connection Information
+  # From Supabase Dashboard > Settings > Database > Connection string
+  database:
+    host: "aws-1-ap-south-1.pooler.supabase.com"
+    port: 5432
+    dbname: "postgres"
+    user: "postgres.imheuyklhphcorpncyhh"
+    password: "${SUPABASE_DB_PASSWORD}"  # Set during project creation
+    
+  # Connection Pool Settings
+  pool:
+    min_connections: 1
+    max_connections: 10
+    connection_timeout: 30
+
+# Environment Variables (recommended approach)
+# Create a .env file in project root with:
+# SUPABASE_API_KEY=your_api_key_here
+# SUPABASE_DB_PASSWORD=your_db_password_here
+# SUPABASE_DB_HOST=db.your-project.supabase.co
+# SUPABASE_PROJECT_URL=https://your-project.supabase.co
+
+

@@ -1,0 +1,36 @@
+# Databricks Configuration Template
+# Databricks配置模板
+# Values should be set in .env file as environment variables
+
+databricks:
+  # Workspace URL
+  workspace_url: "https://${DATABRICKS_SERVER_HOSTNAME}"
+  
+  # Authentication
+  token: "${DATABRICKS_TOKEN}"
+  
+  # SQL Warehouse Configuration
+  sql_warehouse:
+    server_hostname: "${DATABRICKS_SERVER_HOSTNAME}"
+    http_path: "${DATABRICKS_HTTP_PATH}"
+    port: 443
+  
+  # Database/Schema Configuration
+  catalog: "${DATABRICKS_CATALOG}"
+  schema: "${DATABRICKS_SCHEMA}"
+  
+  # Cluster Configuration (for compute, if needed)
+  cluster_id: "${DATABRICKS_CLUSTER_ID}"  # Optional
+  
+  # Storage Configuration
+  storage_path: "${DATABRICKS_STORAGE_PATH}"  # Optional: DBFS or S3 path
+
+# Environment Variables Required (set in .env file):
+# DATABRICKS_SERVER_HOSTNAME=your-workspace.cloud.databricks.com
+# DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
+# DATABRICKS_TOKEN=your_databricks_token
+# DATABRICKS_CATALOG=hive_metastore (or your catalog name)
+# DATABRICKS_SCHEMA=shanghai_transport (or your schema name)
+# DATABRICKS_CLUSTER_ID=your-cluster-id (optional, for compute)
+# DATABRICKS_STORAGE_PATH=dbfs:/path/to/delta (optional)
+

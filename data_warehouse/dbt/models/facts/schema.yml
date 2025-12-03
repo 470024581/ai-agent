@@ -1,0 +1,115 @@
+version: 2
+
+models:
+  - name: fact_transactions
+    description: "Transaction fact table with dimension keys and measures"
+    columns:
+      - name: transaction_key
+        description: "Surrogate key - unique identifier for fact record"
+        tests:
+          - unique
+          - not_null
+      - name: transaction_id
+        description: "Business key - original transaction ID from source"
+        tests:
+          - unique
+          - not_null
+      - name: user_key
+        description: "Foreign key to dim_user"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_user')
+              field: user_key
+      - name: station_key
+        description: "Foreign key to dim_station"
+        tests:
+          - relationships:
+              to: ref('dim_station')
+              field: station_key
+      - name: route_key
+        description: "Foreign key to dim_route"
+        tests:
+          - relationships:
+              to: ref('dim_route')
+              field: route_key
+      - name: date_key
+        description: "Foreign key to dim_time"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_time')
+              field: date_key
+      - name: transaction_date
+        description: "Transaction date (for partitioning)"
+        tests:
+          - not_null
+      - name: transaction_datetime
+        description: "Transaction date and time"
+        tests:
+          - not_null
+      - name: amount
+        description: "Transaction amount"
+        tests:
+          - not_null
+      - name: transaction_type
+        description: "Transaction type: Entry, Exit, Transfer, Top-up, Refund"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Entry', 'Exit', 'Transfer', 'Top-up', 'Refund']
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: dbt_updated_at
+        description: "dbt model last update timestamp"
+
+  - name: fact_topups
+    description: "Top-up fact table with dimension keys and measures"
+    columns:
+      - name: topup_key
+        description: "Surrogate key - unique identifier for fact record"
+        tests:
+          - unique
+          - not_null
+      - name: topup_id
+        description: "Business key - original top-up ID from source"
+        tests:
+          - unique
+          - not_null
+      - name: user_key
+        description: "Foreign key to dim_user"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_user')
+              field: user_key
+      - name: date_key
+        description: "Foreign key to dim_time"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_time')
+              field: date_key
+      - name: topup_date
+        description: "Top-up date (for partitioning)"
+        tests:
+          - not_null
+      - name: topup_datetime
+        description: "Top-up date and time"
+        tests:
+          - not_null
+      - name: amount
+        description: "Top-up amount"
+        tests:
+          - not_null
+      - name: payment_method
+        description: "Payment method: Cash, Card, Mobile, Online, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Cash', 'Card', 'Mobile', 'Online', 'Other']
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: dbt_updated_at
+        description: "dbt model last update timestamp"
+

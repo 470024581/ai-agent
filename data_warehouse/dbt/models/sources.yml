@@ -1,0 +1,80 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Raw data tables synced from Supabase via Airbyte"
+    database: workspace
+    schema: public
+    tables:
+      - name: users
+        description: "User information and transport card details"
+        columns:
+          - name: user_id
+            description: "Primary key"
+          - name: card_number
+            description: "Transport card number"
+          - name: card_type
+            description: "Card type: Regular, Student, Senior, Disabled"
+          - name: is_verified
+            description: "Whether user is verified"
+      
+      - name: stations
+        description: "Station/stop information"
+        columns:
+          - name: station_id
+            description: "Primary key"
+          - name: station_name
+            description: "Station name"
+          - name: station_type
+            description: "Station type: Metro, Bus, Ferry, Other"
+          - name: latitude
+            description: "Geographic latitude"
+          - name: longitude
+            description: "Geographic longitude"
+      
+      - name: routes
+        description: "Route/line information"
+        columns:
+          - name: route_id
+            description: "Primary key"
+          - name: route_name
+            description: "Route name"
+          - name: route_type
+            description: "Route type: Metro, Bus, Ferry, Other"
+      
+      - name: transactions
+        description: "Transaction records"
+        columns:
+          - name: transaction_id
+            description: "Primary key"
+          - name: user_id
+            description: "Foreign key to users"
+          - name: station_id
+            description: "Foreign key to stations"
+          - name: route_id
+            description: "Foreign key to routes"
+          - name: transaction_date
+            description: "Transaction date"
+          - name: transaction_time
+            description: "Transaction time"
+          - name: amount
+            description: "Transaction amount"
+          - name: transaction_type
+            description: "Transaction type: Entry, Exit, Transfer, Top-up, Refund"
+      
+      - name: topups
+        description: "Top-up records"
+        columns:
+          - name: topup_id
+            description: "Primary key"
+          - name: user_id
+            description: "Foreign key to users"
+          - name: topup_date
+            description: "Top-up date"
+          - name: topup_time
+            description: "Top-up time"
+          - name: amount
+            description: "Top-up amount"
+          - name: payment_method
+            description: "Payment method: Cash, Card, Mobile, Online, Other"
+

@@ -1,0 +1,15 @@
+{
+  "name": "Databricks Destination",
+  "destinationDefinitionId": "b4c4a739-5d5c-4b0b-9b3a-5c5c5c5c5c5c",
+  "connectionConfiguration": {
+    "databricks_server_hostname": "${DATABRICKS_SERVER_HOSTNAME}",
+    "databricks_http_path": "${DATABRICKS_HTTP_PATH}",
+    "databricks_port": "443",
+    "databricks_personal_access_token": "${DATABRICKS_TOKEN}",
+    "database": "${DATABRICKS_DATABASE}",
+    "schema": "${DATABRICKS_SCHEMA}"
+  },
+  "note": "Replace ${VARIABLE} placeholders with actual values from .env file or use generate_config.py script"
+}
+
+

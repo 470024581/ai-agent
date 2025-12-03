@@ -1,0 +1,72 @@
+name: 'shanghai_transport'
+version: '1.0.0'
+config-version: 2
+
+# Profile name (must match profiles.yml)
+profile: 'shanghai_transport'
+
+# Model paths
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+# Target paths
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Variables
+vars:
+  source_catalog: "workspace"
+  source_schema: "public"
+  staging_schema: "staging"
+  dimensions_schema: "dimensions"
+  facts_schema: "facts"
+  marts_schema: "marts"
+
+# Model configurations
+models:
+  shanghai_transport:
+    # Staging models - views in staging schema
+    staging:
+      +materialized: view
+      +schema: "{{ var('staging_schema') }}"
+      +enabled: true
+    
+    # Dimension models - tables in dimensions schema
+    dimensions:
+      +materialized: table
+      +schema: "{{ var('dimensions_schema') }}"
+      +enabled: true
+    
+    # Fact models - incremental tables in facts schema
+    facts:
+      +materialized: table
+      +schema: "{{ var('facts_schema') }}"
+      +incremental_strategy: merge
+      +enabled: true
+    
+    # Marts models - tables in marts schema
+    marts:
+      +materialized: table
+      +schema: "{{ var('marts_schema') }}"
+      +enabled: true
+
+# Seeds configuration
+seeds:
+  shanghai_transport:
+    +schema: staging
+    +enabled: true
+
+# Tests configuration
+tests:
+  shanghai_transport:
+    +enabled: true
+
+# Documentation
+docs-paths: ["docs"]
+

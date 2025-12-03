@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:15.4
+    container_name: postgres
+    environment:
+      POSTGRES_USER: dbuser
+      POSTGRES_PASSWORD: dbpass
+      POSTGRES_DB: transport_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/postgres_data:/var/lib/postgresql/data
+
+  dbt:
+    image: fishtownanalytics/dbt:1.0.0
+    container_name: dbt
+    working_dir: /usr/app/dbt
+    volumes:
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/dbt:/usr/app/dbt
+    depends_on:
+      - postgres
+    environment:
+      DBT_PROFILES_DIR: /usr/app/dbt
+
+  airflow:
+    image: apache/airflow
+    container_name: airflow
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+    volumes:
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/dags:/opt/airflow/dags
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/logs:/opt/airflow/logs
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/plugins:/opt/airflow/plugins
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com &&
+               airflow scheduler & airflow webserver"
+    depends_on:
+      - postgres
+      - dbt
+
+  superset:
+    image: apache/superset:pr-36338-8fb4ca3-ci
+    container_name: superset
+    environment:
+      SUPERSET_ENV: docker
+    ports:
+      - "8088:8088"
+    volumes:
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/superset:/app/superset
+      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/superset/superset_config.py:/app/superset/superset_config.py
+    command: >
+      /bin/bash -c "
+      superset db upgrade &&
+      superset fab create-admin --username admin --password admin --firstname Admin --lastname User --email admin@example.com &&
+      superset init &&
+      superset run -p 8088 --with-threads --reload --debugger"
+    depends_on:
+      - postgres

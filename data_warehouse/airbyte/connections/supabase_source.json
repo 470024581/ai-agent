@@ -1,0 +1,27 @@
+{
+  "name": "Supabase Source",
+  "sourceDefinitionId": "decd338e-5647-4c0b-adf4-da0e75f5d750",
+  "connectionConfiguration": {
+    "host": "${SUPABASE_DB_HOST}",
+    "port": 5432,
+    "database": "${SUPABASE_DB_NAME}",
+    "username": "${SUPABASE_DB_USER}",
+    "password": "${SUPABASE_DB_PASSWORD}",
+    "ssl": true,
+    "ssl_mode": {
+      "mode": "require"
+    },
+    "replication_method": {
+      "method": "CDC",
+      "replication_slot": "airbyte_slot",
+      "publication": "airbyte_publication"
+    },
+    "schemas": ["public"],
+    "tunnel_method": {
+      "tunnel_method": "NO_TUNNEL"
+    }
+  },
+  "note": "Replace ${VARIABLE} placeholders with actual values from .env file or use generate_config.py script"
+}
+
+

@@ -1,0 +1,56 @@
+# Airbyte Configuration Template
+# Airbyte配置模板
+# Values should be set in .env file as environment variables
+
+airbyte:
+  # Airbyte Cloud URL
+  url: "https://cloud.airbyte.com"
+  
+  # API Credentials (from Airbyte Cloud > Settings > API)
+  api_key: "${AIRBYTE_API_KEY}"
+  workspace_id: "${AIRBYTE_WORKSPACE_ID}"
+  
+  # Source Configuration (Supabase PostgreSQL)
+  source:
+    name: "Supabase Source"
+    source_definition_id: "postgres"  # PostgreSQL source definition
+    connection_config:
+      host: "${SUPABASE_DB_HOST}"
+      port: 5432
+      database: "${SUPABASE_DB_NAME}"
+      username: "${SUPABASE_DB_USER}"
+      password: "${SUPABASE_DB_PASSWORD}"
+      ssl: true
+      ssl_mode:
+        mode: "require"
+      replication_method:
+        method: "CDC"  # Change Data Capture for incremental sync
+        # Or use "Standard" for full refresh
+      schemas: ["public"]  # Schema to sync
+  
+  # Destination Configuration (Databricks)
+  destination:
+    name: "Databricks Destination"
+    destination_definition_id: "databricks"
+    connection_config:
+      databricks_server_hostname: "${DATABRICKS_SERVER_HOSTNAME}"
+      databricks_http_path: "${DATABRICKS_HTTP_PATH}"
+      databricks_port: "443"
+      databricks_personal_access_token: "${DATABRICKS_TOKEN}"
+      database: "${DATABRICKS_DATABASE}"  # Optional: default schema/database
+      schema: "${DATABRICKS_SCHEMA}"  # Optional: default schema
+
+# Environment Variables Required (set in .env file):
+# AIRBYTE_API_KEY=your_airbyte_api_key
+# AIRBYTE_WORKSPACE_ID=your_workspace_id
+# SUPABASE_DB_HOST=your_supabase_host
+# SUPABASE_DB_NAME=postgres
+# SUPABASE_DB_USER=your_supabase_user
+# SUPABASE_DB_PASSWORD=your_supabase_password
+# DATABRICKS_SERVER_HOSTNAME=your-workspace.cloud.databricks.com
+# DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/your-warehouse-id
+# DATABRICKS_TOKEN=your_databricks_token
+# DATABRICKS_DATABASE=hive_metastore (optional)
+# DATABRICKS_SCHEMA=shanghai_transport (optional)
+
+

@@ -1,0 +1,165 @@
+version: 2
+
+models:
+  - name: daily_active_users
+    description: "Daily active users metrics and trends"
+    columns:
+      - name: date
+        description: "Date of activity"
+        tests:
+          - unique
+          - not_null
+      - name: active_users
+        description: "Number of unique active users"
+        tests:
+          - not_null
+      - name: total_transactions
+        description: "Total number of transactions"
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total transaction amount"
+        tests:
+          - not_null
+      - name: avg_transactions_per_user
+        description: "Average transactions per user"
+      - name: avg_amount_per_transaction
+        description: "Average amount per transaction"
+      - name: entry_transactions
+        description: "Number of entry transactions"
+      - name: exit_transactions
+        description: "Number of exit transactions"
+      - name: is_weekend
+        description: "Whether date is weekend"
+
+  - name: daily_topup_summary
+    description: "Daily top-up summary metrics"
+    columns:
+      - name: date
+        description: "Date of top-up"
+        tests:
+          - unique
+          - not_null
+      - name: total_topups
+        description: "Total number of top-ups"
+        tests:
+          - not_null
+      - name: unique_users
+        description: "Number of unique users who topped up"
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total top-up amount"
+        tests:
+          - not_null
+      - name: avg_amount_per_topup
+        description: "Average amount per top-up"
+      - name: avg_amount_per_user
+        description: "Average amount per user"
+      - name: cash_topups
+        description: "Number of cash top-ups"
+      - name: card_topups
+        description: "Number of card top-ups"
+      - name: mobile_topups
+        description: "Number of mobile top-ups"
+      - name: online_topups
+        description: "Number of online top-ups"
+      - name: is_weekend
+        description: "Whether date is weekend"
+
+  - name: station_flow_daily
+    description: "Daily station flow metrics"
+    columns:
+      - name: date
+        description: "Date of activity"
+        tests:
+          - not_null
+      - name: station_id
+        description: "Station ID"
+        tests:
+          - not_null
+      - name: station_name
+        description: "Station name"
+        tests:
+          - not_null
+      - name: station_type
+        description: "Station type"
+        tests:
+          - not_null
+      - name: total_transactions
+        description: "Total transactions at station"
+        tests:
+          - not_null
+      - name: unique_users
+        description: "Unique users at station"
+        tests:
+          - not_null
+      - name: entry_count
+        description: "Number of entries"
+      - name: exit_count
+        description: "Number of exits"
+      - name: total_amount
+        description: "Total transaction amount"
+      - name: is_weekend
+        description: "Whether date is weekend"
+
+  - name: user_card_type_summary
+    description: "User summary by card type"
+    columns:
+      - name: card_type
+        description: "Card type"
+        tests:
+          - unique
+          - not_null
+      - name: total_users
+        description: "Total users with this card type"
+        tests:
+          - not_null
+      - name: verified_users
+        description: "Number of verified users"
+      - name: total_transactions
+        description: "Total transactions by card type"
+      - name: total_transaction_amount
+        description: "Total transaction amount"
+      - name: avg_transactions_per_user
+        description: "Average transactions per user"
+      - name: total_topups
+        description: "Total top-ups by card type"
+      - name: total_topup_amount
+        description: "Total top-up amount"
+      - name: avg_topup_per_user
+        description: "Average top-up per user"
+
+  - name: route_usage_summary
+    description: "Route usage summary metrics"
+    columns:
+      - name: route_id
+        description: "Route ID"
+        tests:
+          - unique
+          - not_null
+      - name: route_name
+        description: "Route name"
+        tests:
+          - not_null
+      - name: route_type
+        description: "Route type"
+        tests:
+          - not_null
+      - name: total_transactions
+        description: "Total transactions on route"
+        tests:
+          - not_null
+      - name: unique_users
+        description: "Unique users on route"
+        tests:
+          - not_null
+      - name: total_amount
+        description: "Total transaction amount"
+      - name: avg_transactions_per_day
+        description: "Average transactions per day"
+      - name: first_transaction_date
+        description: "First transaction date"
+      - name: last_transaction_date
+        description: "Last transaction date"
+

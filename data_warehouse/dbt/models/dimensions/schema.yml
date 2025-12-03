@@ -1,0 +1,157 @@
+version: 2
+
+models:
+  - name: dim_user
+    description: "User dimension table with surrogate keys"
+    columns:
+      - name: user_key
+        description: "Surrogate key - unique identifier for dimension"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Business key - original user ID from source"
+        tests:
+          - unique
+          - not_null
+      - name: card_number
+        description: "Transport card number"
+        tests:
+          - not_null
+      - name: card_type
+        description: "Card type: Regular, Student, Senior, Disabled"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Regular', 'Student', 'Senior', 'Disabled']
+      - name: is_verified
+        description: "Whether user is verified"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: updated_at
+        description: "Record last update timestamp"
+      - name: dbt_updated_at
+        description: "dbt model last update timestamp"
+
+  - name: dim_station
+    description: "Station dimension table with surrogate keys"
+    columns:
+      - name: station_key
+        description: "Surrogate key - unique identifier for dimension"
+        tests:
+          - unique
+          - not_null
+      - name: station_id
+        description: "Business key - original station ID from source"
+        tests:
+          - unique
+          - not_null
+      - name: station_name
+        description: "Station name"
+        tests:
+          - not_null
+      - name: station_type
+        description: "Station type: Metro, Bus, Ferry, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Metro', 'Bus', 'Ferry', 'Other']
+      - name: latitude
+        description: "Geographic latitude"
+        tests:
+          - not_null
+      - name: longitude
+        description: "Geographic longitude"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: dbt_updated_at
+        description: "dbt model last update timestamp"
+
+  - name: dim_route
+    description: "Route dimension table with surrogate keys"
+    columns:
+      - name: route_key
+        description: "Surrogate key - unique identifier for dimension"
+        tests:
+          - unique
+          - not_null
+      - name: route_id
+        description: "Business key - original route ID from source"
+        tests:
+          - unique
+          - not_null
+      - name: route_name
+        description: "Route name"
+        tests:
+          - not_null
+      - name: route_type
+        description: "Route type: Metro, Bus, Ferry, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Metro', 'Bus', 'Ferry', 'Other']
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: dbt_updated_at
+        description: "dbt model last update timestamp"
+
+  - name: dim_time
+    description: "Time dimension table with date attributes"
+    columns:
+      - name: date_key
+        description: "Surrogate key - YYYYMMDD format"
+        tests:
+          - unique
+          - not_null
+      - name: date_day
+        description: "Date value"
+        tests:
+          - unique
+          - not_null
+      - name: day_of_week
+        description: "Day of week (1=Monday, 7=Sunday)"
+        tests:
+          - not_null
+      - name: day_of_week_name
+        description: "Day of week name (Monday, Tuesday, etc.)"
+        tests:
+          - not_null
+      - name: day_of_month
+        description: "Day of month (1-31)"
+        tests:
+          - not_null
+      - name: day_of_year
+        description: "Day of year (1-366)"
+        tests:
+          - not_null
+      - name: week_of_year
+        description: "Week of year (1-53)"
+        tests:
+          - not_null
+      - name: month_number
+        description: "Month number (1-12)"
+        tests:
+          - not_null
+      - name: month_name
+        description: "Month name (January, February, etc.)"
+        tests:
+          - not_null
+      - name: quarter
+        description: "Quarter (1-4)"
+        tests:
+          - not_null
+      - name: year
+        description: "Year (YYYY)"
+        tests:
+          - not_null
+      - name: is_weekend
+        description: "Whether date is weekend (Saturday or Sunday)"
+        tests:
+          - not_null
+      - name: is_holiday
+        description: "Whether date is a holiday (placeholder for future enhancement)"
+

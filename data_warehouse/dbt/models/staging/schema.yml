@@ -1,0 +1,164 @@
+version: 2
+
+models:
+  - name: stg_users
+    description: "Cleaned user data from source"
+    columns:
+      - name: user_id
+        description: "Primary key - unique user identifier"
+        tests:
+          - unique
+          - not_null
+      - name: card_number
+        description: "Transport card number"
+        tests:
+          - not_null
+      - name: card_type
+        description: "Card type: Regular, Student, Senior, Disabled"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Regular', 'Student', 'Senior', 'Disabled']
+      - name: is_verified
+        description: "Whether user is verified"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+      - name: updated_at
+        description: "Record last update timestamp"
+
+  - name: stg_stations
+    description: "Cleaned station data from source"
+    columns:
+      - name: station_id
+        description: "Primary key - unique station identifier"
+        tests:
+          - unique
+          - not_null
+      - name: station_name
+        description: "Station name"
+        tests:
+          - not_null
+      - name: station_type
+        description: "Station type: Metro, Bus, Ferry, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Metro', 'Bus', 'Ferry', 'Other']
+      - name: latitude
+        description: "Geographic latitude"
+        tests:
+          - not_null
+      - name: longitude
+        description: "Geographic longitude"
+        tests:
+          - not_null
+      - name: created_at
+        description: "Record creation timestamp"
+
+  - name: stg_routes
+    description: "Cleaned route data from source"
+    columns:
+      - name: route_id
+        description: "Primary key - unique route identifier"
+        tests:
+          - unique
+          - not_null
+      - name: route_name
+        description: "Route name"
+        tests:
+          - not_null
+      - name: route_type
+        description: "Route type: Metro, Bus, Ferry, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Metro', 'Bus', 'Ferry', 'Other']
+      - name: created_at
+        description: "Record creation timestamp"
+
+  - name: stg_transactions
+    description: "Cleaned transaction data from source"
+    columns:
+      - name: transaction_id
+        description: "Primary key - unique transaction identifier"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to users"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_users')
+              field: user_id
+      - name: station_id
+        description: "Foreign key to stations"
+        tests:
+          - relationships:
+              to: ref('stg_stations')
+              field: station_id
+      - name: route_id
+        description: "Foreign key to routes"
+        tests:
+          - relationships:
+              to: ref('stg_routes')
+              field: route_id
+      - name: transaction_date
+        description: "Transaction date"
+        tests:
+          - not_null
+      - name: transaction_time
+        description: "Transaction time"
+      - name: transaction_datetime
+        description: "Combined transaction date and time"
+        tests:
+          - not_null
+      - name: amount
+        description: "Transaction amount (cleaned)"
+        tests:
+          - not_null
+      - name: transaction_type
+        description: "Transaction type: Entry, Exit, Transfer, Top-up, Refund"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Entry', 'Exit', 'Transfer', 'Top-up', 'Refund']
+
+  - name: stg_topups
+    description: "Cleaned top-up data from source"
+    columns:
+      - name: topup_id
+        description: "Primary key - unique top-up identifier"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to users"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_users')
+              field: user_id
+      - name: topup_date
+        description: "Top-up date"
+        tests:
+          - not_null
+      - name: topup_time
+        description: "Top-up time"
+      - name: topup_datetime
+        description: "Combined top-up date and time"
+        tests:
+          - not_null
+      - name: amount
+        description: "Top-up amount (cleaned)"
+        tests:
+          - not_null
+      - name: payment_method
+        description: "Payment method: Cash, Card, Mobile, Online, Other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Cash', 'Card', 'Mobile', 'Online', 'Other']
+
