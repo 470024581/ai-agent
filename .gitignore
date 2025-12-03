@@ -51,8 +51,12 @@ coverage.xml
 *.pot
 
 # Database dumps
-*.sql
 *.sqlite3
+# Allow dbt model SQL files
+!data_warehouse/dbt/models/**/*.sql
+!data_warehouse/dbt/tests/**/*.sql
+!data_warehouse/dbt/macros/**/*.sql
+!data_warehouse/sql/**/*.sql
 
 # Environment variables
 .env
