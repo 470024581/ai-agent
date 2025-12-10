@@ -1,0 +1,139 @@
+﻿table_name: user_card_type_summary
+main_dttm_col: null
+description: User summary by card type with transaction and top-up metrics
+default_endpoint: null
+offset: 0
+cache_timeout: null
+catalog: null
+schema: marts
+sql: null
+params: null
+template_params: null
+filter_select_enabled: true
+fetch_values_predicate: null
+extra: null
+normalize_columns: false
+always_filter_main_dttm: false
+folders: null
+uuid: 550e8400-e29b-41d4-a716-446655440005
+metrics:
+- metric_name: count
+  verbose_name: COUNT(*)
+  metric_type: count
+  expression: COUNT(*)
+  description: null
+  d3format: null
+  currency: null
+  extra: null
+  warning_text: null
+columns:
+- column_name: card_type
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: VARCHAR
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Card type
+  python_date_format: null
+  extra: null
+- column_name: total_users
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: BIGINT
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Total number of users
+  python_date_format: null
+  extra: null
+- column_name: verified_users
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: BIGINT
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Number of verified users
+  python_date_format: null
+  extra: null
+- column_name: total_transactions
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: BIGINT
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Total number of transactions
+  python_date_format: null
+  extra: null
+- column_name: total_transaction_amount
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: DOUBLE
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Total transaction amount
+  python_date_format: null
+  extra: null
+- column_name: avg_transactions_per_user
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: DOUBLE
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Average transactions per user
+  python_date_format: null
+  extra: null
+- column_name: total_topups
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: BIGINT
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Total number of top-ups
+  python_date_format: null
+  extra: null
+- column_name: total_topup_amount
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: DOUBLE
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Total top-up amount
+  python_date_format: null
+  extra: null
+- column_name: avg_topup_per_user
+  verbose_name: null
+  is_dttm: false
+  is_active: true
+  type: DOUBLE
+  advanced_data_type: null
+  groupby: true
+  filterable: true
+  expression: null
+  description: Average top-up per user
+  python_date_format: null
+  extra: null
+version: 1.0.0
+database_uuid: 07a1d52b-1bb4-4231-835d-1ada8f4dd91f

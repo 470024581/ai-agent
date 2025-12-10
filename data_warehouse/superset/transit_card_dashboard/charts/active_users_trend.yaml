@@ -1,0 +1,42 @@
+slice_name: Active Users Trend
+description: Active users and transactions trend over time
+certified_by: null
+certification_details: null
+viz_type: echarts_timeseries_line
+params:
+  datasource: 1__table
+  viz_type: echarts_timeseries_line
+  slice_id: 14
+  x_axis: date
+  metrics:
+  - aggregate: SUM
+    column:
+      column_name: active_users
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(active_users)
+  - aggregate: SUM
+    column:
+      column_name: total_transactions
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(total_transactions)
+  adhoc_filters:
+  - clause: WHERE
+    subject: date
+    operator: TEMPORAL_RANGE
+    comparator: Last 7 days
+    expressionType: SIMPLE
+  time_grain_sqla: P1D
+  show_legend: true
+  rich_tooltip: true
+  y_axis_format: ','
+  y_axis_title: Count
+  x_axis_title: Date
+  color_scheme: supersetColors
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440014
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440001

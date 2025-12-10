@@ -1,0 +1,27 @@
+slice_name: Payment Method Distribution
+description: Distribution of top-ups by payment method
+certified_by: null
+certification_details: null
+viz_type: pie
+params:
+  datasource: 2__table
+  viz_type: pie
+  slice_id: 16
+  metric:
+    aggregate: COUNT
+    expressionType: SIMPLE
+    label: COUNT(*)
+  groupby: []
+  adhoc_filters: []
+  donut: false
+  show_legend: true
+  show_labels: true
+  labels_outside: true
+  color_scheme: supersetColors
+  number_format: ','
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440016
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440002

@@ -1,0 +1,40 @@
+slice_name: Top-up Trend
+description: Top-up amount and count trend over time
+certified_by: null
+certification_details: null
+viz_type: echarts_area
+params:
+  datasource: 2__table
+  viz_type: echarts_area
+  slice_id: 15
+  x_axis: date
+  metrics:
+  - aggregate: SUM
+    column:
+      column_name: total_amount
+      type: DOUBLE
+    expressionType: SIMPLE
+    label: SUM(total_amount)
+  - aggregate: SUM
+    column:
+      column_name: total_topups
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(total_topups)
+  adhoc_filters:
+  - clause: WHERE
+    subject: date
+    operator: TEMPORAL_RANGE
+    comparator: Last 7 days
+    expressionType: SIMPLE
+  time_grain_sqla: P1D
+  show_legend: true
+  rich_tooltip: true
+  y_axis_format: ','
+  color_scheme: supersetColors
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440015
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440002

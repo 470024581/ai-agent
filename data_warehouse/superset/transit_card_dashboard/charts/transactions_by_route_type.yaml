@@ -1,0 +1,29 @@
+slice_name: Transactions by Route Type
+description: Total transactions by route type
+certified_by: null
+certification_details: null
+viz_type: echarts_timeseries_bar
+params:
+  datasource: 3__table
+  viz_type: echarts_timeseries_bar
+  slice_id: 18
+  groupby:
+  - route_type
+  metrics:
+  - aggregate: SUM
+    column:
+      column_name: total_transactions
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(total_transactions)
+  adhoc_filters: []
+  show_legend: true
+  rich_tooltip: true
+  y_axis_format: ','
+  color_scheme: supersetColors
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440018
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440003

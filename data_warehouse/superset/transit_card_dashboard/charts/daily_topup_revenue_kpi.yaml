@@ -1,0 +1,39 @@
+slice_name: Daily Top-up Revenue
+description: Total top-up revenue today
+certified_by: null
+certification_details: null
+viz_type: big_number_total
+params:
+  datasource: 2__table
+  viz_type: big_number_total
+  slice_id: 11
+  metric:
+    aggregate: SUM
+    column:
+      column_name: total_amount
+      description: Total top-up amount
+      expression: null
+      filterable: true
+      groupby: true
+      is_dttm: false
+      type: DOUBLE
+      verbose_name: null
+    expressionType: SIMPLE
+    hasCustomLabel: false
+    label: SUM(total_amount)
+    sqlExpression: null
+  adhoc_filters:
+  - clause: WHERE
+    subject: date
+    operator: TEMPORAL_RANGE
+    comparator: Last 1 day
+    expressionType: SIMPLE
+  subheader: Top-up Revenue Today
+  y_axis_format: '$,.2f'
+  time_format: smart_date
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440011
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440002

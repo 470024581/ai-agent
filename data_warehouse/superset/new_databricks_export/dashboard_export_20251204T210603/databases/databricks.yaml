@@ -1,0 +1,14 @@
+database_name: databricks
+sqlalchemy_uri: databricks://token:XXXXXXXXXX@dbc-0ad488e7-11a0.cloud.databricks.com:80?catalog=workspace&http_path=%2Fsql%2F1.0%2Fwarehouses%2F300649a2b1f0db2f&schema=marts
+cache_timeout: null
+expose_in_sqllab: true
+allow_run_async: false
+allow_ctas: false
+allow_cvas: false
+allow_dml: false
+allow_file_upload: false
+extra:
+  allows_virtual_table_explore: true
+impersonate_user: false
+uuid: 07a1d52b-1bb4-4231-835d-1ada8f4dd91f
+version: 1.0.0

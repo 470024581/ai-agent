@@ -1,0 +1,39 @@
+slice_name: Avg Top-up Per User
+description: Average top-up amount per user today
+certified_by: null
+certification_details: null
+viz_type: big_number_total
+params:
+  datasource: 2__table
+  viz_type: big_number_total
+  slice_id: 13
+  metric:
+    aggregate: AVG
+    column:
+      column_name: avg_amount_per_user
+      description: Average amount per user
+      expression: null
+      filterable: true
+      groupby: true
+      is_dttm: false
+      type: DOUBLE
+      verbose_name: null
+    expressionType: SIMPLE
+    hasCustomLabel: false
+    label: AVG(avg_amount_per_user)
+    sqlExpression: null
+  adhoc_filters:
+  - clause: WHERE
+    subject: date
+    operator: TEMPORAL_RANGE
+    comparator: Last 1 day
+    expressionType: SIMPLE
+  subheader: Avg Per User Today
+  y_axis_format: '$,.2f'
+  time_format: smart_date
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440013
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440002

@@ -1,0 +1,40 @@
+slice_name: Weekday vs Weekend Comparison
+description: Transaction comparison between weekdays and weekends
+certified_by: null
+certification_details: null
+viz_type: echarts_timeseries_bar
+params:
+  datasource: 1__table
+  viz_type: echarts_timeseries_bar
+  slice_id: 21
+  groupby:
+  - is_weekend
+  metrics:
+  - aggregate: SUM
+    column:
+      column_name: total_transactions
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(total_transactions)
+  - aggregate: SUM
+    column:
+      column_name: active_users
+      type: BIGINT
+    expressionType: SIMPLE
+    label: SUM(active_users)
+  adhoc_filters:
+  - clause: WHERE
+    subject: date
+    operator: TEMPORAL_RANGE
+    comparator: Last 7 days
+    expressionType: SIMPLE
+  show_legend: true
+  rich_tooltip: true
+  y_axis_format: ','
+  color_scheme: supersetColors
+  extra_form_data: {}
+query_context: null
+cache_timeout: null
+uuid: 550e8400-e29b-41d4-a716-446655440021
+version: 1.0.0
+dataset_uuid: 550e8400-e29b-41d4-a716-446655440001
