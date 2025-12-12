@@ -6,6 +6,13 @@ langchain-community==0.3.25
 langchain-openai==0.3.19
 # For Langchain SQL Agent and DB interaction
 sqlalchemy==2.0.41
+# For Databricks SQL connector with SQLAlchemy support
+# Note: Install with [sqlalchemy] extra to enable SQLAlchemy dialect
+# databricks-sql-connector[sqlalchemy]>=3.1.0,<4.1.4  # Uncomment if dbt-databricks compatibility is needed
+databricks-sql-connector[sqlalchemy]>=3.1.0
+# SQLAlchemy dialect for Databricks (official integration)
+# Use databricks-sqlalchemy for SQLAlchemy 2.0+ support
+databricks-sqlalchemy>=0.1.0
 # For Pydantic models
 pydantic==2.11.5
 # For loading .env files

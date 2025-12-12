@@ -366,25 +366,26 @@ function IntelligentAnalysis() {
   };
 
   // Example queries data structure - Updated to 2 categories with 4 examples each
+  // Based on Shanghai Transport data warehouse structure
   const exampleQueries = [
     {
       category: 'SQL',
       color: 'blue',
       examples: [
-        'Show monthly sales trend for 2025.',
-        'Generate a pie chart of sales proportion by product category for July to September 2025.',
-        "List top 10 products by total sales in 2025.",
-        'What are the total sales and average order value for 2025?'
+        'Show monthly transaction trend for 2025.',
+        'Generate a pie chart of top-up amount by payment method for the last 30 days.',
+        'List top 10 stations by total transaction count in 2025.',
+        'What are the total transaction amount and average transaction value for 2025?'
       ]
     },
     {
       category: 'RAG',
       color: 'purple',
       examples: [
-        'Do you know Long Liang?',
-        'What metrics are there in the DWS layer?',
-        'What are the key features of the wide table solution?',
-        'Describe the business schema and data relationships.'
+        'Do you know Logan?',
+        'What metrics are available in the marts layer?',
+        'What are the key features of the fact and dimension tables?',
+        'Describe the business schema and data relationships in the transport system.'
       ]
     }
   ];

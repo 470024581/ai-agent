@@ -5,6 +5,22 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain.agents import AgentType
 from langchain_community.embeddings import SentenceTransformerEmbeddings
+
+# Import databricks-sqlalchemy to register SQLAlchemy dialect for Databricks
+# This must be imported before sqlalchemy.create_engine is called
+try:
+    from databricks.sqlalchemy import base  # noqa: F401
+except ImportError:
+    pass  # databricks-sqlalchemy is optional if not using Databricks
+
+# Also import databricks.sql for fallback direct connection
+try:
+    import databricks.sql  # noqa: F401
+except ImportError:
+    pass  # databricks-sql-connector is optional if not using Databricks
+
+# Import smart SQLDatabase factory that uses SQLAlchemy dialect for Databricks
+from ..utils.databricks_adapter import create_sql_database
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
@@ -51,7 +67,8 @@ VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
 # Determine the correct upload directory relative to this file (agent.py)
 # Assuming agent.py is in server/app/ and uploads are in server/data/uploads/
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "uploads"
-DB_URI = f"sqlite:///{DATABASE_PATH}" # Construct DB URI for LangChain
+# Use DATABASE_URL from configuration (supports Databricks or other backends)
+DB_URI = Config.DATABASE_URL
 
 llm = None
 embeddings = None # Initialize embeddings variable
@@ -676,7 +693,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                 "customers", "products", "orders", "sales", "inventory"
             ]
             logger.info(f"Initializing SQLDatabase for built-in ERP tables: {builtin_tables} using URI: {DB_URI}")
-            db = SQLDatabase.from_uri(DB_URI, include_tables=builtin_tables, sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
+            db = create_sql_database(DB_URI, include_tables=builtin_tables, sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
         else:
             if not db_table_name:
                 logger.error(f"Data source '{active_datasource['name']}' is not fully configured. Missing associated database table name.")
@@ -687,7 +704,7 @@ async def get_answer_from_sqltable_datasource(query: str, active_datasource: Dic
                     "error": "Missing db_table_name for SQL_TABLE_FROM_FILE datasource."
                 }
             logger.info(f"Initializing SQLDatabase for table: {db_table_name} using URI: {DB_URI}")
-            db = SQLDatabase.from_uri(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
+            db = create_sql_database(DB_URI, include_tables=[db_table_name], sample_rows_in_table_info=0)  # Set to 0 to avoid Decimal type conversion errors
         
         # Get schema info for validation
         schema_info = db.get_table_info()
@@ -1159,8 +1176,8 @@ async def get_query_from_sqltable_datasource(
             tables_to_include = [table_name]
             logger.info(f"Initializing SQLDatabase for query: {table_name}")
         
-        # Initialize database connection
-        db = SQLDatabase.from_uri(DB_URI, include_tables=tables_to_include)
+        # Initialize database connection using smart factory (supports Databricks direct connection)
+        db = create_sql_database(DB_URI, include_tables=tables_to_include)
         
         # Get schema info for validation
         schema_info = db.get_table_info()

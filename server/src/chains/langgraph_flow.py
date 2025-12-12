@@ -12,12 +12,28 @@ import logging
 import requests
 from langgraph.graph import StateGraph
 from langchain_community.utilities import SQLDatabase
+
+# Import databricks-sqlalchemy to register SQLAlchemy dialect for Databricks
+# This must be imported before sqlalchemy.create_engine is called
+try:
+    from databricks.sqlalchemy import base  # noqa: F401
+except ImportError:
+    pass  # databricks-sqlalchemy is optional if not using Databricks
+
+# Also import databricks.sql for fallback direct connection
+try:
+    import databricks.sql  # noqa: F401
+except ImportError:
+    pass  # databricks-sql-connector is optional if not using Databricks
+
+# Import smart SQLDatabase factory that uses SQLAlchemy dialect for Databricks
+from ..utils.databricks_adapter import create_sql_database
 from ..agents.intelligent_agent import llm, perform_rag_query, get_answer_from_sqltable_datasource, get_query_from_sqltable_datasource
-import re
+# re is already imported at line 8, no need to import again
 import difflib
 from ..models.data_models import WorkflowEvent, WorkflowEventType, NodeStatus, DataSourceType
 from ..database.db_operations import get_active_datasource
-from ..agents.intelligent_agent import DB_URI
+from ..config.config import Config
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.agents import AgentAction, AgentFinish
 from langchain_core.outputs import LLMResult
@@ -82,14 +98,14 @@ class ReActStepCallback(BaseCallbackHandler):
         self.steps_queue.append({
             "type": "thought",
             "index": self.step_index + 1,
-            "content": f"Agent finished. Final answer: {finish.return_values.get('output', 'N/A')[:200]}..."
+            "content": f"Agent finished. Final answer: {finish.return_values.get('output', 'N/A')[:100]}..."
         })
     
     def on_tool_end(self, output: str, **kwargs: Any) -> None:
         """Called when tool execution ends (observation step)"""
         self.step_index += 1
         # Truncate long outputs for display
-        display_output = output[:500] + "..." if len(output) > 500 else output
+        display_output = output[:100] + "..." if len(output) > 100 else output
         
         self.steps_queue.append({
             "type": "observation",
@@ -720,11 +736,133 @@ async def sql_agent_node(state: GraphState) -> GraphState:
             else:
                 include_tables = [table_name]
         
-        db = SQLDatabase.from_uri(
-            f"sqlite:///{os.path.abspath('data/smart.db')}",
+        # Use smart factory that prioritizes SQLAlchemy dialect for Databricks
+        # This ensures ReAct mode works correctly with SQLDatabaseToolkit
+        db = create_sql_database(
+            Config.DATABASE_URL,
             include_tables=include_tables,
             sample_rows_in_table_info=0  # Set to 0 to avoid Decimal type conversion errors
         )
+        
+        # Detect database type for SQL generation
+        # Note: databricks-sqlalchemy only supports databricks:// format (not databricks+connector://)
+        is_databricks = Config.DATABASE_URL.startswith("databricks://") or Config.DATABASE_URL.startswith("databricks+connector://")
+        
+        # 2.5. For Databricks, discover all schemas and tables BEFORE creating agent
+        # This ensures agent has access to all tables from all schemas
+        all_discovered_tables = []
+        marts_tables_detected = []
+        all_tables_by_schema = {}
+        
+        if is_databricks:
+            logger.info("Pre-discovering all schemas and tables for Databricks...")
+            try:
+                # Create a temporary toolkit to get sql_db_query tool
+                from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
+                temp_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+                temp_tools = temp_toolkit.get_tools()
+                
+                sql_query_tool = None
+                for tool in temp_tools:
+                    if tool.name == 'sql_db_query':
+                        sql_query_tool = tool
+                        break
+                
+                if sql_query_tool:
+                    import re as re_module
+                    import ast
+                    catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG", "workspace")
+                    
+                    # Step 1: List all schemas
+                    logger.info(f"Discovering all schemas in catalog: {catalog}")
+                    schemas_query = f"SHOW SCHEMAS IN {catalog}"
+                    
+                    try:
+                        schemas_result = sql_query_tool.invoke({"query": schemas_query})
+                        logger.info(f"Querying schemas: {schemas_query}")
+                        
+                        # Parse schemas from result
+                        schemas_list = []
+                        if schemas_result:
+                            schemas_raw = str(schemas_result)
+                            try:
+                                parsed_schemas = ast.literal_eval(schemas_raw)
+                                if isinstance(parsed_schemas, list):
+                                    for item in parsed_schemas:
+                                        if isinstance(item, (tuple, list)) and len(item) > 0:
+                                            schema_name = item[0] if isinstance(item[0], str) else str(item[0])
+                                            if schema_name and schema_name not in ['databaseName', 'namespace']:
+                                                schemas_list.append(schema_name)
+                                        elif isinstance(item, str):
+                                            schemas_list.append(item)
+                            except:
+                                pattern = r"['\"]([^'\"]+)['\"]"
+                                matches = re_module.findall(pattern, schemas_raw)
+                                for match in matches:
+                                    if match not in ['databaseName', 'namespace', 'database', 'schema']:
+                                        schemas_list.append(match)
+                        
+                        # Filter out system schemas
+                        relevant_schemas = [s for s in schemas_list if s.lower() not in ['information_schema', 'sys', 'default']]
+                        logger.info(f"✅ Discovered {len(relevant_schemas)} schemas: {relevant_schemas}")
+                        
+                        # Step 2: For each schema, list all tables
+                        for schema in relevant_schemas:
+                            try:
+                                tables_query = f"SHOW TABLES IN {catalog}.{schema}"
+                                logger.info(f"Querying tables in schema {schema}: {tables_query}")
+                                
+                                schema_tables_result = sql_query_tool.invoke({"query": tables_query})
+                                
+                                if schema_tables_result:
+                                    schema_tables = []
+                                    schema_tables_raw = str(schema_tables_result)
+                                    
+                                    try:
+                                        parsed_tables = ast.literal_eval(schema_tables_raw)
+                                        if isinstance(parsed_tables, list):
+                                            for item in parsed_tables:
+                                                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                                                    table_name = item[1] if len(item) > 1 else item[0]
+                                                    if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
+                                                        full_table_name = f"{schema}.{table_name}"
+                                                        schema_tables.append(full_table_name)
+                                                        all_discovered_tables.append(full_table_name)
+                                    except:
+                                        pattern = rf"{re_module.escape(schema)}\.(\w+)"
+                                        matches = re_module.findall(pattern, schema_tables_raw)
+                                        for match in matches:
+                                            if match not in ['tableName', 'table', 'database']:
+                                                full_table_name = f"{schema}.{match}"
+                                                schema_tables.append(full_table_name)
+                                                all_discovered_tables.append(full_table_name)
+                                    
+                                    if schema_tables:
+                                        all_tables_by_schema[schema] = schema_tables
+                                        logger.info(f"  ✅ Schema '{schema}': {len(schema_tables)} tables")
+                            except Exception as schema_error:
+                                logger.warning(f"  ⚠️  Error querying tables in schema '{schema}': {schema_error}")
+                        
+                        # Identify marts layer tables
+                        if all_discovered_tables:
+                            marts_tables_detected = [
+                                t for t in all_discovered_tables 
+                                if 'marts' in t.lower() or 
+                                any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat'])
+                            ]
+                            
+                            logger.info(f"✅ Pre-discovered {len(all_discovered_tables)} tables across {len(all_tables_by_schema)} schemas")
+                            logger.info(f"   Schemas: {list(all_tables_by_schema.keys())}")
+                            if marts_tables_detected:
+                                logger.info(f"✅ Detected {len(marts_tables_detected)} marts layer tables: {marts_tables_detected}")
+                            else:
+                                logger.warning("⚠️  No marts layer tables detected in discovered schemas")
+                    except Exception as schemas_error:
+                        logger.warning(f"Could not pre-discover schemas: {schemas_error}")
+                else:
+                    logger.warning("sql_db_query tool not available for pre-discovery")
+            except Exception as e:
+                logger.warning(f"Error in pre-discovery of schemas and tables: {e}")
         
         # 3. Try to use ReAct mode with create_sql_agent
         use_react_mode = False
@@ -762,8 +900,55 @@ async def sql_agent_node(state: GraphState) -> GraphState:
         if use_react_mode:
             logger.info("Executing SQL Agent in ReAct mode...")
             try:
-                # Build input with context
-                agent_input = f"{user_input}\n\nBackground knowledge from knowledge base: {rag_answer}"
+                # Build input with context and guidance
+                # Add guidance about using marts layer for statistics and RAG for metadata
+                guidance = ""
+                available_tables_info = ""
+                if is_databricks:
+                    # Build available tables information from pre-discovered tables
+                    if all_discovered_tables:
+                        available_tables_info = f"\n\nAVAILABLE TABLES (discovered from all schemas):\n"
+                        # Group by schema for better readability
+                        for schema, tables in all_tables_by_schema.items():
+                            available_tables_info += f"  {schema} schema: {', '.join([t.split('.')[-1] for t in tables])}\n"
+                        available_tables_info += f"\nTotal: {len(all_discovered_tables)} tables across {len(all_tables_by_schema)} schemas\n"
+                        
+                        if marts_tables_detected:
+                            available_tables_info += f"\n⚠️  IMPORTANT - MARTS LAYER TABLES (preferred for statistics):\n"
+                            for marts_table in marts_tables_detected:
+                                available_tables_info += f"  - {marts_table}\n"
+                    
+                    guidance = f"""
+IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
+
+1. STATISTICAL/METRIC QUERIES - Use marts layer tables (data warehouse design principle):
+   - For aggregated statistics, metrics, summaries, or pre-calculated data, ALWAYS prefer marts schema tables
+   - The marts layer follows Kimball/Medallion Architecture data warehouse design patterns and contains pre-aggregated metrics optimized for analytical queries
+   - Design principle: marts tables are designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics
+   - When querying for statistics (counts, sums, averages, trends), look for tables in the marts schema that match the aggregation level and metric type
+   - Avoid aggregating from raw fact/dimension tables when equivalent marts tables exist, as marts tables are pre-computed and more efficient
+   - Only use facts/dimensions tables when marts layer doesn't provide the required granularity or metrics
+   {"   - Available marts tables: " + ", ".join(marts_tables_detected) if marts_tables_detected else ""}
+
+2. METADATA INFORMATION - Use RAG knowledge base first:
+   - For table structures, column definitions, business rules, and data relationships, FIRST check the background knowledge from RAG
+   - The RAG knowledge base contains metadata documentation about tables, schemas, and business logic
+   - Only if RAG doesn't provide sufficient information, use SQL-Agent's ReAct tools to explore the database schema
+   - Use tools like sql_db_list_tables and sql_db_schema to discover table structures when RAG metadata is insufficient
+   - NOTE: The sql_db_list_tables tool may only show tables from the default schema. Use the AVAILABLE TABLES list below to see all tables from all schemas.
+
+3. DATA EXPLORATION PRIORITY:
+   - Step 1: Check RAG background knowledge for metadata and table information
+   - Step 2: Check the AVAILABLE TABLES list below to see all available tables from all schemas
+   - Step 3: For statistical queries, prefer marts layer tables over raw fact/dimension tables (follow data warehouse design principles)
+   - Step 4: Only use facts/dimensions tables when marts layer doesn't have the required metrics or granularity
+
+4. TABLE NAMING:
+   - This database has multiple schemas. Always use schema.table format when referencing tables (e.g., marts.station_flow_daily, public.src_transactions)
+   - You can query tables from any schema using the full path: schema.table_name
+{available_tables_info}
+"""
+                agent_input = f"{user_input}\n\n{guidance}\nBackground knowledge from knowledge base: {rag_answer if rag_answer else '(No RAG metadata available - use ReAct tools to explore database schema)'}"
                 
                 # Stream agent execution
                 intermediate_steps = []
@@ -832,7 +1017,7 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                                                 logger.info(f"Captured action from on_chain_stream steps: tool={tool_name}, input_type={type(tool_input_raw).__name__}")
                                                 
                                                 tool_input_str = json.dumps(tool_input_dict, ensure_ascii=False, indent=2) if isinstance(tool_input_dict, dict) else str(tool_input_dict)
-                                                content = f"Calling tool: {tool_name}\nInput: {tool_input_str[:200]}{'...' if len(tool_input_str) > 200 else ''}"
+                                                content = f"Calling tool: {tool_name}\nInput: {tool_input_str[:100]}{'...' if len(tool_input_str) > 100 else ''}"
                                                 
                                                 await websocket_manager.stream_react_step(
                                                     execution_id=execution_id,
@@ -853,8 +1038,28 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                                             else:
                                                 # Update existing step with observation
                                                 if observation:
-                                                    intermediate_steps[existing_step_idx]["observation"] = str(observation)
-                                                    logger.info(f"Updated step {existing_step_idx} with observation: tool={tool_name}, observation_length={len(str(observation))}")
+                                                    # CRITICAL: Truncate large observations to prevent context length exceeded errors
+                                                    observation_str = str(observation)
+                                                    MAX_OBSERVATION_LENGTH = 1048576  # 1MB limit
+                                                    if len(observation_str) > MAX_OBSERVATION_LENGTH:
+                                                        logger.warning(f"⚠️  Observation too large ({len(observation_str)} chars), truncating to {MAX_OBSERVATION_LENGTH} chars")
+                                                        if tool_name == "sql_db_query":
+                                                            # Try to parse and summarize SQL results
+                                                            try:
+                                                                parsed = _parse_agent_query_result(observation_str)
+                                                                if parsed and parsed.get("rows"):
+                                                                    rows = parsed.get("rows", [])
+                                                                    truncated_rows = rows[:100]
+                                                                    observation_str = f"Query returned {len(rows)} rows. Showing first 100 rows:\n{str(truncated_rows)}"
+                                                                    if len(observation_str) > MAX_OBSERVATION_LENGTH:
+                                                                        observation_str = observation_str[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated)"
+                                                            except:
+                                                                observation_str = observation_str[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated, original length: {len(observation_str)} chars)"
+                                                        else:
+                                                            observation_str = observation_str[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated, original length: {len(observation_str)} chars)"
+                                                    
+                                                    intermediate_steps[existing_step_idx]["observation"] = observation_str
+                                                    logger.info(f"Updated step {existing_step_idx} with observation: tool={tool_name}, observation_length={len(observation_str)}")
                                                     
                                                     # Try to parse structured_data from observation if it's a SQL query
                                                     if tool_name == "sql_db_query" and observation:
@@ -920,7 +1125,7 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                             
                             # Check if this chunk contains action information as text
                             if chunk_text and ("Action:" in chunk_text or "Action Input:" in chunk_text):
-                                logger.info(f"Found action text in on_chain_stream: {chunk_text[:200]}")
+                                logger.info(f"Found action text in on_chain_stream: {chunk_text[:100]}")
                                 
                                 # Parse action from text
                                 import re
@@ -982,7 +1187,7 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                             action = action_data
                         
                         # Log the full action structure for debugging
-                        logger.info(f"Action structure: {type(action).__name__}, content: {str(action)[:200]}")
+                        logger.info(f"Action structure: {type(action).__name__}, content: {str(action)[:100]}")
                         
                         if isinstance(action, dict):
                             tool_name = action.get("tool", action.get("name", event.get("name", "unknown")))
@@ -1028,8 +1233,35 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                         else:
                             observation = str(tool_data) if tool_data else ""
                         
-                        logger.info(f"Tool observation length: {len(observation)}, preview: {str(observation)[:200]}")
-                        display_output = observation[:500] + "..." if len(observation) > 500 else observation
+                        # CRITICAL: Truncate large observations to prevent context length exceeded errors
+                        # OpenAI API has a 10MB limit (10485760 characters) for message content
+                        # We'll limit observation to 1MB (1048576 characters) to leave room for other content
+                        MAX_OBSERVATION_LENGTH = 1048576  # 1MB limit
+                        observation_original_length = len(observation)
+                        if observation_original_length > MAX_OBSERVATION_LENGTH:
+                            logger.warning(f"⚠️  Observation too large ({observation_original_length} chars), truncating to {MAX_OBSERVATION_LENGTH} chars to prevent context length exceeded error")
+                            # For SQL query results, try to extract summary information
+                            if tool_name_from_event == "sql_db_query":
+                                # Try to parse and summarize the result
+                                try:
+                                    parsed = _parse_agent_query_result(observation)
+                                    if parsed and parsed.get("rows"):
+                                        rows = parsed.get("rows", [])
+                                        # Keep first 100 rows and summary
+                                        truncated_rows = rows[:100]
+                                        summary = f"Query returned {len(rows)} rows. Showing first 100 rows:\n"
+                                        observation = summary + str(truncated_rows)
+                                        if len(observation) > MAX_OBSERVATION_LENGTH:
+                                            observation = observation[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated, original length: {observation_original_length} chars)"
+                                except:
+                                    # If parsing fails, just truncate the string
+                                    observation = observation[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated, original length: {observation_original_length} chars)"
+                            else:
+                                # For other tools, just truncate
+                                observation = observation[:MAX_OBSERVATION_LENGTH] + f"\n... (truncated, original length: {observation_original_length} chars)"
+                        
+                        logger.info(f"Tool observation length: {len(observation)}, preview: {str(observation)[:100]}")
+                        display_output = observation[:100] + "..." if len(observation) > 100 else observation
                         
                         await websocket_manager.stream_react_step(
                             execution_id=execution_id,
@@ -1084,14 +1316,29 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                                     logger.info(f"Parsed structured_data from updated observation: {len(parsed.get('rows', []))} rows")
                     elif event_name == "on_chain_end":
                         # Check if this is the AgentExecutor chain end
+                        # SQL Agent uses "SQL Agent Executor" as the chain name
                         chain_name = event.get("name", "")
-                        if chain_name == "AgentExecutor" or "AgentExecutor" in str(chain_name):
+                        if chain_name == "AgentExecutor" or "AgentExecutor" in str(chain_name) or "SQL Agent Executor" in str(chain_name):
                             chain_data = event.get("data", {})
                             output = chain_data.get("output", {})
                             if isinstance(output, dict):
                                 final_answer = output.get("output", str(output))
+                                logger.info(f"Extracted final_answer from on_chain_end: {final_answer[:100] if final_answer else 'None'}")
                             else:
                                 final_answer = str(output) if output else ""
+                                logger.info(f"Extracted final_answer from on_chain_end (non-dict): {final_answer[:200] if final_answer else 'None'}")
+                        
+                        # Also check for "Final Answer" in the output text for SQL Agent
+                        if not final_answer and chain_name and ("SQL Agent" in str(chain_name) or "Agent" in str(chain_name)):
+                            chain_data = event.get("data", {})
+                            output = chain_data.get("output", "")
+                            if output and isinstance(output, str) and ("Final Answer" in output or "final answer" in output.lower()):
+                                # Try to extract the final answer text
+                                import re
+                                match = re.search(r"Final Answer:\s*(.+?)(?:\n|$)", output, re.IGNORECASE | re.DOTALL)
+                                if match:
+                                    final_answer = match.group(1).strip()
+                                    logger.info(f"Extracted final_answer from output text: {final_answer[:100]}")
                 
                 logger.info(f"astream_events completed - total events: {event_count}, intermediate_steps: {len(intermediate_steps)}")
                 
@@ -1135,14 +1382,31 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                     else:
                         final_answer = str(result)
                 
-                # If no final answer, try invoke
+                # If no final answer, try invoke (but only if we didn't capture intermediate steps)
+                # If we have intermediate steps, we can construct the answer from them
                 if not final_answer:
-                    logger.warning("No final answer from astream_events, trying ainvoke...")
-                    result = await agent.ainvoke({"input": agent_input})
-                    if isinstance(result, dict):
-                        final_answer = result.get("output", str(result))
+                    if len(intermediate_steps) > 0:
+                        # We have steps but no final answer - construct a summary from the steps
+                        logger.info("No final answer from astream_events, but we have intermediate steps. Constructing answer from steps...")
+                        # Try to get the last observation which might contain the answer
+                        last_step = intermediate_steps[-1]
+                        if last_step.get("observation"):
+                            # If the last step is a query, use its result as the answer
+                            if last_step.get("tool") == "sql_db_query":
+                                final_answer = f"Query executed successfully. Results: {last_step.get('observation', '')[:100]}"
+                            else:
+                                final_answer = f"Agent completed {len(intermediate_steps)} steps. Last step: {last_step.get('tool', 'unknown')}"
+                        else:
+                            final_answer = f"Agent completed {len(intermediate_steps)} steps successfully."
+                        logger.info(f"Constructed final_answer from steps: {final_answer[:100]}")
                     else:
-                        final_answer = str(result)
+                        # No steps captured, need to fallback to ainvoke
+                        logger.warning("No final answer and no intermediate steps from astream_events, trying ainvoke...")
+                        result = await agent.ainvoke({"input": agent_input})
+                        if isinstance(result, dict):
+                            final_answer = result.get("output", str(result))
+                        else:
+                            final_answer = str(result)
                 
                 logger.info(f"ReAct mode completed - {len(intermediate_steps)} steps, {len(executed_sqls)} SQL queries")
                 logger.info(f"Intermediate steps details: {[step.get('tool', 'N/A') for step in intermediate_steps]}")
@@ -1169,7 +1433,7 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                         pattern = r"\[\([^)]+\)(?:,\s*\([^)]+\))*\]"
                         matches = re.findall(pattern, final_answer)
                         if matches:
-                            logger.info(f"Found potential data pattern in final_answer: {matches[0][:200]}")
+                            logger.info(f"Found potential data pattern in final_answer: {matches[0][:100]}")
                             # Try to parse it
                             try:
                                 import ast
@@ -1256,10 +1520,161 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                 break
         
         tables_result = ""
+        marts_tables_detected = []
+        all_tables_by_schema = {}  # Store tables organized by schema
+        
         if list_tables_tool:
             try:
+                # Step 1: Get initial table list (from current/default schema)
                 tables_result = list_tables_tool.invoke({})
-                logger.info(f"Found tables: {tables_result}")
+                logger.info(f"Found tables from default schema: {tables_result}")
+                
+                # Step 2: For Databricks, discover all schemas and their tables
+                if is_databricks:
+                    # Ensure re is available
+                    import re as re_module
+                    import ast
+                    
+                    # Get sql_db_query tool to query schemas and tables
+                    sql_query_tool = None
+                    for tool in tools:
+                        if tool.name == 'sql_db_query':
+                            sql_query_tool = tool
+                            break
+                    
+                    if sql_query_tool:
+                        try:
+                            catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG", "workspace")
+                            
+                            # Step 2.1: List all schemas in the catalog
+                            logger.info(f"Discovering all schemas in catalog: {catalog}")
+                            schemas_query = f"SHOW SCHEMAS IN {catalog}"
+                            
+                            try:
+                                schemas_result = sql_query_tool.invoke({"query": schemas_query})
+                                logger.info(f"Querying schemas: {schemas_query}")
+                                
+                                # Parse schemas from result
+                                schemas_list = []
+                                if schemas_result:
+                                    schemas_raw = str(schemas_result)
+                                    try:
+                                        # Try to parse as Python list
+                                        parsed_schemas = ast.literal_eval(schemas_raw)
+                                        if isinstance(parsed_schemas, list):
+                                            for item in parsed_schemas:
+                                                if isinstance(item, (tuple, list)) and len(item) > 0:
+                                                    schema_name = item[0] if isinstance(item[0], str) else str(item[0])
+                                                    if schema_name and schema_name not in ['databaseName', 'namespace']:
+                                                        schemas_list.append(schema_name)
+                                                elif isinstance(item, str):
+                                                    schemas_list.append(item)
+                                    except:
+                                        # Fallback: regex extraction
+                                        pattern = r"['\"]([^'\"]+)['\"]"
+                                        matches = re_module.findall(pattern, schemas_raw)
+                                        for match in matches:
+                                            if match not in ['databaseName', 'namespace', 'database', 'schema']:
+                                                schemas_list.append(match)
+                                
+                                # Filter out system schemas and get relevant schemas
+                                relevant_schemas = [s for s in schemas_list if s.lower() not in ['information_schema', 'sys', 'default']]
+                                logger.info(f"✅ Discovered {len(relevant_schemas)} schemas: {relevant_schemas}")
+                                
+                                # Step 2.2: For each schema, list all tables
+                                all_tables = []
+                                for schema in relevant_schemas:
+                                    try:
+                                        tables_query = f"SHOW TABLES IN {catalog}.{schema}"
+                                        logger.info(f"Querying tables in schema {schema}: {tables_query}")
+                                        
+                                        schema_tables_result = sql_query_tool.invoke({"query": tables_query})
+                                        
+                                        if schema_tables_result:
+                                            schema_tables = []
+                                            schema_tables_raw = str(schema_tables_result)
+                                            
+                                            try:
+                                                # Try to parse as Python list of tuples
+                                                parsed_tables = ast.literal_eval(schema_tables_raw)
+                                                if isinstance(parsed_tables, list):
+                                                    for item in parsed_tables:
+                                                        if isinstance(item, (tuple, list)) and len(item) >= 2:
+                                                            # Format: (database, table, isTemporary) or (namespace, table, ...)
+                                                            table_name = item[1] if len(item) > 1 else item[0]
+                                                            if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
+                                                                full_table_name = f"{schema}.{table_name}"
+                                                                schema_tables.append(full_table_name)
+                                                                all_tables.append(full_table_name)
+                                            except:
+                                                # Fallback: regex extraction
+                                                # Look for patterns like schema.table_name
+                                                pattern = rf"{re_module.escape(schema)}\.(\w+)"
+                                                matches = re_module.findall(pattern, schema_tables_raw)
+                                                for match in matches:
+                                                    if match not in ['tableName', 'table', 'database']:
+                                                        full_table_name = f"{schema}.{match}"
+                                                        schema_tables.append(full_table_name)
+                                                        all_tables.append(full_table_name)
+                                            
+                                            if schema_tables:
+                                                all_tables_by_schema[schema] = schema_tables
+                                                logger.info(f"  ✅ Schema '{schema}': {len(schema_tables)} tables")
+                                            else:
+                                                logger.warning(f"  ⚠️  Schema '{schema}': No tables found or could not parse")
+                                    except Exception as schema_error:
+                                        logger.warning(f"  ⚠️  Error querying tables in schema '{schema}': {schema_error}")
+                                
+                                # Step 2.3: Merge all discovered tables into tables_result
+                                if all_tables:
+                                    # Combine with initial tables_result
+                                    initial_tables = [t.strip() for t in re_module.split(r"[,\s]+", str(tables_result)) if t.strip()]
+                                    
+                                    # Add schema prefix to initial tables if they don't have one
+                                    initial_tables_with_schema = []
+                                    for table in initial_tables:
+                                        if '.' not in table:
+                                            # Assume they're from public schema
+                                            initial_tables_with_schema.append(f"public.{table}")
+                                        else:
+                                            initial_tables_with_schema.append(table)
+                                    
+                                    # Merge and deduplicate
+                                    all_tables_merged = list(set(initial_tables_with_schema + all_tables))
+                                    tables_result = ', '.join(all_tables_merged)
+                                    
+                                    logger.info(f"✅ Total tables discovered: {len(all_tables_merged)} tables across {len(all_tables_by_schema)} schemas")
+                                    logger.info(f"   Schemas: {list(all_tables_by_schema.keys())}")
+                                    
+                                    # Identify marts layer tables
+                                    marts_tables_detected = [
+                                        t for t in all_tables_merged 
+                                        if 'marts' in t.lower() or 
+                                        any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat'])
+                                    ]
+                                    
+                                    if marts_tables_detected:
+                                        logger.info(f"✅ Detected {len(marts_tables_detected)} marts layer tables: {marts_tables_detected}")
+                                    else:
+                                        logger.warning("⚠️  No marts layer tables detected in discovered schemas")
+                                else:
+                                    logger.warning("⚠️  No tables discovered from schema queries, using default schema tables only")
+                                    
+                            except Exception as schemas_error:
+                                logger.warning(f"Could not query schemas: {schemas_error}")
+                                logger.warning("Falling back to default schema tables only")
+                                
+                        except Exception as e:
+                            logger.warning(f"Error discovering schemas and tables: {e}")
+                            logger.warning("Falling back to default schema tables only")
+                    else:
+                        logger.warning("sql_db_query tool not available, cannot discover schemas")
+                else:
+                    # For non-Databricks databases, use default behavior
+                    import re as re_module
+                    tables_list = [t.strip() for t in re_module.split(r"[,\s]+", str(tables_result)) if t.strip()]
+                    logger.info(f"Non-Databricks database: {len(tables_list)} tables found")
+                    
             except Exception as e:
                 logger.error(f"Error listing tables: {e}")
                 tables_result = "Error listing tables"
@@ -1272,12 +1687,36 @@ async def sql_agent_node(state: GraphState) -> GraphState:
         schema_info = ""
         try:
             # Get structure for sales-related tables
+            # For Databricks, tables may be in different schemas, so we need to handle schema.table format
             sales_tables = ['sales', 'dws_sales_cube', 'dwd_sales_detail']
             for table in sales_tables:
-                if table in tables_result:
+                # Check if table exists in tables_result (may be with or without schema prefix)
+                table_found = table in tables_result or any(table in t for t in tables_result.split(',') if t.strip())
+                if table_found:
                     try:
-                        table_schema = db.get_table_info([table])
-                        schema_info += f"\n{table} table structure:\n{table_schema}\n"
+                        # Try to get schema info with the table name as-is
+                        # If it's Databricks and table doesn't have schema prefix, try common schemas
+                        table_to_query = table
+                        if is_databricks and '.' not in table:
+                            # Try common schemas for Databricks
+                            schemas_to_try = ['public', 'staging', 'dimensions', 'facts', 'marts']
+                            schema_found = False
+                            for schema in schemas_to_try:
+                                try:
+                                    full_table_name = f"{schema}.{table}"
+                                    table_schema = db.get_table_info([full_table_name])
+                                    schema_info += f"\n{full_table_name} table structure:\n{table_schema}\n"
+                                    schema_found = True
+                                    break
+                                except:
+                                    continue
+                            if not schema_found:
+                                # Fallback: try without schema prefix
+                                table_schema = db.get_table_info([table])
+                                schema_info += f"\n{table} table structure:\n{table_schema}\n"
+                        else:
+                            table_schema = db.get_table_info([table_to_query])
+                            schema_info += f"\n{table_to_query} table structure:\n{table_schema}\n"
                     except Exception as e:
                         logger.warning(f"Error getting schema for table {table}: {e}")
                         logger.warning(f"Table {table} schema error details: {type(e).__name__}: {str(e)}")
@@ -1362,47 +1801,66 @@ JOIN RESTRICTIONS:
         
         Table structure information: {schema_info}
         
-        This is a SQLite database. Please generate a SQL query based on the user question and available tables.
+        {"This is a Databricks SQL database (Unity Catalog)." if is_databricks else "This is a SQLite database."} Please generate a SQL query based on the user question and available tables.
+        
+        {"⚠️  CRITICAL: If this is a statistical/metric query (counts, sums, averages, trends, aggregations), you MUST use marts schema tables, NOT src/staging/public schema tables. Check available tables above for marts.* tables first." if is_databricks else ""}
+        {"⚠️  Available marts layer tables (preferred for statistics): " + ", ".join(marts_tables_detected) + ". Use these instead of src/staging tables for aggregated statistics." if is_databricks and marts_tables_detected else ""}
         
         CRITICAL RULES - MUST FOLLOW:
         1. ONLY use column names that exist in the table structure information above
-        2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table
-        3. Use 'category' instead of 'customer_type' for product categorization
-        4. Verify every column name against the table structure before using it
-        5. dws_sales_cube CAN be joined with dim_customer using customer_id field
-        6. Use appropriate JOIN conditions based on available fields
-        7. Check table relationships before creating JOIN conditions
-        8. IMPORTANT: For sales amount queries, use 'total_amount' in dws_sales_cube
-        9. IMPORTANT: For quantity queries, use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube
-        10. IMPORTANT: For date filtering, use 'sale_date' column with strftime() function
+        {"2. IMPORTANT: This database has multiple schemas (public, staging, dimensions, facts, marts). Use schema.table format when referencing tables." if is_databricks else "2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
+        {"3. STATISTICAL/METRIC QUERIES - ALWAYS prefer marts layer tables (data warehouse design principle):" if is_databricks else ""}
+        {"   - For aggregated statistics, metrics, summaries, or pre-calculated data, ALWAYS prefer marts schema tables" if is_databricks else ""}
+        {"   - Design principle: marts layer follows Kimball/Medallion Architecture data warehouse patterns and contains pre-aggregated metrics optimized for analytical queries" if is_databricks else ""}
+        {"   - marts tables are designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics" if is_databricks else ""}
+        {"   - When querying for statistics (counts, sums, averages, trends), look for tables in the marts schema that match the aggregation level and metric type" if is_databricks else ""}
+        {"   - Avoid aggregating from raw fact/dimension tables when equivalent marts tables exist, as marts tables are pre-computed and more efficient" if is_databricks else ""}
+        {"   - Only use facts/dimensions tables when marts layer doesn't provide the required granularity or metrics" if is_databricks else ""}
+        {"4. METADATA INFORMATION - Use RAG knowledge base first:" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
+        {"   - The background knowledge above contains metadata about table structures, column definitions, and business rules" if is_databricks else "4. Verify every column name against the table structure before using it"}
+        {"   - Use this RAG metadata to understand table relationships and data semantics" if is_databricks else "5. dws_sales_cube CAN be joined with dim_customer using customer_id field"}
+        {"   - If RAG metadata is insufficient, you can explore the database schema using available tools" if is_databricks else "6. Use appropriate JOIN conditions based on available fields"}
+        {"6. When joining tables from different schemas, use full path: schema1.table1 JOIN schema2.table2" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
+        {"7. Example table references: public.src_table, staging.stg_table, dimensions.dim_table, facts.fact_table, marts.summary_table" if is_databricks else "4. Verify every column name against the table structure before using it"}
+        {"8. Cross-schema joins are supported: SELECT * FROM staging.stg_stations s JOIN dimensions.dim_station d ON s.station_id = d.station_id" if is_databricks else "5. dws_sales_cube CAN be joined with dim_customer using customer_id field"}
+        {"9. Verify every column name against the table structure before using it" if is_databricks else "6. Use appropriate JOIN conditions based on available fields"}
+        {"10. Use appropriate JOIN conditions based on available fields" if is_databricks else "7. Check table relationships before creating JOIN conditions"}
+        {"11. Check table relationships before creating JOIN conditions" if is_databricks else "8. IMPORTANT: For sales amount queries, use 'total_amount' in dws_sales_cube"}
+        {"12. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table (if applicable)" if is_databricks else "9. IMPORTANT: For quantity queries, use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube"}
+        {"13. IMPORTANT: For date filtering, use appropriate date functions" if is_databricks else "10. IMPORTANT: For date filtering, use 'sale_date' column with strftime() function"}
         
         Technical Instructions:
-        - Use SQLite syntax
+        {"- Use Databricks SQL syntax (Spark SQL compatible)" if is_databricks else "- Use SQLite syntax"}
+        {"- Use schema.table format for table references (e.g., public.src_table, staging.stg_table, dimensions.dim_table, marts.summary_table)" if is_databricks else ""}
+        {"- Cross-schema joins are supported: SELECT * FROM staging.stg_stations s JOIN dimensions.dim_station d ON s.station_id = d.station_id" if is_databricks else ""}
+        {"- PRIORITY: For statistical/metric queries, prefer marts layer tables over aggregating from facts/dimensions (follow data warehouse design principles)" if is_databricks else ""}
+        {"- Use RAG background knowledge for metadata (table structures, relationships, business rules) before exploring database schema" if is_databricks else ""}
         - Return ONLY ONE SQL query statement, no other explanations or multiple statements
         - CRITICAL: Generate exactly ONE SELECT statement, not multiple statements
-        - SQLite doesn't support EXTRACT() function, use strftime() instead
-        - SQLite doesn't support YEAR() function, use strftime('%Y', date_column) instead
-        - SQLite doesn't support MONTH() function, use strftime('%m', date_column) instead
-        - If user asks for table list, use: SELECT name FROM sqlite_master WHERE type='table';
-        - For date-related queries, use strftime() function with proper syntax: strftime('%Y-%m', date_column)
+        {"- Databricks supports standard SQL functions: EXTRACT(), YEAR(), MONTH(), DATE_FORMAT(), etc." if is_databricks else "- SQLite doesn't support EXTRACT() function, use strftime() instead"}
+        {"- For date extraction in Databricks, use: EXTRACT(YEAR FROM date_column), EXTRACT(MONTH FROM date_column), DATE_FORMAT(date_column, 'yyyy-MM')" if is_databricks else "- SQLite doesn't support YEAR() function, use strftime('%Y', date_column) instead"}
+        {"- SQLite doesn't support MONTH() function, use strftime('%m', date_column) instead" if not is_databricks else ""}
+        {"- If user asks for table list, use: SHOW TABLES IN catalog.schema; or SHOW TABLES;" if is_databricks else "- If user asks for table list, use: SELECT name FROM sqlite_master WHERE type='table';"}
+        {"- For date-related queries in Databricks, use: DATE_FORMAT(date_column, 'yyyy-MM'), EXTRACT(YEAR FROM date_column), etc." if is_databricks else "- For date-related queries, use strftime() function with proper syntax: strftime('%Y-%m', date_column)"}
         - SQL clause order: SELECT ... FROM ... WHERE ... GROUP BY ... ORDER BY ...
-        - Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;
-        - Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;
-        - IMPORTANT: strftime() function requires two parameters: format string and date column
+        {"- Example for Databricks (using marts layer for statistics - follow design principles): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(metric_column) as Total_Metric FROM marts.summary_table WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else "- Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;"}
+        {"- Example for Databricks (cross-schema JOIN): SELECT s.id, s.name, d.key FROM staging.stg_table s JOIN dimensions.dim_table d ON s.id = d.id LIMIT 10;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
+        {"- Example for Databricks (marts layer for daily metrics - use pre-aggregated tables): SELECT date, aggregated_metric FROM marts.daily_summary_table WHERE date >= '2025-11-01' ORDER BY date;" if is_databricks else ""}
+        {"- IMPORTANT: Use schema.table format for table names (e.g., public.src_table, staging.stg_table, marts.summary_table)" if is_databricks else "- IMPORTANT: strftime() function requires two parameters: format string and date column"}
         - IMPORTANT: Do not use backslashes in table or column names, use underscores directly
         - IMPORTANT: For SELECT * queries, use: SELECT * FROM table_name (not table_name.*)
         - IMPORTANT: Do NOT include comments, explanations, or multiple SQL statements
         
         VALIDATION CHECKLIST:
         - [ ] All column names exist in the table structure
-        - [ ] No 'customer_type' column used in dws_sales_cube (use 'category' instead)
-        - [ ] For sales amount: use 'total_amount' in dws_sales_cube
-        - [ ] For quantity: use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube
-        - [ ] JOIN conditions use existing fields from both tables
-        - [ ] dws_sales_cube JOIN with dim_customer uses customer_id field
-        - [ ] SQLite syntax used correctly
+        {"- [ ] Table names use schema.table format (e.g., public.src_stations, staging.stg_stations)" if is_databricks else "- [ ] No 'customer_type' column used in dws_sales_cube (use 'category' instead)"}
+        {"- [ ] Cross-schema joins use full path: schema1.table1 JOIN schema2.table2" if is_databricks else "- [ ] For sales amount: use 'total_amount' in dws_sales_cube"}
+        {"- [ ] JOIN conditions use existing fields from both tables" if is_databricks else "- [ ] For quantity: use 'total_quantity_sold' NOT 'quantity_sold' in dws_sales_cube"}
+        {"- [ ] Databricks SQL syntax used correctly (schema.table format)" if is_databricks else "- [ ] JOIN conditions use existing fields from both tables"}
+        {"- [ ] No 'customer_type' column used in dws_sales_cube (if applicable, use 'category' instead)" if is_databricks else "- [ ] dws_sales_cube JOIN with dim_customer uses customer_id field"}
+        {"- [ ] SQLite syntax used correctly" if not is_databricks else ""}
         - [ ] Query follows proper SQL clause order
-        - [ ] Date filtering uses strftime() function correctly
+        {"- [ ] Date filtering uses DATE_FORMAT() or EXTRACT() functions (Databricks)" if is_databricks else "- [ ] Date filtering uses strftime() function correctly"}
         """
         
         try:
@@ -1423,30 +1881,91 @@ JOIN RESTRICTIONS:
 
             # Validate and auto-correct table names using whitelist from discovered tables
             try:
+                # Ensure re is available (it's imported at module level, but ensure it's accessible here)
+                import re as re_module
                 # Extract table names referenced in the SQL (simple regex over FROM/JOIN)
                 referenced = set()
-                for m in re.finditer(r"\b(?:FROM|JOIN)\s+([\w\.]+)", sql_query, re.IGNORECASE):
-                    # strip aliases and schema
+                referenced_with_schema = {}  # Store full table references with schema
+                for m in re_module.finditer(r"\b(?:FROM|JOIN)\s+([\w\.]+)", sql_query, re_module.IGNORECASE):
+                    # Get full table reference (may include schema)
                     token = m.group(1)
                     base = token.split('.')[-1]
                     referenced.add(base)
+                    referenced_with_schema[base] = token  # Store original reference
 
                 # Build whitelist from actual tables_result string (comma/space separated)
                 whitelist = set()
+                marts_tables_in_whitelist = set()
+                src_staging_tables_in_whitelist = set()
                 if isinstance(tables_result, str):
-                    # tables_result like: "dim_product, dwd_sales_detail, dws_sales_cube, ..."
-                    for t in re.split(r"[^A-Za-z0-9_]+", tables_result):
-                        if t:
-                            whitelist.add(t)
+                    # tables_result like: "dim_product, dwd_sales_detail, dws_sales_cube, ..." or "src_transactions, marts.daily_topup_summary, ..."
+                    for t in re_module.split(r"[,\s]+", tables_result):
+                        t_clean = t.strip()
+                        if t_clean:
+                            whitelist.add(t_clean)
+                            # Categorize tables by layer
+                            t_lower = t_clean.lower()
+                            if 'marts' in t_lower or any(kw in t_lower for kw in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat']):
+                                marts_tables_in_whitelist.add(t_clean)
+                            elif t_lower.startswith('src_') or t_lower.startswith('stg_') or 'staging' in t_lower or ('public' in t_lower and 'src' in t_lower):
+                                src_staging_tables_in_whitelist.add(t_clean)
 
                 # Known preferred names mapping to avoid layer mix-up
                 canonical = {
                     'dwd_sales_cube': 'dws_sales_cube',
                 }
 
+                # Detect if this is a statistical/aggregation query
+                is_statistical_query = bool(re_module.search(r'\b(SUM|COUNT|AVG|MAX|MIN|GROUP BY|aggregat|statistic|metric|trend|summary)\b', sql_query, re_module.IGNORECASE))
+                
                 corrected = sql_query
                 for name in referenced:
                     target = name
+                    original_ref = referenced_with_schema.get(name, name)
+                    
+                    # Check if table is from src/staging layer and query is statistical
+                    if is_databricks and is_statistical_query:
+                        # Check if table reference is from src/staging layer
+                        is_src_staging = False
+                        name_lower = name.lower()
+                        ref_lower = original_ref.lower()
+                        
+                        # Check if it's a src/staging table
+                        if name_lower.startswith('src_') or name_lower.startswith('stg_'):
+                            is_src_staging = True
+                        elif '.' in original_ref:
+                            schema = original_ref.split('.')[0].lower()
+                            if schema in ['src', 'staging', 'public'] and 'marts' not in ref_lower:
+                                is_src_staging = True
+                        elif name in src_staging_tables_in_whitelist:
+                            is_src_staging = True
+                        
+                        if is_src_staging and marts_tables_in_whitelist:
+                            # Try to find equivalent marts table based on context
+                            # Look for marts tables that might match the query intent
+                            marts_candidates = list(marts_tables_in_whitelist)
+                            
+                            if marts_candidates:
+                                # Use fuzzy matching to find best marts table
+                                # Try to match based on table name similarity
+                                best_match = difflib.get_close_matches(name, marts_candidates, n=1, cutoff=0.2)
+                                if not best_match:
+                                    # If no close match, try to find by keywords (e.g., transaction -> daily, flow, summary)
+                                    if 'transaction' in name_lower or 'trans' in name_lower:
+                                        best_match = [t for t in marts_candidates if any(kw in t.lower() for kw in ['flow', 'daily', 'summary', 'transaction'])]
+                                    elif 'topup' in name_lower or 'top' in name_lower:
+                                        best_match = [t for t in marts_candidates if 'topup' in t.lower() or 'top' in t.lower()]
+                                
+                                if best_match:
+                                    target = best_match[0]
+                                    # Ensure marts schema prefix if not already present
+                                    if not target.startswith('marts.') and 'marts' not in target.lower():
+                                        # Check if it's already a full qualified name
+                                        if '.' not in target:
+                                            target = f"marts.{target}"
+                                    logger.warning(f"⚠️  Statistical query detected using src/staging table '{original_ref}'. Auto-suggesting marts layer table: {target}")
+                                    logger.warning(f"   Design principle: Use marts layer for aggregated statistics instead of raw source tables")
+                    
                     if name in canonical:
                         target = canonical[name]
                     elif whitelist and name not in whitelist:
@@ -1454,10 +1973,16 @@ JOIN RESTRICTIONS:
                         candidates = difflib.get_close_matches(name, list(whitelist), n=1, cutoff=0.8)
                         if candidates:
                             target = candidates[0]
+                    
                     # Apply replacement only if changed
-                    if target != name:
-                        logger.warning(f"Auto-correcting table name in SQL: {name} -> {target}")
-                        corrected = re.sub(rf"\b{name}\b", target, corrected)
+                    if target != name and target != original_ref:
+                        logger.warning(f"Auto-correcting table name in SQL: {original_ref} -> {target}")
+                        # re_module is available in this scope
+                        # Replace both with and without schema prefix
+                        # Use word boundaries to avoid partial matches
+                        corrected = re_module.sub(rf"\b{re_module.escape(original_ref)}\b", target, corrected, flags=re_module.IGNORECASE)
+                        if original_ref != name:
+                            corrected = re_module.sub(rf"\b{re_module.escape(name)}\b", target.split('.')[-1] if '.' in target else target, corrected, flags=re_module.IGNORECASE)
 
                 if corrected != sql_query:
                     sql_query = corrected
@@ -1500,7 +2025,7 @@ JOIN RESTRICTIONS:
                         executed_sqls.append(sql_query)
                         structured_data = _parse_agent_query_result(query_result)
                         logger.info(f"Query executed successfully, result length: {len(str(query_result))}")
-                        logger.info(f"Query result preview: {str(query_result)[:500]}...")
+                        logger.info(f"Query result preview: {str(query_result)[:100]}...")
                     except Exception as e:
                         logger.error(f"Error executing SQL query: {e}")
                         query_result = f"Error executing query: {e}"
@@ -2387,7 +2912,7 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     response_lines.append(f"• Price range: ${price_diff:.2f}")
                 
                 result = "\n".join(response_lines)
-                logger.info(f"Category-value response generated: {result[:200]}...")
+                logger.info(f"Category-value response generated: {result[:100]}...")
                 return result
         
         logger.info("Processing as generic structured data")
@@ -2416,7 +2941,7 @@ def _generate_intelligent_sql_response(user_input: str, rows: list, columns: lis
                     response_lines.append(f"{i+1}. {', '.join(row_parts)}")
             
             result = "\n".join(response_lines)
-            logger.info(f"Generic detailed response: {result[:200]}...")
+            logger.info(f"Generic detailed response: {result[:100]}...")
             return result
         else:
             # For large result sets, provide summary

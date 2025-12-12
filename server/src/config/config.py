@@ -35,7 +35,40 @@ class Config:
     RELOAD: bool = os.getenv("RELOAD", "True").lower() == "true"
     
     # Database configuration
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/smart.db")
+    @staticmethod
+    def _build_databricks_url() -> Optional[str]:
+        """Build Databricks connection URL from environment variables if available"""
+        server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME")
+        http_path = os.getenv("DATABRICKS_HTTP_PATH")
+        token = os.getenv("DATABRICKS_TOKEN")
+        # Use DATABRICKS_DATABASE for catalog, fallback to DATABRICKS_CATALOG
+        catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG")
+        # Schema is optional - if not specified, SQLDatabase will use default schema for initialization
+        # but queries can still use schema.table format to access tables across schemas
+        schema = os.getenv("DATABRICKS_SCHEMA")  # Remove default value to allow cross-schema queries
+        
+        if server_hostname and http_path and token:
+            # Build Databricks connection string
+            # Format: databricks://token:TOKEN@HOST:PORT?http_path=HTTP_PATH&catalog=CATALOG
+            # Schema is optional - if not provided, can query across schemas using schema.table format
+            # Use databricks:// format (not databricks+connector://) as databricks-sqlalchemy prefers this
+            # Put catalog in query parameters, not in path
+            from urllib.parse import urlencode
+            
+            base_url = f"databricks://token:{token}@{server_hostname}:443"
+            query_params = {'http_path': http_path}
+            if catalog:
+                query_params['catalog'] = catalog
+            # Only add schema if explicitly specified (allows cross-schema queries)
+            if schema:
+                query_params['schema'] = schema
+            
+            query_string = urlencode(query_params, doseq=True)
+            db_url = f"{base_url}?{query_string}"
+            return db_url
+        return None
+    
+    DATABASE_URL: str = os.getenv("DATABASE_URL") or Config._build_databricks_url() or f"sqlite:///{DATA_DIR}/smart.db"
     DATABASE_PATH: Path = DATA_DIR / "smart.db"
     
     # LLM configuration - Multi-provider support (unified keys)

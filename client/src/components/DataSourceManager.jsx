@@ -468,7 +468,15 @@ function DataSourceManager() {
                       {datasource.is_active && <Badge className="bg-green-200 text-green-600">{t('currentActive')}</Badge>}
                     </div>
                   </TableCell>
-                  <TableCell className="text-gray-600">{datasource.description || t('text.empty')}</TableCell>
+                  <TableCell className="text-gray-600">
+                    <div 
+                      className="truncate" 
+                      title={datasource.description || t('text.empty')}
+                      style={{ maxWidth: '250px' }}
+                    >
+                      {datasource.description || t('text.empty')}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge className="bg-blue-50 text-blue-600">{getTypeLabel(datasource.type)}</Badge>
                   </TableCell>
