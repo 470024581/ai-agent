@@ -1,7 +1,7 @@
 {{
     config(
         materialized='table',
-        schema='marts'
+        schema='public'
     )
 }}
 -- Daily station flow metrics

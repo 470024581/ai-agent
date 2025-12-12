@@ -43,9 +43,8 @@ class Config:
         token = os.getenv("DATABRICKS_TOKEN")
         # Use DATABRICKS_DATABASE for catalog, fallback to DATABRICKS_CATALOG
         catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG")
-        # Schema is optional - if not specified, SQLDatabase will use default schema for initialization
-        # but queries can still use schema.table format to access tables across schemas
-        schema = os.getenv("DATABRICKS_SCHEMA")  # Remove default value to allow cross-schema queries
+        # Default to 'public' schema if not specified in environment variable
+        schema = os.getenv("DATABRICKS_SCHEMA", "public")  # Default to 'public' schema
         
         if server_hostname and http_path and token:
             # Build Databricks connection string
@@ -59,9 +58,8 @@ class Config:
             query_params = {'http_path': http_path}
             if catalog:
                 query_params['catalog'] = catalog
-            # Only add schema if explicitly specified (allows cross-schema queries)
-            if schema:
-                query_params['schema'] = schema
+            # Always add schema (defaults to 'public' if not set in env)
+            query_params['schema'] = schema
             
             query_string = urlencode(query_params, doseq=True)
             db_url = f"{base_url}?{query_string}"

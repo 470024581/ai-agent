@@ -736,26 +736,57 @@ async def sql_agent_node(state: GraphState) -> GraphState:
             else:
                 include_tables = [table_name]
         
+        # Determine database URL based on datasource type
+        # For Databricks datasources, always use Databricks connection
+        # For DEFAULT type, use Config.DATABASE_URL (may be SQLite or Databricks)
+        if datasource['type'] != DataSourceType.DEFAULT.value:
+            # For non-DEFAULT datasources (like Databricks), use Databricks connection
+            # Check if Config.DATABASE_URL is already a Databricks URL
+            # If not, try to build one from environment variables
+            if Config.DATABASE_URL.startswith("databricks://") or Config.DATABASE_URL.startswith("databricks+connector://"):
+                database_url = Config.DATABASE_URL
+                logger.info("Using Databricks connection from Config.DATABASE_URL for non-DEFAULT datasource")
+            else:
+                # Try to build Databricks URL from environment variables
+                databricks_url = Config._build_databricks_url()
+                if databricks_url:
+                    database_url = databricks_url
+                    logger.info("Using Databricks connection built from environment variables for non-DEFAULT datasource")
+                else:
+                    # For non-DEFAULT datasources, Databricks connection is required
+                    error_msg = "Databricks connection is required for this datasource but not configured. Please set DATABASE_URL environment variable with databricks:// format, or set Databricks environment variables (DATABRICKS_SERVER_HOSTNAME, DATABRICKS_HTTP_PATH, DATABRICKS_TOKEN)."
+                    logger.error(error_msg)
+                    state["error"] = error_msg
+                    state["sql_agent_answer"] = error_msg
+                    return state
+        else:
+            # For DEFAULT type, use Config.DATABASE_URL
+            database_url = Config.DATABASE_URL
+            logger.info(f"Using Config.DATABASE_URL for DEFAULT datasource: {database_url[:50]}...")
+        
         # Use smart factory that prioritizes SQLAlchemy dialect for Databricks
         # This ensures ReAct mode works correctly with SQLDatabaseToolkit
         db = create_sql_database(
-            Config.DATABASE_URL,
+            database_url,
             include_tables=include_tables,
             sample_rows_in_table_info=0  # Set to 0 to avoid Decimal type conversion errors
         )
         
         # Detect database type for SQL generation
         # Note: databricks-sqlalchemy only supports databricks:// format (not databricks+connector://)
-        is_databricks = Config.DATABASE_URL.startswith("databricks://") or Config.DATABASE_URL.startswith("databricks+connector://")
+        is_databricks = database_url.startswith("databricks://") or database_url.startswith("databricks+connector://")
         
-        # 2.5. For Databricks, discover all schemas and tables BEFORE creating agent
-        # This ensures agent has access to all tables from all schemas
+        # 2.5. For Databricks, discover tables from specified schema only (default: public)
+        # Schema can be overridden via DATABRICKS_SCHEMA environment variable
         all_discovered_tables = []
         marts_tables_detected = []
         all_tables_by_schema = {}
+        target_schema = "public"  # Default schema, can be overridden by env var
         
         if is_databricks:
-            logger.info("Pre-discovering all schemas and tables for Databricks...")
+            # Get schema from environment variable, default to 'public'
+            target_schema = os.getenv("DATABRICKS_SCHEMA", "public")
+            logger.info(f"Discovering tables from schema: {target_schema} (default: public, override via DATABRICKS_SCHEMA env var)")
             try:
                 # Create a temporary toolkit to get sql_db_query tool
                 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
@@ -773,96 +804,61 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                     import ast
                     catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG", "workspace")
                     
-                    # Step 1: List all schemas
-                    logger.info(f"Discovering all schemas in catalog: {catalog}")
-                    schemas_query = f"SHOW SCHEMAS IN {catalog}"
-                    
+                    # Only query tables from the specified schema (default: public)
                     try:
-                        schemas_result = sql_query_tool.invoke({"query": schemas_query})
-                        logger.info(f"Querying schemas: {schemas_query}")
+                        tables_query = f"SHOW TABLES IN {catalog}.{target_schema}"
+                        logger.info(f"Querying tables in schema {target_schema}: {tables_query}")
                         
-                        # Parse schemas from result
-                        schemas_list = []
-                        if schemas_result:
-                            schemas_raw = str(schemas_result)
+                        schema_tables_result = sql_query_tool.invoke({"query": tables_query})
+                        
+                        if schema_tables_result:
+                            schema_tables = []
+                            schema_tables_raw = str(schema_tables_result)
+                            
                             try:
-                                parsed_schemas = ast.literal_eval(schemas_raw)
-                                if isinstance(parsed_schemas, list):
-                                    for item in parsed_schemas:
-                                        if isinstance(item, (tuple, list)) and len(item) > 0:
-                                            schema_name = item[0] if isinstance(item[0], str) else str(item[0])
-                                            if schema_name and schema_name not in ['databaseName', 'namespace']:
-                                                schemas_list.append(schema_name)
-                                        elif isinstance(item, str):
-                                            schemas_list.append(item)
-                            except:
-                                pattern = r"['\"]([^'\"]+)['\"]"
-                                matches = re_module.findall(pattern, schemas_raw)
-                                for match in matches:
-                                    if match not in ['databaseName', 'namespace', 'database', 'schema']:
-                                        schemas_list.append(match)
-                        
-                        # Filter out system schemas
-                        relevant_schemas = [s for s in schemas_list if s.lower() not in ['information_schema', 'sys', 'default']]
-                        logger.info(f"✅ Discovered {len(relevant_schemas)} schemas: {relevant_schemas}")
-                        
-                        # Step 2: For each schema, list all tables
-                        for schema in relevant_schemas:
-                            try:
-                                tables_query = f"SHOW TABLES IN {catalog}.{schema}"
-                                logger.info(f"Querying tables in schema {schema}: {tables_query}")
-                                
-                                schema_tables_result = sql_query_tool.invoke({"query": tables_query})
-                                
-                                if schema_tables_result:
-                                    schema_tables = []
-                                    schema_tables_raw = str(schema_tables_result)
-                                    
-                                    try:
-                                        parsed_tables = ast.literal_eval(schema_tables_raw)
-                                        if isinstance(parsed_tables, list):
-                                            for item in parsed_tables:
-                                                if isinstance(item, (tuple, list)) and len(item) >= 2:
-                                                    table_name = item[1] if len(item) > 1 else item[0]
-                                                    if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
-                                                        full_table_name = f"{schema}.{table_name}"
-                                                        schema_tables.append(full_table_name)
-                                                        all_discovered_tables.append(full_table_name)
-                                    except:
-                                        pattern = rf"{re_module.escape(schema)}\.(\w+)"
-                                        matches = re_module.findall(pattern, schema_tables_raw)
-                                        for match in matches:
-                                            if match not in ['tableName', 'table', 'database']:
-                                                full_table_name = f"{schema}.{match}"
+                                parsed_tables = ast.literal_eval(schema_tables_raw)
+                                if isinstance(parsed_tables, list):
+                                    for item in parsed_tables:
+                                        if isinstance(item, (tuple, list)) and len(item) >= 2:
+                                            table_name = item[1] if len(item) > 1 else item[0]
+                                            if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
+                                                full_table_name = f"{target_schema}.{table_name}"
                                                 schema_tables.append(full_table_name)
                                                 all_discovered_tables.append(full_table_name)
-                                    
-                                    if schema_tables:
-                                        all_tables_by_schema[schema] = schema_tables
-                                        logger.info(f"  ✅ Schema '{schema}': {len(schema_tables)} tables")
-                            except Exception as schema_error:
-                                logger.warning(f"  ⚠️  Error querying tables in schema '{schema}': {schema_error}")
-                        
-                        # Identify marts layer tables
-                        if all_discovered_tables:
-                            marts_tables_detected = [
-                                t for t in all_discovered_tables 
-                                if 'marts' in t.lower() or 
-                                any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat'])
-                            ]
+                            except:
+                                pattern = rf"{re_module.escape(target_schema)}\.(\w+)"
+                                matches = re_module.findall(pattern, schema_tables_raw)
+                                for match in matches:
+                                    if match not in ['tableName', 'table', 'database']:
+                                        full_table_name = f"{target_schema}.{match}"
+                                        schema_tables.append(full_table_name)
+                                        all_discovered_tables.append(full_table_name)
                             
-                            logger.info(f"✅ Pre-discovered {len(all_discovered_tables)} tables across {len(all_tables_by_schema)} schemas")
-                            logger.info(f"   Schemas: {list(all_tables_by_schema.keys())}")
-                            if marts_tables_detected:
-                                logger.info(f"✅ Detected {len(marts_tables_detected)} marts layer tables: {marts_tables_detected}")
-                            else:
-                                logger.warning("⚠️  No marts layer tables detected in discovered schemas")
-                    except Exception as schemas_error:
-                        logger.warning(f"Could not pre-discover schemas: {schemas_error}")
+                            if schema_tables:
+                                all_tables_by_schema[target_schema] = schema_tables
+                                logger.info(f"  ✅ Schema '{target_schema}': {len(schema_tables)} tables discovered")
+                        else:
+                            logger.warning(f"  ⚠️  No tables found in schema '{target_schema}'")
+                    except Exception as schema_error:
+                        logger.warning(f"  ⚠️  Error querying tables in schema '{target_schema}': {schema_error}")
+                    
+                    # Identify marts layer tables (now in public schema with mart_ prefix)
+                    if all_discovered_tables:
+                        marts_tables_detected = [
+                            t for t in all_discovered_tables 
+                            if 'mart_' in t.lower() or 
+                            (t.startswith(f'{target_schema}.') and any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat']))
+                        ]
+                        
+                        logger.info(f"✅ Pre-discovered {len(all_discovered_tables)} tables from schema '{target_schema}'")
+                        if marts_tables_detected:
+                            logger.info(f"✅ Detected {len(marts_tables_detected)} marts layer tables: {marts_tables_detected}")
+                        else:
+                            logger.warning("⚠️  No marts layer tables detected in discovered schema")
                 else:
                     logger.warning("sql_db_query tool not available for pre-discovery")
             except Exception as e:
-                logger.warning(f"Error in pre-discovery of schemas and tables: {e}")
+                logger.warning(f"Error in pre-discovery of tables: {e}")
         
         # 3. Try to use ReAct mode with create_sql_agent
         use_react_mode = False
@@ -907,11 +903,11 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                 if is_databricks:
                     # Build available tables information from pre-discovered tables
                     if all_discovered_tables:
-                        available_tables_info = f"\n\nAVAILABLE TABLES (discovered from all schemas):\n"
+                        available_tables_info = f"\n\nAVAILABLE TABLES (discovered from schema '{target_schema}'):\n"
                         # Group by schema for better readability
                         for schema, tables in all_tables_by_schema.items():
                             available_tables_info += f"  {schema} schema: {', '.join([t.split('.')[-1] for t in tables])}\n"
-                        available_tables_info += f"\nTotal: {len(all_discovered_tables)} tables across {len(all_tables_by_schema)} schemas\n"
+                        available_tables_info += f"\nTotal: {len(all_discovered_tables)} tables from schema '{target_schema}'\n"
                         
                         if marts_tables_detected:
                             available_tables_info += f"\n⚠️  IMPORTANT - MARTS LAYER TABLES (preferred for statistics):\n"
@@ -921,31 +917,74 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                     guidance = f"""
 IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
 
-1. STATISTICAL/METRIC QUERIES - Use marts layer tables (data warehouse design principle):
-   - For aggregated statistics, metrics, summaries, or pre-calculated data, ALWAYS prefer marts schema tables
-   - The marts layer follows Kimball/Medallion Architecture data warehouse design patterns and contains pre-aggregated metrics optimized for analytical queries
-   - Design principle: marts tables are designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics
-   - When querying for statistics (counts, sums, averages, trends), look for tables in the marts schema that match the aggregation level and metric type
-   - Avoid aggregating from raw fact/dimension tables when equivalent marts tables exist, as marts tables are pre-computed and more efficient
-   - Only use facts/dimensions tables when marts layer doesn't provide the required granularity or metrics
-   {"   - Available marts tables: " + ", ".join(marts_tables_detected) if marts_tables_detected else ""}
+📊 DATA WAREHOUSE ARCHITECTURE (Kimball/Medallion Design):
+This database follows a layered data warehouse architecture with table name prefixes indicating data layers:
+
+LAYER 1 - src_* (Source Layer):
+   - Raw data from source systems (Airbyte ETL)
+   - Use: Rarely in analytics, mainly for data quality checks
+   - Examples: src_users, src_transactions, src_stations
+
+LAYER 2 - stg_* (Staging Layer):
+   - Cleaned and validated data
+   - Use: For custom joins when mart_* doesn't exist, building custom aggregations
+   - Examples: stg_users, stg_transactions, stg_stations
+
+LAYER 3 - dim_* (Dimension Layer):
+   - Master reference data with surrogate keys
+   - Use: When need dimension attributes (user info, station details, route info, time attributes)
+   - Examples: dim_user, dim_station, dim_route, dim_time
+   - Key: Contains *_key (surrogate key) and descriptive attributes
+
+LAYER 4 - fact_* (Fact Layer):
+   - Transactional fact tables with measures
+   - Use: Only when mart_* tables don't provide required detail or granularity
+   - Examples: fact_transactions, fact_topups
+   - Key: Contains dimension keys and measures (amount, count, etc.)
+
+LAYER 5 - mart_* (Marts Layer) - ⭐ STRONGLY PREFERRED:
+   - Pre-aggregated analytical tables optimized for reporting
+   - Use: MANDATORY for ALL statistical, metric, trend, and aggregation queries
+   - Examples: mart_daily_active_users, mart_daily_topup_summary, mart_station_flow_daily
+   - Benefits: Pre-computed, faster, optimized for analytics
+
+QUERY TYPE TO TABLE SELECTION GUIDE:
+- Statistical queries (counts, sums, averages) → mart_* (MANDATORY)
+- Time series trends (daily, monthly, yearly) → mart_* (MANDATORY)
+- Category/group comparisons → mart_* (MANDATORY)
+- Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY)
+- User distributions → mart_user_card_type_summary (MANDATORY)
+- Detailed transaction records → fact_* (only if mart_* insufficient)
+- Dimension attributes → dim_* (for descriptive data)
+- Raw source data → src_* (rarely needed)
+- Cleaned data for custom logic → stg_* (use sparingly)
+
+1. STATISTICAL/METRIC/TREND QUERIES - ALWAYS use mart_* tables (MANDATORY for data warehouse design):
+   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, MANDATORY to use mart_* tables in public schema
+   - The mart_* tables follow Kimball/Medallion Architecture data warehouse design patterns and contain pre-aggregated metrics optimized for analytical queries
+   - Design principle: mart_* tables are specifically designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics
+   - When querying for statistics (counts, sums, averages, trends, comparisons), ALWAYS look for mart_* tables first (e.g., public.mart_daily_active_users, public.mart_daily_topup_summary)
+   - NEVER aggregate from fact_*/dim_* tables when equivalent mart_* tables exist - mart_* tables are pre-computed, more efficient, and follow best practices
+   - Only use fact_*/dim_* tables when mart_* tables don't provide the required granularity or specific metrics
+   {"   - Available mart_* tables: " + ", ".join(marts_tables_detected) + " - Use these for ALL statistical queries!" if marts_tables_detected else ""}
 
 2. METADATA INFORMATION - Use RAG knowledge base first:
    - For table structures, column definitions, business rules, and data relationships, FIRST check the background knowledge from RAG
    - The RAG knowledge base contains metadata documentation about tables, schemas, and business logic
    - Only if RAG doesn't provide sufficient information, use SQL-Agent's ReAct tools to explore the database schema
    - Use tools like sql_db_list_tables and sql_db_schema to discover table structures when RAG metadata is insufficient
-   - NOTE: The sql_db_list_tables tool may only show tables from the default schema. Use the AVAILABLE TABLES list below to see all tables from all schemas.
+   - NOTE: The sql_db_list_tables tool may only show tables from the default schema. Use the AVAILABLE TABLES list below to see all tables from the specified schema (default: public).
 
 3. DATA EXPLORATION PRIORITY:
    - Step 1: Check RAG background knowledge for metadata and table information
-   - Step 2: Check the AVAILABLE TABLES list below to see all available tables from all schemas
-   - Step 3: For statistical queries, prefer marts layer tables over raw fact/dimension tables (follow data warehouse design principles)
-   - Step 4: Only use facts/dimensions tables when marts layer doesn't have the required metrics or granularity
+   - Step 2: Check the AVAILABLE TABLES list below to see all available tables (all tables are in public schema)
+   - Step 3: For statistical/metric/trend queries, MANDATORY to use mart_* tables (e.g., public.mart_daily_active_users) over aggregating from fact_*/dim_* tables
+   - Step 4: Only use fact_*/dim_* tables when mart_* tables don't have the required metrics or granularity
 
 4. TABLE NAMING:
-   - This database has multiple schemas. Always use schema.table format when referencing tables (e.g., marts.station_flow_daily, public.src_transactions)
-   - You can query tables from any schema using the full path: schema.table_name
+   - All tables are in public schema. Always use public.table_name format when referencing tables (e.g., public.mart_daily_active_users, public.mart_station_flow_daily, public.fact_transactions)
+   - Use table name prefixes to identify layers: src_*, stg_*, dim_*, fact_*, mart_*
+   - For statistical queries, ALWAYS prefer mart_* tables (e.g., public.mart_daily_active_users for daily metrics, public.mart_daily_topup_summary for top-up trends)
 {available_tables_info}
 """
                 agent_input = f"{user_input}\n\n{guidance}\nBackground knowledge from knowledge base: {rag_answer if rag_answer else '(No RAG metadata available - use ReAct tools to explore database schema)'}"
@@ -1529,13 +1568,16 @@ IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
                 tables_result = list_tables_tool.invoke({})
                 logger.info(f"Found tables from default schema: {tables_result}")
                 
-                # Step 2: For Databricks, discover all schemas and their tables
+                # Step 2: For Databricks, discover tables from specified schema only (default: public)
                 if is_databricks:
                     # Ensure re is available
                     import re as re_module
                     import ast
                     
-                    # Get sql_db_query tool to query schemas and tables
+                    # Get schema from environment variable, default to 'public'
+                    target_schema = os.getenv("DATABRICKS_SCHEMA", "public")
+                    
+                    # Get sql_db_query tool to query tables
                     sql_query_tool = None
                     for tool in tools:
                         if tool.name == 'sql_db_query':
@@ -1546,86 +1588,49 @@ IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
                         try:
                             catalog = os.getenv("DATABRICKS_DATABASE") or os.getenv("DATABRICKS_CATALOG", "workspace")
                             
-                            # Step 2.1: List all schemas in the catalog
-                            logger.info(f"Discovering all schemas in catalog: {catalog}")
-                            schemas_query = f"SHOW SCHEMAS IN {catalog}"
+                            # Only query tables from the specified schema (default: public)
+                            logger.info(f"Discovering tables from schema: {target_schema} (default: public, override via DATABRICKS_SCHEMA env var)")
+                            tables_query = f"SHOW TABLES IN {catalog}.{target_schema}"
                             
                             try:
-                                schemas_result = sql_query_tool.invoke({"query": schemas_query})
-                                logger.info(f"Querying schemas: {schemas_query}")
+                                schema_tables_result = sql_query_tool.invoke({"query": tables_query})
+                                logger.info(f"Querying tables in schema {target_schema}: {tables_query}")
                                 
-                                # Parse schemas from result
-                                schemas_list = []
-                                if schemas_result:
-                                    schemas_raw = str(schemas_result)
-                                    try:
-                                        # Try to parse as Python list
-                                        parsed_schemas = ast.literal_eval(schemas_raw)
-                                        if isinstance(parsed_schemas, list):
-                                            for item in parsed_schemas:
-                                                if isinstance(item, (tuple, list)) and len(item) > 0:
-                                                    schema_name = item[0] if isinstance(item[0], str) else str(item[0])
-                                                    if schema_name and schema_name not in ['databaseName', 'namespace']:
-                                                        schemas_list.append(schema_name)
-                                                elif isinstance(item, str):
-                                                    schemas_list.append(item)
-                                    except:
-                                        # Fallback: regex extraction
-                                        pattern = r"['\"]([^'\"]+)['\"]"
-                                        matches = re_module.findall(pattern, schemas_raw)
-                                        for match in matches:
-                                            if match not in ['databaseName', 'namespace', 'database', 'schema']:
-                                                schemas_list.append(match)
-                                
-                                # Filter out system schemas and get relevant schemas
-                                relevant_schemas = [s for s in schemas_list if s.lower() not in ['information_schema', 'sys', 'default']]
-                                logger.info(f"✅ Discovered {len(relevant_schemas)} schemas: {relevant_schemas}")
-                                
-                                # Step 2.2: For each schema, list all tables
                                 all_tables = []
-                                for schema in relevant_schemas:
+                                if schema_tables_result:
+                                    schema_tables = []
+                                    schema_tables_raw = str(schema_tables_result)
+                                    
                                     try:
-                                        tables_query = f"SHOW TABLES IN {catalog}.{schema}"
-                                        logger.info(f"Querying tables in schema {schema}: {tables_query}")
-                                        
-                                        schema_tables_result = sql_query_tool.invoke({"query": tables_query})
-                                        
-                                        if schema_tables_result:
-                                            schema_tables = []
-                                            schema_tables_raw = str(schema_tables_result)
-                                            
-                                            try:
-                                                # Try to parse as Python list of tuples
-                                                parsed_tables = ast.literal_eval(schema_tables_raw)
-                                                if isinstance(parsed_tables, list):
-                                                    for item in parsed_tables:
-                                                        if isinstance(item, (tuple, list)) and len(item) >= 2:
-                                                            # Format: (database, table, isTemporary) or (namespace, table, ...)
-                                                            table_name = item[1] if len(item) > 1 else item[0]
-                                                            if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
-                                                                full_table_name = f"{schema}.{table_name}"
-                                                                schema_tables.append(full_table_name)
-                                                                all_tables.append(full_table_name)
-                                            except:
-                                                # Fallback: regex extraction
-                                                # Look for patterns like schema.table_name
-                                                pattern = rf"{re_module.escape(schema)}\.(\w+)"
-                                                matches = re_module.findall(pattern, schema_tables_raw)
-                                                for match in matches:
-                                                    if match not in ['tableName', 'table', 'database']:
-                                                        full_table_name = f"{schema}.{match}"
+                                        # Try to parse as Python list of tuples
+                                        parsed_tables = ast.literal_eval(schema_tables_raw)
+                                        if isinstance(parsed_tables, list):
+                                            for item in parsed_tables:
+                                                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                                                    # Format: (database, table, isTemporary) or (namespace, table, ...)
+                                                    table_name = item[1] if len(item) > 1 else item[0]
+                                                    if table_name and table_name not in ['databaseName', 'tableName', 'namespace', 'isTemporary']:
+                                                        full_table_name = f"{target_schema}.{table_name}"
                                                         schema_tables.append(full_table_name)
                                                         all_tables.append(full_table_name)
-                                            
-                                            if schema_tables:
-                                                all_tables_by_schema[schema] = schema_tables
-                                                logger.info(f"  ✅ Schema '{schema}': {len(schema_tables)} tables")
-                                            else:
-                                                logger.warning(f"  ⚠️  Schema '{schema}': No tables found or could not parse")
-                                    except Exception as schema_error:
-                                        logger.warning(f"  ⚠️  Error querying tables in schema '{schema}': {schema_error}")
+                                    except:
+                                        # Fallback: regex extraction
+                                        # Look for patterns like schema.table_name
+                                        pattern = rf"{re_module.escape(target_schema)}\.(\w+)"
+                                        matches = re_module.findall(pattern, schema_tables_raw)
+                                        for match in matches:
+                                            if match not in ['tableName', 'table', 'database']:
+                                                full_table_name = f"{target_schema}.{match}"
+                                                schema_tables.append(full_table_name)
+                                                all_tables.append(full_table_name)
+                                    
+                                    if schema_tables:
+                                        all_tables_by_schema[target_schema] = schema_tables
+                                        logger.info(f"  ✅ Schema '{target_schema}': {len(schema_tables)} tables")
+                                    else:
+                                        logger.warning(f"  ⚠️  Schema '{target_schema}': No tables found or could not parse")
                                 
-                                # Step 2.3: Merge all discovered tables into tables_result
+                                # Step 2.3: Merge discovered tables into tables_result
                                 if all_tables:
                                     # Combine with initial tables_result
                                     initial_tables = [t.strip() for t in re_module.split(r"[,\s]+", str(tables_result)) if t.strip()]
@@ -1634,34 +1639,37 @@ IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
                                     initial_tables_with_schema = []
                                     for table in initial_tables:
                                         if '.' not in table:
-                                            # Assume they're from public schema
-                                            initial_tables_with_schema.append(f"public.{table}")
+                                            # Assume they're from target schema (default: public)
+                                            initial_tables_with_schema.append(f"{target_schema}.{table}")
                                         else:
                                             initial_tables_with_schema.append(table)
                                     
-                                    # Merge and deduplicate
-                                    all_tables_merged = list(set(initial_tables_with_schema + all_tables))
+                                    # Merge all tables
+                                    all_tables_combined = initial_tables_with_schema + all_tables
+                                    
+                                    # Deduplicate tables
+                                    all_tables_merged = list(set(all_tables_combined))
+                                    
                                     tables_result = ', '.join(all_tables_merged)
                                     
-                                    logger.info(f"✅ Total tables discovered: {len(all_tables_merged)} tables across {len(all_tables_by_schema)} schemas")
-                                    logger.info(f"   Schemas: {list(all_tables_by_schema.keys())}")
+                                    logger.info(f"✅ Total tables discovered: {len(all_tables_merged)} tables from schema '{target_schema}'")
                                     
-                                    # Identify marts layer tables
+                                    # Identify marts layer tables (now in target schema with mart_ prefix)
                                     marts_tables_detected = [
                                         t for t in all_tables_merged 
-                                        if 'marts' in t.lower() or 
-                                        any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat'])
+                                        if 'mart_' in t.lower() or 
+                                        (t.startswith(f'{target_schema}.') and any(keyword in t.lower() for keyword in ['summary', 'daily', 'flow', 'usage', 'topup', 'active', 'aggregat']))
                                     ]
                                     
                                     if marts_tables_detected:
                                         logger.info(f"✅ Detected {len(marts_tables_detected)} marts layer tables: {marts_tables_detected}")
                                     else:
-                                        logger.warning("⚠️  No marts layer tables detected in discovered schemas")
+                                        logger.warning("⚠️  No marts layer tables detected in discovered schema")
                                 else:
-                                    logger.warning("⚠️  No tables discovered from schema queries, using default schema tables only")
+                                    logger.warning(f"⚠️  No tables discovered from schema '{target_schema}', using default schema tables only")
                                     
-                            except Exception as schemas_error:
-                                logger.warning(f"Could not query schemas: {schemas_error}")
+                            except Exception as schema_error:
+                                logger.warning(f"Could not query tables in schema '{target_schema}': {schema_error}")
                                 logger.warning("Falling back to default schema tables only")
                                 
                         except Exception as e:
@@ -1698,8 +1706,9 @@ IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
                         # If it's Databricks and table doesn't have schema prefix, try common schemas
                         table_to_query = table
                         if is_databricks and '.' not in table:
-                            # Try common schemas for Databricks
-                            schemas_to_try = ['public', 'staging', 'dimensions', 'facts', 'marts']
+                            # Try public schema first (all tables are now in public schema)
+                            # Old schemas (dimensions, facts, marts, staging) are deprecated
+                            schemas_to_try = ['public']  # Only try public schema
                             schema_found = False
                             for schema in schemas_to_try:
                                 try:
@@ -1711,9 +1720,12 @@ IMPORTANT GUIDANCE FOR SQL QUERY GENERATION:
                                 except:
                                     continue
                             if not schema_found:
-                                # Fallback: try without schema prefix
-                                table_schema = db.get_table_info([table])
-                                schema_info += f"\n{table} table structure:\n{table_schema}\n"
+                                # Fallback: try without schema prefix (assumes public)
+                                try:
+                                    table_schema = db.get_table_info([table])
+                                    schema_info += f"\npublic.{table} table structure:\n{table_schema}\n"
+                                except:
+                                    schema_info += f"\n{table} table structure: (not found in public schema)\n"
                         else:
                             table_schema = db.get_table_info([table_to_query])
                             schema_info += f"\n{table_to_query} table structure:\n{table_schema}\n"
@@ -1797,32 +1809,150 @@ JOIN RESTRICTIONS:
         Background knowledge (from knowledge base):
         {rag_answer}
         
+        {"Example RAG metadata for mart tables (if available in knowledge base):" if is_databricks else ""}
+        {"Table: public.mart_daily_active_users" if is_databricks else ""}
+        {"Description: Daily active users metrics and trends. Pre-aggregated table optimized for analytical queries." if is_databricks else ""}
+        {"Columns: date (date, unique), active_users (integer), total_transactions (integer), total_amount (numeric), avg_transactions_per_user (numeric), avg_amount_per_transaction (numeric), entry_transactions (integer), exit_transactions (integer), is_weekend (boolean)" if is_databricks else ""}
+        {"Use case: Daily/monthly/yearly user activity trends, transaction volume analysis, weekend vs weekday comparisons" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"Table: public.mart_daily_topup_summary" if is_databricks else ""}
+        {"Description: Daily top-up summary metrics. Pre-aggregated table for top-up analysis." if is_databricks else ""}
+        {"Columns: date (date, unique), total_topups (integer), unique_users (integer), total_amount (numeric), avg_amount_per_topup (numeric), avg_amount_per_user (numeric), cash_topups (integer), card_topups (integer), mobile_topups (integer), online_topups (integer), is_weekend (boolean)" if is_databricks else ""}
+        {"Use case: Top-up trends, payment method analysis, top-up amount statistics" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"Table: public.mart_station_flow_daily" if is_databricks else ""}
+        {"Description: Daily station flow metrics. Pre-aggregated table for station-level analysis." if is_databricks else ""}
+        {"Columns: date (date), station_id (integer), station_name (string), station_type (string), total_transactions (integer), unique_users (integer), entry_count (integer), exit_count (integer), total_amount (numeric), is_weekend (boolean)" if is_databricks else ""}
+        {"Use case: Station rankings, station flow analysis, entry/exit patterns, station performance comparison" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"Table: public.mart_user_card_type_summary" if is_databricks else ""}
+        {"Description: User summary by card type. Pre-aggregated table for card type distribution analysis." if is_databricks else ""}
+        {"Columns: card_type (string, unique), total_users (integer), verified_users (integer), total_transactions (integer), total_transaction_amount (numeric), avg_transactions_per_user (numeric), total_topups (integer), total_topup_amount (numeric), avg_topup_per_user (numeric)" if is_databricks else ""}
+        {"Use case: Card type distribution, user segmentation, card type performance comparison" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"Table: public.mart_route_usage_summary" if is_databricks else ""}
+        {"Description: Route usage summary metrics. Pre-aggregated table for route-level analysis." if is_databricks else ""}
+        {"Columns: route_id (integer, unique), route_name (string), route_type (string), total_transactions (integer), unique_users (integer), total_amount (numeric), avg_transactions_per_day (numeric), first_transaction_date (date), last_transaction_date (date)" if is_databricks else ""}
+        {"Use case: Route rankings, route usage analysis, route performance comparison" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        
         Available tables in database: {tables_result}
         
         Table structure information: {schema_info}
         
         {"This is a Databricks SQL database (Unity Catalog)." if is_databricks else "This is a SQLite database."} Please generate a SQL query based on the user question and available tables.
         
-        {"⚠️  CRITICAL: If this is a statistical/metric query (counts, sums, averages, trends, aggregations), you MUST use marts schema tables, NOT src/staging/public schema tables. Check available tables above for marts.* tables first." if is_databricks else ""}
-        {"⚠️  Available marts layer tables (preferred for statistics): " + ", ".join(marts_tables_detected) + ". Use these instead of src/staging tables for aggregated statistics." if is_databricks and marts_tables_detected else ""}
+        {"📊 DATA WAREHOUSE DESIGN PRINCIPLES (Kimball/Medallion Architecture):" if is_databricks else ""}
+        {"This database follows a layered data warehouse architecture. All tables are in public schema, identified by prefixes:" if is_databricks else ""}
+        {"1. src_* (Source Layer - Raw Data):" if is_databricks else ""}
+        {"   - Purpose: Raw data directly from source systems (Airbyte ETL)" if is_databricks else ""}
+        {"   - Use when: Need to access original, unprocessed data; Data quality checks; ETL debugging" if is_databricks else ""}
+        {"   - Examples: src_users, src_transactions, src_stations, src_routes, src_topups" if is_databricks else ""}
+        {"   - Query pattern: SELECT * FROM public.src_users WHERE ... (rarely used in analytics)" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"2. stg_* (Staging Layer - Cleaned Data):" if is_databricks else ""}
+        {"   - Purpose: Cleaned, validated, and standardized data ready for transformation" if is_databricks else ""}
+        {"   - Use when: Need cleaned data for joins with dimensions; Building custom aggregations not in mart_*" if is_databricks else ""}
+        {"   - Examples: stg_users, stg_transactions, stg_stations, stg_routes, stg_topups" if is_databricks else ""}
+        {"   - Query pattern: SELECT * FROM public.stg_transactions WHERE ... (use sparingly, prefer mart_* for analytics)" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"3. dim_* (Dimension Layer - Master Data):" if is_databricks else ""}
+        {"   - Purpose: Master reference data with surrogate keys for dimensional modeling" if is_databricks else ""}
+        {"   - Use when: Need dimension attributes (user info, station details, route info, time attributes); Joining with fact tables" if is_databricks else ""}
+        {"   - Examples: dim_user, dim_station, dim_route, dim_time" if is_databricks else ""}
+        {"   - Query pattern: SELECT * FROM public.dim_user WHERE ... or JOIN with fact_* tables" if is_databricks else ""}
+        {"   - Key columns: *_key (surrogate key), *_id (business key), descriptive attributes" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"4. fact_* (Fact Layer - Transactional Data):" if is_databricks else ""}
+        {"   - Purpose: Transactional fact tables with foreign keys to dimensions and measures" if is_databricks else ""}
+        {"   - Use when: Need detailed transaction-level data; Custom aggregations not available in mart_*; Specific granularity requirements" if is_databricks else ""}
+        {"   - Examples: fact_transactions, fact_topups" if is_databricks else ""}
+        {"   - Query pattern: SELECT * FROM public.fact_transactions WHERE ... (use only when mart_* doesn't have required metrics)" if is_databricks else ""}
+        {"   - Key columns: *_key (surrogate key), *_id (business key), dimension keys, measures (amount, count, etc.)" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"5. mart_* (Marts Layer - Pre-aggregated Analytics) - ⭐ STRONGLY PREFERRED:" if is_databricks else ""}
+        {"   - Purpose: Pre-computed, optimized analytical tables for reporting and business intelligence" if is_databricks else ""}
+        {"   - Use when: ANY statistical query, trend analysis, metrics, summaries, comparisons, aggregations" if is_databricks else ""}
+        {"   - Design: Follows Kimball/Medallion Architecture - optimized for analytical queries" if is_databricks else ""}
+        {"   - Examples: mart_daily_active_users, mart_daily_topup_summary, mart_station_flow_daily, mart_user_card_type_summary, mart_route_usage_summary" if is_databricks else ""}
+        {"   - Query pattern: SELECT * FROM public.mart_daily_active_users WHERE ... (MANDATORY for analytics)" if is_databricks else ""}
+        {"   - Benefits: Pre-aggregated, faster queries, optimized for reporting, follows data warehouse best practices" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"🎯 QUERY TYPE TO TABLE PREFIX MAPPING:" if is_databricks else ""}
+        {"- Statistical queries (counts, sums, averages, trends): → mart_* tables (MANDATORY)" if is_databricks else ""}
+        {"- Time series analysis (daily, monthly, yearly trends): → mart_* tables (MANDATORY)" if is_databricks else ""}
+        {"- Category/group comparisons: → mart_* tables (MANDATORY)" if is_databricks else ""}
+        {"- Station/route rankings: → mart_station_flow_daily or mart_route_usage_summary (MANDATORY)" if is_databricks else ""}
+        {"- User distribution by card type: → mart_user_card_type_summary (MANDATORY)" if is_databricks else ""}
+        {"- Detailed transaction records: → fact_* tables (only if mart_* doesn't provide required detail)" if is_databricks else ""}
+        {"- Dimension attributes (user info, station details): → dim_* tables" if is_databricks else ""}
+        {"- Raw source data access: → src_* tables (rarely needed in analytics)" if is_databricks else ""}
+        {"- Cleaned data for custom joins: → stg_* tables (use sparingly, prefer mart_*)" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"⚠️  CRITICAL: All tables are now in public schema. Use table name prefixes to identify layers:" if is_databricks else ""}
+        {"   - src_* : Source tables (raw data from Airbyte)" if is_databricks else ""}
+        {"   - stg_* : Staging tables (cleaned and validated data)" if is_databricks else ""}
+        {"   - dim_* : Dimension tables (dim_user, dim_station, dim_route, dim_time)" if is_databricks else ""}
+        {"   - fact_* : Fact tables (fact_transactions, fact_topups)" if is_databricks else ""}
+        {"   - mart_* : Marts tables (pre-aggregated metrics, STRONGLY PREFERRED for all statistics and analytics queries)" if is_databricks else ""}
+        {"⚠️  STRONGLY RECOMMENDED: Use mart_* tables for ALL statistical, metric, trend, and aggregation queries:" if is_databricks and marts_tables_detected else ""}
+        {"   Available mart_* tables: " + ", ".join(marts_tables_detected) + "." if is_databricks and marts_tables_detected else ""}
+        {"   - mart_daily_active_users: Daily user activity metrics" if is_databricks and marts_tables_detected else ""}
+        {"     Columns: date, active_users, total_transactions, total_amount, avg_transactions_per_user, avg_amount_per_transaction, entry_transactions, exit_transactions, is_weekend" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT date, active_users, total_transactions FROM public.mart_daily_active_users WHERE date >= '2025-11-01' ORDER BY date" if is_databricks and marts_tables_detected else ""}
+        {"   - mart_daily_topup_summary: Daily top-up metrics" if is_databricks and marts_tables_detected else ""}
+        {"     Columns: date, total_topups, unique_users, total_amount, avg_amount_per_topup, avg_amount_per_user, cash_topups, card_topups, mobile_topups, online_topups, is_weekend" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month" if is_databricks and marts_tables_detected else ""}
+        {"   - mart_station_flow_daily: Daily station flow metrics" if is_databricks and marts_tables_detected else ""}
+        {"     Columns: date, station_id, station_name, station_type, total_transactions, unique_users, entry_count, exit_count, total_amount, is_weekend" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT station_name, SUM(total_transactions) as Total FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total DESC LIMIT 10" if is_databricks and marts_tables_detected else ""}
+        {"   - mart_user_card_type_summary: User metrics by card type" if is_databricks and marts_tables_detected else ""}
+        {"     Columns: card_type, total_users, verified_users, total_transactions, total_transaction_amount, avg_transactions_per_user, total_topups, total_topup_amount, avg_topup_per_user" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT card_type, total_users, total_transaction_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC" if is_databricks and marts_tables_detected else ""}
+        {"   - mart_route_usage_summary: Route usage metrics" if is_databricks and marts_tables_detected else ""}
+        {"     Columns: route_id, route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day, first_transaction_date, last_transaction_date" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT route_name, total_transactions, unique_users FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10" if is_databricks and marts_tables_detected else ""}
+        {"   DO NOT aggregate from fact_*/dim_* tables when equivalent mart_* tables exist!" if is_databricks and marts_tables_detected else ""}
         
         CRITICAL RULES - MUST FOLLOW:
         1. ONLY use column names that exist in the table structure information above
-        {"2. IMPORTANT: This database has multiple schemas (public, staging, dimensions, facts, marts). Use schema.table format when referencing tables." if is_databricks else "2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
-        {"3. STATISTICAL/METRIC QUERIES - ALWAYS prefer marts layer tables (data warehouse design principle):" if is_databricks else ""}
-        {"   - For aggregated statistics, metrics, summaries, or pre-calculated data, ALWAYS prefer marts schema tables" if is_databricks else ""}
-        {"   - Design principle: marts layer follows Kimball/Medallion Architecture data warehouse patterns and contains pre-aggregated metrics optimized for analytical queries" if is_databricks else ""}
-        {"   - marts tables are designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics" if is_databricks else ""}
-        {"   - When querying for statistics (counts, sums, averages, trends), look for tables in the marts schema that match the aggregation level and metric type" if is_databricks else ""}
-        {"   - Avoid aggregating from raw fact/dimension tables when equivalent marts tables exist, as marts tables are pre-computed and more efficient" if is_databricks else ""}
-        {"   - Only use facts/dimensions tables when marts layer doesn't provide the required granularity or metrics" if is_databricks else ""}
+        {"2. DATA WAREHOUSE LAYER SELECTION - Choose the right table prefix based on query type:" if is_databricks else "2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
+        {"   Query Type → Table Prefix Mapping:" if is_databricks else ""}
+        {"   - Statistical queries (counts, sums, averages, trends) → mart_* (MANDATORY)" if is_databricks else ""}
+        {"   - Time series analysis (daily/monthly/yearly trends) → mart_* (MANDATORY)" if is_databricks else ""}
+        {"   - Category/group comparisons → mart_* (MANDATORY)" if is_databricks else ""}
+        {"   - Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY)" if is_databricks else ""}
+        {"   - User distribution by card type → mart_user_card_type_summary (MANDATORY)" if is_databricks else ""}
+        {"   - Detailed transaction records → fact_* (only if mart_* insufficient)" if is_databricks else ""}
+        {"   - Dimension attributes (user info, station details) → dim_*" if is_databricks else ""}
+        {"   - Raw source data access → src_* (rarely needed)" if is_databricks else ""}
+        {"   - Cleaned data for custom logic → stg_* (use sparingly)" if is_databricks else ""}
+        {"" if is_databricks else ""}
+        {"   Table Prefix Meanings:" if is_databricks else ""}
+        {"   - src_* : Source layer - Raw data from Airbyte (rarely used in analytics)" if is_databricks else ""}
+        {"   - stg_* : Staging layer - Cleaned and validated data (use sparingly, prefer mart_*)" if is_databricks else ""}
+        {"   - dim_* : Dimension layer - Master reference data (for descriptive attributes)" if is_databricks else ""}
+        {"   - fact_* : Fact layer - Transactional data (only when mart_* insufficient)" if is_databricks else ""}
+        {"   - mart_* : Marts layer - Pre-aggregated analytics (MANDATORY for statistics)" if is_databricks else ""}
+        {"   - Always use public.table_name format (e.g., public.mart_daily_active_users, public.fact_transactions)" if is_databricks else ""}
+        {"3. STATISTICAL/METRIC/TREND QUERIES - ALWAYS use mart_* tables (MANDATORY for data warehouse design):" if is_databricks else ""}
+        {"   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, MANDATORY to use mart_* tables" if is_databricks else ""}
+        {"   - Design principle: mart_* tables follow Kimball/Medallion Architecture and contain pre-aggregated metrics optimized for analytical queries" if is_databricks else ""}
+        {"   - mart_* tables are specifically designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics" if is_databricks else ""}
+        {"   - When querying for statistics (counts, sums, averages, trends, comparisons), ALWAYS look for mart_* tables first" if is_databricks else ""}
+        {"   - NEVER aggregate from fact_*/dim_* tables when equivalent mart_* tables exist - mart_* tables are pre-computed, more efficient, and follow best practices" if is_databricks else ""}
+        {"   - Only use fact_*/dim_* tables when mart_* tables don't provide the required granularity or specific metrics" if is_databricks else ""}
+        {"   - For monthly/yearly trends: Use mart_daily_active_users or mart_daily_topup_summary aggregated by month/year" if is_databricks else ""}
+        {"   - For daily trends: Use mart_daily_active_users or mart_daily_topup_summary directly" if is_databricks else ""}
+        {"   - For station/route comparisons: Use mart_station_flow_daily or mart_route_usage_summary" if is_databricks else ""}
+        {"   - For category distributions: Use mart_user_card_type_summary" if is_databricks else ""}
         {"4. METADATA INFORMATION - Use RAG knowledge base first:" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
         {"   - The background knowledge above contains metadata about table structures, column definitions, and business rules" if is_databricks else "4. Verify every column name against the table structure before using it"}
         {"   - Use this RAG metadata to understand table relationships and data semantics" if is_databricks else "5. dws_sales_cube CAN be joined with dim_customer using customer_id field"}
         {"   - If RAG metadata is insufficient, you can explore the database schema using available tools" if is_databricks else "6. Use appropriate JOIN conditions based on available fields"}
-        {"6. When joining tables from different schemas, use full path: schema1.table1 JOIN schema2.table2" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
-        {"7. Example table references: public.src_table, staging.stg_table, dimensions.dim_table, facts.fact_table, marts.summary_table" if is_databricks else "4. Verify every column name against the table structure before using it"}
-        {"8. Cross-schema joins are supported: SELECT * FROM staging.stg_stations s JOIN dimensions.dim_station d ON s.station_id = d.station_id" if is_databricks else "5. dws_sales_cube CAN be joined with dim_customer using customer_id field"}
+        {"6. All tables are in public schema, so joins use public.table_name format" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
+        {"7. Example table references: public.src_users, public.stg_stations, public.dim_user, public.fact_transactions, public.mart_daily_active_users" if is_databricks else "4. Verify every column name against the table structure before using it"}
+        {"8. Example joins: SELECT * FROM public.stg_stations s JOIN public.dim_station d ON s.station_id = d.station_id" if is_databricks else "5. dws_sales_cube CAN be joined with dim_customer using customer_id field"}
         {"9. Verify every column name against the table structure before using it" if is_databricks else "6. Use appropriate JOIN conditions based on available fields"}
         {"10. Use appropriate JOIN conditions based on available fields" if is_databricks else "7. Check table relationships before creating JOIN conditions"}
         {"11. Check table relationships before creating JOIN conditions" if is_databricks else "8. IMPORTANT: For sales amount queries, use 'total_amount' in dws_sales_cube"}
@@ -1831,9 +1961,11 @@ JOIN RESTRICTIONS:
         
         Technical Instructions:
         {"- Use Databricks SQL syntax (Spark SQL compatible)" if is_databricks else "- Use SQLite syntax"}
-        {"- Use schema.table format for table references (e.g., public.src_table, staging.stg_table, dimensions.dim_table, marts.summary_table)" if is_databricks else ""}
-        {"- Cross-schema joins are supported: SELECT * FROM staging.stg_stations s JOIN dimensions.dim_station d ON s.station_id = d.station_id" if is_databricks else ""}
-        {"- PRIORITY: For statistical/metric queries, prefer marts layer tables over aggregating from facts/dimensions (follow data warehouse design principles)" if is_databricks else ""}
+        {"- All tables are in public schema. Use public.table_name format (e.g., public.src_users, public.stg_stations, public.dim_user, public.fact_transactions, public.mart_daily_active_users)" if is_databricks else ""}
+        {"- Example joins: SELECT * FROM public.stg_stations s JOIN public.dim_station d ON s.station_id = d.station_id" if is_databricks else ""}
+        {"- DATA WAREHOUSE DESIGN: Follow layer selection rules - statistical queries MUST use mart_* tables, not fact_*/dim_*" if is_databricks else ""}
+        {"- PRIORITY: For statistical/metric/trend queries, MANDATORY to use mart_* tables (e.g., public.mart_daily_active_users) over aggregating from fact_*/dim_* tables" if is_databricks else ""}
+        {"- Table prefix selection: mart_* for analytics, fact_* for details, dim_* for attributes, stg_* for cleaned data, src_* for raw data" if is_databricks else ""}
         {"- Use RAG background knowledge for metadata (table structures, relationships, business rules) before exploring database schema" if is_databricks else ""}
         - Return ONLY ONE SQL query statement, no other explanations or multiple statements
         - CRITICAL: Generate exactly ONE SELECT statement, not multiple statements
@@ -1843,10 +1975,15 @@ JOIN RESTRICTIONS:
         {"- If user asks for table list, use: SHOW TABLES IN catalog.schema; or SHOW TABLES;" if is_databricks else "- If user asks for table list, use: SELECT name FROM sqlite_master WHERE type='table';"}
         {"- For date-related queries in Databricks, use: DATE_FORMAT(date_column, 'yyyy-MM'), EXTRACT(YEAR FROM date_column), etc." if is_databricks else "- For date-related queries, use strftime() function with proper syntax: strftime('%Y-%m', date_column)"}
         - SQL clause order: SELECT ... FROM ... WHERE ... GROUP BY ... ORDER BY ...
-        {"- Example for Databricks (using marts layer for statistics - follow design principles): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(metric_column) as Total_Metric FROM marts.summary_table WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else "- Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;"}
-        {"- Example for Databricks (cross-schema JOIN): SELECT s.id, s.name, d.key FROM staging.stg_table s JOIN dimensions.dim_table d ON s.id = d.id LIMIT 10;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
-        {"- Example for Databricks (marts layer for daily metrics - use pre-aggregated tables): SELECT date, aggregated_metric FROM marts.daily_summary_table WHERE date >= '2025-11-01' ORDER BY date;" if is_databricks else ""}
-        {"- IMPORTANT: Use schema.table format for table names (e.g., public.src_table, staging.stg_table, marts.summary_table)" if is_databricks else "- IMPORTANT: strftime() function requires two parameters: format string and date column"}
+        {"- Example 1 (Monthly transaction trend - mart_daily_active_users): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Transaction_Amount, SUM(active_users) as Total_Active_Users, SUM(total_transactions) as Total_Transactions FROM public.mart_daily_active_users WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else "- Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;"}
+        {"- Example 2 (Daily active users trend - mart_daily_active_users): SELECT date, active_users, total_transactions, total_amount, avg_transactions_per_user, avg_amount_per_transaction FROM public.mart_daily_active_users WHERE date >= '2025-11-01' AND date <= '2025-12-31' ORDER BY date;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
+        {"- Example 3 (Monthly top-up summary - mart_daily_topup_summary): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups, SUM(unique_users) as Total_Users, AVG(avg_amount_per_topup) as Avg_Topup_Amount FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
+        {"- Example 4 (Top stations by flow - mart_station_flow_daily): SELECT station_name, SUM(total_transactions) as Total_Transactions, SUM(unique_users) as Total_Users, SUM(entry_count) as Total_Entries, SUM(exit_count) as Total_Exits, SUM(total_amount) as Total_Amount FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 10;" if is_databricks else ""}
+        {"- Example 5 (Card type distribution - mart_user_card_type_summary): SELECT card_type, total_users, total_transactions, total_transaction_amount, total_topups, total_topup_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC;" if is_databricks else ""}
+        {"- Example 6 (Route usage ranking - mart_route_usage_summary): SELECT route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10;" if is_databricks else ""}
+        {"- Example 7 (Payment method breakdown - mart_daily_topup_summary): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(cash_topups) as Cash_Topups, SUM(card_topups) as Card_Topups, SUM(mobile_topups) as Mobile_Topups, SUM(online_topups) as Online_Topups FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
+        {"- Example 8 (Weekend vs weekday comparison - mart_daily_active_users): SELECT is_weekend, AVG(active_users) as Avg_Active_Users, AVG(total_transactions) as Avg_Transactions, AVG(total_amount) as Avg_Amount FROM public.mart_daily_active_users WHERE date >= '2025-11-01' GROUP BY is_weekend;" if is_databricks else ""}
+        {"- IMPORTANT: All tables are in public schema. Use public.table_name format (e.g., public.src_users, public.stg_stations, public.dim_user, public.fact_transactions, public.mart_daily_active_users)" if is_databricks else "- IMPORTANT: strftime() function requires two parameters: format string and date column"}
         - IMPORTANT: Do not use backslashes in table or column names, use underscores directly
         - IMPORTANT: For SELECT * queries, use: SELECT * FROM table_name (not table_name.*)
         - IMPORTANT: Do NOT include comments, explanations, or multiple SQL statements
@@ -1958,13 +2095,24 @@ JOIN RESTRICTIONS:
                                 
                                 if best_match:
                                     target = best_match[0]
-                                    # Ensure marts schema prefix if not already present
-                                    if not target.startswith('marts.') and 'marts' not in target.lower():
+                                    # Ensure public schema prefix and mart_ prefix if not already present
+                                    if not target.startswith('public.') and not target.startswith('mart_'):
                                         # Check if it's already a full qualified name
                                         if '.' not in target:
-                                            target = f"marts.{target}"
-                                    logger.warning(f"⚠️  Statistical query detected using src/staging table '{original_ref}'. Auto-suggesting marts layer table: {target}")
-                                    logger.warning(f"   Design principle: Use marts layer for aggregated statistics instead of raw source tables")
+                                            # Add mart_ prefix if not present
+                                            if not target.startswith('mart_'):
+                                                target = f"mart_{target}" if not target.startswith('mart_') else target
+                                            target = f"public.{target}"
+                                        else:
+                                            # Has schema prefix, ensure it's public and has mart_ prefix
+                                            schema, table = target.split('.', 1)
+                                            if not table.startswith('mart_'):
+                                                table = f"mart_{table}"
+                                            target = f"public.{table}"
+                                    elif target.startswith('mart_') and not target.startswith('public.'):
+                                        target = f"public.{target}"
+                                    logger.warning(f"⚠️  Statistical query detected using src/staging table '{original_ref}'. Auto-suggesting mart_* table: {target}")
+                                    logger.warning(f"   Design principle: Use mart_* tables for aggregated statistics instead of raw source tables")
                     
                     if name in canonical:
                         target = canonical[name]
@@ -2999,28 +3147,104 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         - OR if data has time-based categories (months: "01"-"12", years: "2025", dates: "2025-01-15", etc.)
         - THEN set is_time_series: true, time_grouping: "month"/"year"/"day" as appropriate, chart_type: "line"
         
-        Example for TIME SERIES (trend query):
+        Example 1 - TIME SERIES (Monthly transaction trend from mart_daily_active_users):
+        Query: "Show monthly transaction amount trend for 2025"
+        SQL: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Amount FROM public.mart_daily_active_users WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month
+        Data columns: Month (string), Total_Amount (numeric)
+        Chart config:
         {{
             "chart_type": "line",
-            "title": "Monthly Sales Trend for 2025",
+            "title": "Monthly Transaction Amount Trend (2025)",
             "x_axis_label": "Month",
-            "y_axis_label": "Sales Revenue ($)",
-            "data_field_for_labels": "category",
-            "data_field_for_values": "sales_revenue",
-            "aggregation_method": "sum",
+            "y_axis_label": "Total Transaction Amount (¥)",
+            "data_field_for_labels": "Month",
+            "data_field_for_values": "Total_Amount",
+            "aggregation_method": "none",
             "time_grouping": "month",
             "is_time_series": true
         }}
         
-        Example for PROPORTION (pie chart):
+        Example 2 - TIME SERIES (Daily active users from mart_daily_active_users):
+        Query: "Show daily active users for November 2025"
+        SQL: SELECT date, active_users, total_transactions, total_amount FROM public.mart_daily_active_users WHERE date >= '2025-11-01' AND date <= '2025-11-30' ORDER BY date
+        Data columns: date (date), active_users (integer), total_transactions (integer), total_amount (numeric)
+        Chart config:
+        {{
+            "chart_type": "line",
+            "title": "Daily Active Users Trend (November 2025)",
+            "x_axis_label": "Date",
+            "y_axis_label": "Active Users",
+            "data_field_for_labels": "date",
+            "data_field_for_values": "active_users",
+            "aggregation_method": "none",
+            "time_grouping": "day",
+            "is_time_series": true
+        }}
+        
+        Example 3 - PROPORTION (Card type distribution from mart_user_card_type_summary):
+        Query: "Show user distribution by card type"
+        SQL: SELECT card_type, total_users, total_transaction_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC
+        Data columns: card_type (string), total_users (integer), total_transaction_amount (numeric)
+        Chart config:
         {{
             "chart_type": "pie",
-            "title": "Sales Proportion by Product Category",
-            "x_axis_label": "Product Category",
-            "y_axis_label": "Sales Revenue ($)",
-            "data_field_for_labels": "category",
-            "data_field_for_values": "sales_revenue",
-            "aggregation_method": "sum",
+            "title": "User Distribution by Card Type",
+            "x_axis_label": "Card Type",
+            "y_axis_label": "Total Users",
+            "data_field_for_labels": "card_type",
+            "data_field_for_values": "total_users",
+            "aggregation_method": "none",
+            "time_grouping": "none",
+            "is_time_series": false
+        }}
+        
+        Example 4 - BAR CHART (Top stations from mart_station_flow_daily):
+        Query: "Show top 10 stations by transaction volume"
+        SQL: SELECT station_name, SUM(total_transactions) as Total_Transactions FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 10
+        Data columns: station_name (string), Total_Transactions (integer)
+        Chart config:
+        {{
+            "chart_type": "bar",
+            "title": "Top 10 Stations by Transaction Volume",
+            "x_axis_label": "Station Name",
+            "y_axis_label": "Total Transactions",
+            "data_field_for_labels": "station_name",
+            "data_field_for_values": "Total_Transactions",
+            "aggregation_method": "none",
+            "time_grouping": "none",
+            "is_time_series": false
+        }}
+        
+        Example 5 - TIME SERIES (Monthly top-up trend from mart_daily_topup_summary):
+        Query: "Show monthly top-up amount trend"
+        SQL: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month
+        Data columns: Month (string), Total_Topup_Amount (numeric), Total_Topups (integer)
+        Chart config:
+        {{
+            "chart_type": "line",
+            "title": "Monthly Top-up Amount Trend (2025)",
+            "x_axis_label": "Month",
+            "y_axis_label": "Total Top-up Amount (¥)",
+            "data_field_for_labels": "Month",
+            "data_field_for_values": "Total_Topup_Amount",
+            "aggregation_method": "none",
+            "time_grouping": "month",
+            "is_time_series": true
+        }}
+        
+        Example 6 - BAR CHART (Route usage from mart_route_usage_summary):
+        Query: "Show top routes by usage"
+        SQL: SELECT route_name, total_transactions, unique_users, total_amount FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10
+        Data columns: route_name (string), total_transactions (integer), unique_users (integer), total_amount (numeric)
+        Chart config:
+        {{
+            "chart_type": "bar",
+            "title": "Top 10 Routes by Transaction Volume",
+            "x_axis_label": "Route Name",
+            "y_axis_label": "Total Transactions",
+            "data_field_for_labels": "route_name",
+            "data_field_for_values": "total_transactions",
+            "aggregation_method": "none",
             "time_grouping": "none",
             "is_time_series": false
         }}

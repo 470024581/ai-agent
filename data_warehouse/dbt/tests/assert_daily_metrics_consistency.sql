@@ -5,6 +5,6 @@ SELECT
     date,
     active_users,
     total_transactions
-FROM {{ ref('daily_active_users') }}
+FROM {{ ref('mart_daily_active_users') }}
 WHERE active_users > total_transactions
 

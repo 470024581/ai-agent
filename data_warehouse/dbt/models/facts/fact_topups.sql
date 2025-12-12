@@ -1,7 +1,7 @@
 {{
     config(
         materialized='table',
-        schema='facts',
+        schema='public',
         partition_by=['topup_date']
     )
 }}

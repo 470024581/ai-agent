@@ -1,7 +1,7 @@
 version: 2
 
 models:
-  - name: daily_active_users
+  - name: mart_daily_active_users
     description: "Daily active users metrics and trends"
     columns:
       - name: date
@@ -32,7 +32,7 @@ models:
       - name: is_weekend
         description: "Whether date is weekend"
 
-  - name: daily_topup_summary
+  - name: mart_daily_topup_summary
     description: "Daily top-up summary metrics"
     columns:
       - name: date
@@ -67,7 +67,7 @@ models:
       - name: is_weekend
         description: "Whether date is weekend"
 
-  - name: station_flow_daily
+  - name: mart_station_flow_daily
     description: "Daily station flow metrics"
     columns:
       - name: date
@@ -103,7 +103,7 @@ models:
       - name: is_weekend
         description: "Whether date is weekend"
 
-  - name: user_card_type_summary
+  - name: mart_user_card_type_summary
     description: "User summary by card type"
     columns:
       - name: card_type
@@ -130,7 +130,7 @@ models:
       - name: avg_topup_per_user
         description: "Average top-up per user"
 
-  - name: route_usage_summary
+  - name: mart_route_usage_summary
     description: "Route usage summary metrics"
     columns:
       - name: route_id

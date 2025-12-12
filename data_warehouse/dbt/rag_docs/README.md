@@ -1,6 +1,6 @@
 # dbt Project Documentation Index
 
-Generated on: 2025-12-10 18:41:52
+Generated on: 2025-12-13 10:29:02
 
 ## Models
 

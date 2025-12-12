@@ -32,35 +32,35 @@ vars:
 # Model configurations
 models:
   shanghai_transport:
-    # Staging models - tables in staging schema (changed from view to fix Databricks SQL syntax error)
+    # Staging models - tables in public schema with stg_ prefix
     staging:
       +materialized: table
-      +schema: staging
+      +schema: public
       +enabled: true
     
-    # Dimension models - tables in dimensions schema
+    # Dimension models - tables in public schema with dim_ prefix
     dimensions:
       +materialized: table
-      +schema: dimensions
+      +schema: public
       +enabled: true
     
-    # Fact models - incremental tables in facts schema
+    # Fact models - incremental tables in public schema with fact_ prefix
     facts:
       +materialized: table
-      +schema: facts
+      +schema: public
       +incremental_strategy: merge
       +enabled: true
     
-    # Marts models - tables in marts schema
+    # Marts models - tables in public schema with mart_ prefix
     marts:
       +materialized: table
-      +schema: marts
+      +schema: public
       +enabled: true
 
 # Seeds configuration
 seeds:
   shanghai_transport:
-    +schema: staging
+    +schema: public
     +enabled: true
 
 # Tests configuration

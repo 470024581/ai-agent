@@ -1,6 +1,6 @@
 # dbt Project Lineage Graph
 
-Generated on: 2025-12-10 18:41:52
+Generated on: 2025-12-13 10:29:02
 
 This document shows the complete data lineage for all models and sources.
 

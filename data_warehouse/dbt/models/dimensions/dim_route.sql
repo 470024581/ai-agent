@@ -1,7 +1,7 @@
 {{
     config(
         materialized='table',
-        schema='dimensions'
+        schema='public'
     )
 }}
 -- Route dimension table

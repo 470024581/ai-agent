@@ -1,7 +1,7 @@
 {{
     config(
         materialized='table',
-        schema='marts'
+        schema='public'
     )
 }}
 -- Route usage summary metrics
