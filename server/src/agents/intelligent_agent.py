@@ -306,8 +306,14 @@ async def perform_rag_retrieval(query: str, datasource: Dict[str, Any], k: int =
             return {"documents": [], "success": False, "error": "Could not extract valid content chunks"}
         
         # 4. Create or retrieve cached/persistent vector store (FAISS)
-        cache_key = f"{datasource['id']}_{len(chunked_docs)}"
+        # Generate a cache key based on file IDs and chunk count to detect changes
+        import hashlib
+        file_ids_str = ",".join(sorted([str(f['id']) for f in valid_files]))
+        file_ids_hash = hashlib.md5(file_ids_str.encode()).hexdigest()[:8]
+        cache_key = f"{datasource['id']}_{len(chunked_docs)}_{file_ids_hash}"
         vector_store_path = VECTOR_STORE_DIR / f"datasource_{datasource['id']}.faiss"
+        
+        should_rebuild = False
         
         if cache_key in _vector_store_cache:
             logger.info(f"Using cached vector store for datasource {datasource['id']}")
@@ -316,15 +322,30 @@ async def perform_rag_retrieval(query: str, datasource: Dict[str, Any], k: int =
             try:
                 logger.info(f"Loading persistent vector store for datasource {datasource['id']}")
                 vector_store = FAISS.load_local(str(vector_store_path), embeddings, allow_dangerous_deserialization=True)
-                _vector_store_cache[cache_key] = vector_store
-                logger.info(f"Loaded and cached persistent vector store for datasource {datasource['id']}")
+                
+                # Verify that the vector store contains all current documents
+                logger.info("Verifying vector store contains all current documents...")
+                current_sources = set([doc.metadata.get('source') for doc in chunked_docs])
+                
+                # Get a sample of documents from vector store to check sources
+                sample_docs = vector_store.similarity_search("", k=min(1000, len(chunked_docs)))
+                stored_sources = set([doc.metadata.get('source') for doc in sample_docs])
+                
+                # Check if all current sources are in stored sources
+                missing_sources = current_sources - stored_sources
+                if missing_sources:
+                    logger.warning(f"Vector store is missing {len(missing_sources)} document sources: {list(missing_sources)[:5]}")
+                    logger.info("Rebuilding vector store to include all current documents...")
+                    should_rebuild = True
+                else:
+                    logger.info(f"✅ Vector store verification passed. Contains {len(stored_sources)} sources.")
+                    _vector_store_cache[cache_key] = vector_store
+                    logger.info(f"Loaded and cached persistent vector store for datasource {datasource['id']}")
             except Exception as e:
                 logger.warning(f"Failed to load persistent vector store: {e}, creating new one")
-                vector_store = FAISS.from_documents(chunked_docs, embeddings)
-                vector_store.save_local(str(vector_store_path))
-                _vector_store_cache[cache_key] = vector_store
-                logger.info(f"Created and saved new vector store for datasource {datasource['id']}")
-        else:
+                should_rebuild = True
+        
+        if should_rebuild or not vector_store_path.exists():
             logger.info("Creating FAISS vector store from chunks...")
             vector_store = FAISS.from_documents(chunked_docs, embeddings)
             vector_store.save_local(str(vector_store_path))
@@ -487,8 +508,14 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
             }
 
         # 4. Create or retrieve cached/persistent vector store (FAISS)
-        cache_key = f"{datasource['id']}_{len(chunked_docs)}"
+        # Generate a cache key based on file IDs and chunk count to detect changes
+        import hashlib
+        file_ids_str = ",".join(sorted([str(f['id']) for f in valid_files]))
+        file_ids_hash = hashlib.md5(file_ids_str.encode()).hexdigest()[:8]
+        cache_key = f"{datasource['id']}_{len(chunked_docs)}_{file_ids_hash}"
         vector_store_path = VECTOR_STORE_DIR / f"datasource_{datasource['id']}.faiss"
+        
+        should_rebuild = False
         
         if cache_key in _vector_store_cache:
             logger.info(f"Using cached vector store for datasource {datasource['id']}")
@@ -497,15 +524,30 @@ async def perform_rag_query(query: str, datasource: Dict[str, Any]) -> Dict[str,
             try:
                 logger.info(f"Loading persistent vector store for datasource {datasource['id']}")
                 vector_store = FAISS.load_local(str(vector_store_path), embeddings, allow_dangerous_deserialization=True)
-                _vector_store_cache[cache_key] = vector_store
-                logger.info(f"Loaded and cached persistent vector store for datasource {datasource['id']}")
+                
+                # Verify that the vector store contains all current documents
+                logger.info("Verifying vector store contains all current documents...")
+                current_sources = set([doc.metadata.get('source') for doc in chunked_docs])
+                
+                # Get a sample of documents from vector store to check sources
+                sample_docs = vector_store.similarity_search("", k=min(1000, len(chunked_docs)))
+                stored_sources = set([doc.metadata.get('source') for doc in sample_docs])
+                
+                # Check if all current sources are in stored sources
+                missing_sources = current_sources - stored_sources
+                if missing_sources:
+                    logger.warning(f"Vector store is missing {len(missing_sources)} document sources: {list(missing_sources)[:5]}")
+                    logger.info("Rebuilding vector store to include all current documents...")
+                    should_rebuild = True
+                else:
+                    logger.info(f"✅ Vector store verification passed. Contains {len(stored_sources)} sources.")
+                    _vector_store_cache[cache_key] = vector_store
+                    logger.info(f"Loaded and cached persistent vector store for datasource {datasource['id']}")
             except Exception as e:
                 logger.warning(f"Failed to load persistent vector store: {e}, creating new one")
-                vector_store = FAISS.from_documents(chunked_docs, embeddings)
-                vector_store.save_local(str(vector_store_path))
-                _vector_store_cache[cache_key] = vector_store
-                logger.info(f"Created and saved new vector store for datasource {datasource['id']}")
-        else:
+                should_rebuild = True
+        
+        if should_rebuild or not vector_store_path.exists():
             logger.info("Creating FAISS vector store from chunks...")
             vector_store = FAISS.from_documents(chunked_docs, embeddings)
             vector_store.save_local(str(vector_store_path))

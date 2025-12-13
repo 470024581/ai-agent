@@ -2275,37 +2275,91 @@ def _parse_agent_query_result(observation: str) -> Dict[str, Any]:
         if observation.startswith('[') and '(' in observation and ')' in observation:
             try:
                 import ast
-                # Parse the tuple list
-                data = ast.literal_eval(observation)
-                if isinstance(data, list) and len(data) > 0:
-                    # Convert tuples to dictionaries
-                    # First, we need to determine column names
-                    # Try to extract column names from the SQL query if available
-                    sample_row = data[0]
-                    if isinstance(sample_row, tuple):
-                        # Try to infer column names from SQL query context
-                        columns = []
-                        for i in range(len(sample_row)):
-                            # Use more meaningful column names based on common patterns
-                            if i == 0:
-                                columns.append("category")  # Usually first column is category/name
-                            elif i == 1:
-                                columns.append("sales_revenue")  # Usually second column is value
-                            else:
-                                columns.append(f"col_{i}")
-                        
-                        rows = []
-                        for row in data:
-                            if isinstance(row, tuple):
-                                row_dict = {columns[i]: row[i] for i in range(len(row))}
-                                rows.append(row_dict)
-                        
-                        logger.info(f"Parsed tuple result with {len(rows)} rows, {len(columns)} columns")
-                        return {
-                            "rows": rows,
-                            "columns": columns,
-                            "executed_sql": "Agent generated SQL"
-                        }
+                import re
+                from datetime import date, datetime
+                from decimal import Decimal
+                
+                # Try ast.literal_eval first for simple types
+                try:
+                    data = ast.literal_eval(observation)
+                    if isinstance(data, list) and len(data) > 0:
+                        sample_row = data[0]
+                        if isinstance(sample_row, tuple):
+                            # Simple tuples parsed successfully
+                            columns = []
+                            for i in range(len(sample_row)):
+                                if i == 0:
+                                    columns.append("category")
+                                elif i == 1:
+                                    columns.append("sales_revenue")
+                                else:
+                                    columns.append(f"col_{i}")
+                            
+                            rows = []
+                            for row in data:
+                                if isinstance(row, tuple):
+                                    row_dict = {columns[i]: row[i] for i in range(len(row))}
+                                    rows.append(row_dict)
+                            
+                            logger.info(f"Parsed tuple result with {len(rows)} rows, {len(columns)} columns")
+                            return {
+                                "rows": rows,
+                                "columns": columns,
+                                "executed_sql": "Agent generated SQL"
+                            }
+                except (ValueError, SyntaxError):
+                    # ast.literal_eval failed, likely due to datetime/Decimal objects
+                    logger.info("ast.literal_eval failed, using eval with safe namespace for datetime/Decimal objects")
+                    
+                    # Use eval with a controlled namespace that includes datetime and Decimal
+                    safe_namespace = {
+                        'datetime': datetime,
+                        'date': date,
+                        'Decimal': Decimal,
+                        '__builtins__': {}
+                    }
+                    
+                    data = eval(observation, safe_namespace)
+                    if isinstance(data, list) and len(data) > 0:
+                        sample_row = data[0]
+                        if isinstance(sample_row, tuple):
+                            # Infer column names from data types
+                            columns = []
+                            for i, val in enumerate(sample_row):
+                                if isinstance(val, (date, datetime)):
+                                    columns.append("date" if i == 0 else f"date_{i}")
+                                elif isinstance(val, (int, Decimal, float)):
+                                    if i == 1:
+                                        columns.append("count")
+                                    elif i == 2:
+                                        columns.append("amount")
+                                    else:
+                                        columns.append(f"value_{i}")
+                                elif isinstance(val, str):
+                                    columns.append("category" if i == 0 else f"category_{i}")
+                                else:
+                                    columns.append(f"col_{i}")
+                            
+                            rows = []
+                            for row in data:
+                                if isinstance(row, tuple):
+                                    row_dict = {}
+                                    for i, val in enumerate(row):
+                                        # Convert datetime.date to string for JSON serialization
+                                        if isinstance(val, date):
+                                            row_dict[columns[i]] = val.isoformat()
+                                        elif isinstance(val, Decimal):
+                                            row_dict[columns[i]] = float(val)
+                                        else:
+                                            row_dict[columns[i]] = val
+                                    rows.append(row_dict)
+                            
+                            logger.info(f"Parsed datetime/Decimal tuple result with {len(rows)} rows, {len(columns)} columns")
+                            return {
+                                "rows": rows,
+                                "columns": columns,
+                                "executed_sql": "Agent generated SQL"
+                            }
             except Exception as e:
                 logger.warning(f"Failed to parse tuple result: {e}")
         

@@ -365,15 +365,21 @@ function IntelligentAnalysis() {
     }
   };
 
-  // Example queries data structure - Updated to 2 categories with 4 examples each
+  // Example queries data structure - 3 categories with 2 examples each
   // Based on Shanghai Transport data warehouse structure
   const exampleQueries = [
+    {
+      category: 'Chart',
+      color: 'orange',
+      examples: [
+        'Show monthly transaction trend for 2025.',
+        'Create a pie chart displaying the proportion of users by card type.'
+      ]
+    },
     {
       category: 'SQL',
       color: 'blue',
       examples: [
-        'Show monthly transaction trend for 2025.',
-        'Generate a pie chart of top-up amount by payment method for the last 30 days.',
         'List top 10 stations by total transaction count in 2025.',
         'What are the total transaction amount and average transaction value for 2025?'
       ]
@@ -383,9 +389,7 @@ function IntelligentAnalysis() {
       color: 'purple',
       examples: [
         'Do you know Logan?',
-        'What metrics are available in the marts layer?',
-        'What are the key features of the fact and dimension tables?',
-        'Describe the business schema and data relationships in the transport system.'
+        'What metrics are available in the marts layer?'
       ]
     }
   ];
