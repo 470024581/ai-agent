@@ -879,7 +879,8 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                     db=db,
                     agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
                     verbose=True,
-                    callbacks=[react_callback]
+                    callbacks=[react_callback],
+                    handle_parsing_errors=True  # Enable parsing error handling to prevent agent from failing on parse errors
                 )
                 
                 # Check if agent was created successfully
@@ -889,8 +890,33 @@ async def sql_agent_node(state: GraphState) -> GraphState:
                     
             except Exception as e:
                 react_fallback_reason = f"Failed to create ReAct agent: {str(e)}"
-                logger.warning(f"ReAct mode not available, will fallback: {react_fallback_reason}")
-                use_react_mode = False
+                logger.error(f"ReAct mode not available and fallback is disabled: {react_fallback_reason}")
+                # Return error state instead of falling back
+                error_msg = f"SQL Agent initialization failed: {str(e)}. ReAct mode is required but could not be created."
+                return {
+                    **state,
+                    "sql_agent_answer": error_msg,
+                    "executed_sqls": [],
+                    "structured_data": None,
+                    "chart_suitable": False,
+                    "agent_intermediate_steps": [],
+                    "sql_execution_success": False,
+                    "react_mode_used": False,
+                    "react_fallback_reason": react_fallback_reason,
+                    "error": error_msg,
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "sql_agent": {
+                            "status": "failed",
+                            "queries_count": 0,
+                            "steps_count": 0,
+                            "chart_suitable": False,
+                            "react_mode": False,
+                            "error": str(e),
+                            "timestamp": time.time()
+                        }
+                    }
+                }
         
         # 4. Execute using ReAct mode or fallback to manual mode
         if use_react_mode:
@@ -949,24 +975,34 @@ LAYER 5 - mart_* (Marts Layer) - ⭐ STRONGLY PREFERRED:
    - Benefits: Pre-computed, faster, optimized for analytics
 
 QUERY TYPE TO TABLE SELECTION GUIDE:
-- Statistical queries (counts, sums, averages) → mart_* (MANDATORY)
-- Time series trends (daily, monthly, yearly) → mart_* (MANDATORY)
-- Category/group comparisons → mart_* (MANDATORY)
-- Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY)
-- User distributions → mart_user_card_type_summary (MANDATORY)
+- Statistical queries (counts, sums, averages) → mart_* (MANDATORY - ONLY USE mart_* TABLES)
+- Time series trends (daily, monthly, yearly) → mart_* (MANDATORY - ONLY USE mart_* TABLES)
+- Category/group comparisons → mart_* (MANDATORY - ONLY USE mart_* TABLES)
+- Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY - ONLY USE mart_* TABLES)
+- User distributions → mart_user_card_type_summary (MANDATORY - ONLY USE mart_* TABLES)
 - Detailed transaction records → fact_* (only if mart_* insufficient)
 - Dimension attributes → dim_* (for descriptive data)
 - Raw source data → src_* (rarely needed)
 - Cleaned data for custom logic → stg_* (use sparingly)
 
-1. STATISTICAL/METRIC/TREND QUERIES - ALWAYS use mart_* tables (MANDATORY for data warehouse design):
-   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, MANDATORY to use mart_* tables in public schema
+1. ⚠️ CRITICAL RULE - STATISTICAL/METRIC/TREND QUERIES - ONLY USE mart_* TABLES (STRICTLY ENFORCED):
+   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, YOU MUST ONLY USE mart_* tables in public schema
+   - DO NOT use fact_*, dim_*, stg_*, or src_* tables for statistical queries - ONLY mart_* tables are allowed
    - The mart_* tables follow Kimball/Medallion Architecture data warehouse design patterns and contain pre-aggregated metrics optimized for analytical queries
    - Design principle: mart_* tables are specifically designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics
-   - When querying for statistics (counts, sums, averages, trends, comparisons), ALWAYS look for mart_* tables first (e.g., public.mart_daily_active_users, public.mart_daily_topup_summary)
-   - NEVER aggregate from fact_*/dim_* tables when equivalent mart_* tables exist - mart_* tables are pre-computed, more efficient, and follow best practices
-   - Only use fact_*/dim_* tables when mart_* tables don't provide the required granularity or specific metrics
-   {"   - Available mart_* tables: " + ", ".join(marts_tables_detected) + " - Use these for ALL statistical queries!" if marts_tables_detected else ""}
+   - When querying for statistics (counts, sums, averages, trends, comparisons), YOU MUST ONLY use mart_* tables (e.g., public.mart_daily_active_users, public.mart_daily_topup_summary)
+   - STRICTLY FORBIDDEN: Do NOT aggregate from fact_*/dim_*/stg_*/src_* tables for statistical queries - ONLY mart_* tables are permitted
+   - If a mart_* table doesn't exist for your query, you must inform the user that the required mart table is not available
+   {"   - Available mart_* tables: " + ", ".join(marts_tables_detected) + " - YOU MUST USE ONLY THESE TABLES FOR STATISTICAL QUERIES!" if marts_tables_detected else "   - WARNING: No mart_* tables detected. Statistical queries cannot be executed."}
+
+⚠️ CRITICAL - TIME SERIES AGGREGATION RULES (MANDATORY):
+   - For "monthly trend", "yearly trend", "weekly trend" queries, you MUST use GROUP BY to aggregate data by time period
+   - DO NOT return all daily rows - ALWAYS aggregate when user asks for monthly/yearly/weekly trends
+   - Example: For "monthly transaction trend", use: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total FROM mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month
+   - Example: For "yearly trend", use: SELECT EXTRACT(YEAR FROM date) as Year, SUM(total_amount) as Total FROM mart_daily_topup_summary GROUP BY Year ORDER BY Year
+   - NEVER use SELECT * FROM mart_* WHERE date >= ... ORDER BY date for trend queries - this returns too many rows
+   - ALWAYS use aggregation functions (SUM, COUNT, AVG) with GROUP BY for trend queries
+   - If query asks for "monthly" or "yearly" or "weekly", you MUST aggregate by that time period
 
 2. METADATA INFORMATION - Use RAG knowledge base first:
    - For table structures, column definitions, business rules, and data relationships, FIRST check the background knowledge from RAG
@@ -978,13 +1014,14 @@ QUERY TYPE TO TABLE SELECTION GUIDE:
 3. DATA EXPLORATION PRIORITY:
    - Step 1: Check RAG background knowledge for metadata and table information
    - Step 2: Check the AVAILABLE TABLES list below to see all available tables (all tables are in public schema)
-   - Step 3: For statistical/metric/trend queries, MANDATORY to use mart_* tables (e.g., public.mart_daily_active_users) over aggregating from fact_*/dim_* tables
-   - Step 4: Only use fact_*/dim_* tables when mart_* tables don't have the required metrics or granularity
+   - Step 3: For statistical/metric/trend queries, YOU MUST ONLY USE mart_* tables (e.g., public.mart_daily_active_users) - DO NOT use fact_*/dim_*/stg_*/src_* tables
+   - Step 4: If a mart_* table doesn't exist for your statistical query, inform the user that the required mart table is not available
 
-4. TABLE NAMING:
-   - All tables are in public schema. Always use public.table_name format when referencing tables (e.g., public.mart_daily_active_users, public.mart_station_flow_daily, public.fact_transactions)
+4. TABLE NAMING AND USAGE RULES:
+   - All tables are in public schema. Always use public.table_name format when referencing tables (e.g., public.mart_daily_active_users, public.mart_station_flow_daily)
    - Use table name prefixes to identify layers: src_*, stg_*, dim_*, fact_*, mart_*
-   - For statistical queries, ALWAYS prefer mart_* tables (e.g., public.mart_daily_active_users for daily metrics, public.mart_daily_topup_summary for top-up trends)
+   - ⚠️ CRITICAL: For statistical queries, YOU MUST ONLY USE mart_* tables (e.g., public.mart_daily_active_users for daily metrics, public.mart_daily_topup_summary for top-up trends)
+   - FORBIDDEN: Do NOT use fact_*, dim_*, stg_*, or src_* tables for statistical queries - ONLY mart_* tables are allowed
 {available_tables_info}
 """
                 agent_input = f"{user_input}\n\n{guidance}\nBackground knowledge from knowledge base: {rag_answer if rag_answer else '(No RAG metadata available - use ReAct tools to explore database schema)'}"
@@ -1392,11 +1429,24 @@ QUERY TYPE TO TABLE SELECTION GUIDE:
                     if isinstance(tool_input, str):
                         # If input is a string, try to extract query
                         if "sql_db_query" in tool_name or "query" in tool_name.lower() or "sql" in tool_name.lower():
+                            # Validate SQL query for statistical queries - must use mart_* tables only and proper aggregation
+                            if is_databricks:
+                                validated_query = _validate_sql_for_mart_tables_only(tool_input, marts_tables_detected, user_input)
+                                if validated_query != tool_input:
+                                    logger.warning(f"SQL query was corrected to use mart_* tables only and proper aggregation")
+                                    tool_input = validated_query
                             executed_sqls.append(tool_input)
                             logger.info(f"Added SQL query from string input: {tool_input[:100]}")
                     elif isinstance(tool_input, dict):
                         query = tool_input.get("query", tool_input.get("tool_input", ""))
                         if query and ("sql_db_query" in tool_name or "query" in tool_name.lower() or "sql" in tool_name.lower()):
+                            # Validate SQL query for statistical queries - must use mart_* tables only and proper aggregation
+                            if is_databricks:
+                                validated_query = _validate_sql_for_mart_tables_only(query, marts_tables_detected, user_input)
+                                if validated_query != query:
+                                    logger.warning(f"SQL query was corrected to use mart_* tables only and proper aggregation")
+                                    query = validated_query
+                                    tool_input["query"] = validated_query
                             executed_sqls.append(query)
                             logger.info(f"Added SQL query from dict input: {query[:100]}")
                         # Parse result if available
@@ -1531,10 +1581,41 @@ QUERY TYPE TO TABLE SELECTION GUIDE:
             except Exception as react_error:
                 logger.error(f"ReAct mode execution failed: {react_error}", exc_info=True)
                 react_fallback_reason = f"ReAct execution error: {str(react_error)}"
-                logger.info(f"Falling back to manual mode due to: {react_fallback_reason}")
-                # Continue to fallback mode
+                logger.error(f"ReAct mode failed and fallback is disabled. Error: {react_fallback_reason}")
+                # Return error state instead of falling back
+                error_msg = f"SQL Agent execution failed in ReAct mode: {str(react_error)}. Please check the query and try again."
+                return {
+                    **state,
+                    "sql_agent_answer": error_msg,
+                    "executed_sqls": [],
+                    "structured_data": None,
+                    "chart_suitable": False,
+                    "agent_intermediate_steps": [],
+                    "sql_execution_success": False,
+                    "react_mode_used": True,
+                    "react_fallback_reason": react_fallback_reason,
+                    "error": error_msg,
+                    "node_outputs": {
+                        **state.get("node_outputs", {}),
+                        "sql_agent": {
+                            "status": "failed",
+                            "queries_count": 0,
+                            "steps_count": 0,
+                            "chart_suitable": False,
+                            "react_mode": True,
+                            "error": str(react_error),
+                            "timestamp": time.time()
+                        }
+                    }
+                }
         
-        # 5. Fallback to manual ReAct Loop Implementation
+        # 5. Fallback to manual ReAct Loop Implementation - DISABLED
+        # Fallback mode is now disabled - only ReAct mode is used
+        # If ReAct mode fails, an error is returned instead of falling back
+        # The following fallback code is commented out to enforce ReAct-only mode
+        '''
+        # FALLBACK MODE DISABLED - Only ReAct mode is used
+        # If ReAct mode fails, an error is returned above
         logger.info("Using manual ReAct SQL exploration (fallback mode)...")
         if react_fallback_reason:
             await websocket_manager.stream_react_step(
@@ -1755,10 +1836,10 @@ IMPORTANT: dws_sales_cube table columns:
 - etl_timestamp (TIMESTAMP): ETL processing timestamp
 
 NOTE: There is NO 'customer_type' column in dws_sales_cube table. Use 'category' instead.
-"""
+\"\"\"
             
             # Add table relationship information
-            schema_info += f"""
+            schema_info += f\"\"\"
 TABLE RELATIONSHIPS AND JOIN RULES:
 1. dws_sales_cube table:
    - Contains aggregated sales data by product, customer and date
@@ -1916,13 +1997,19 @@ JOIN RESTRICTIONS:
         
         CRITICAL RULES - MUST FOLLOW:
         1. ONLY use column names that exist in the table structure information above
-        {"2. DATA WAREHOUSE LAYER SELECTION - Choose the right table prefix based on query type:" if is_databricks else "2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
+        {"2. ⚠️ TIME SERIES AGGREGATION - MANDATORY FOR TREND QUERIES:" if is_databricks else "2. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
+        {"   - For 'monthly trend', 'yearly trend', 'weekly trend' queries, you MUST use GROUP BY to aggregate by time period" if is_databricks else ""}
+        {"   - DO NOT return all daily rows - ALWAYS aggregate when user asks for monthly/yearly/weekly trends" if is_databricks else ""}
+        {"   - Example CORRECT for monthly trend: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total FROM mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month" if is_databricks else ""}
+        {"   - Example WRONG for monthly trend: SELECT * FROM mart_daily_topup_summary WHERE date >= '2025-01-01' ORDER BY date (returns 365 rows, too many!)" if is_databricks else ""}
+        {"   - For daily trends, ONLY return data for short date ranges (max 30 days) with LIMIT clause" if is_databricks else ""}
+        {"3. DATA WAREHOUSE LAYER SELECTION - Choose the right table prefix based on query type:" if is_databricks else "3. NEVER use 'customer_type' - it does NOT exist in dws_sales_cube table"}
         {"   Query Type → Table Prefix Mapping:" if is_databricks else ""}
-        {"   - Statistical queries (counts, sums, averages, trends) → mart_* (MANDATORY)" if is_databricks else ""}
-        {"   - Time series analysis (daily/monthly/yearly trends) → mart_* (MANDATORY)" if is_databricks else ""}
-        {"   - Category/group comparisons → mart_* (MANDATORY)" if is_databricks else ""}
-        {"   - Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY)" if is_databricks else ""}
-        {"   - User distribution by card type → mart_user_card_type_summary (MANDATORY)" if is_databricks else ""}
+        {"   - Statistical queries (counts, sums, averages, trends) → mart_* (MANDATORY - ONLY USE mart_* TABLES)" if is_databricks else ""}
+        {"   - Time series analysis (daily/monthly/yearly trends) → mart_* (MANDATORY - ONLY USE mart_* TABLES) + MUST USE GROUP BY for monthly/yearly" if is_databricks else ""}
+        {"   - Category/group comparisons → mart_* (MANDATORY - ONLY USE mart_* TABLES)" if is_databricks else ""}
+        {"   - Station/route rankings → mart_station_flow_daily, mart_route_usage_summary (MANDATORY - ONLY USE mart_* TABLES)" if is_databricks else ""}
+        {"   - User distribution by card type → mart_user_card_type_summary (MANDATORY - ONLY USE mart_* TABLES)" if is_databricks else ""}
         {"   - Detailed transaction records → fact_* (only if mart_* insufficient)" if is_databricks else ""}
         {"   - Dimension attributes (user info, station details) → dim_*" if is_databricks else ""}
         {"   - Raw source data access → src_* (rarely needed)" if is_databricks else ""}
@@ -1935,15 +2022,18 @@ JOIN RESTRICTIONS:
         {"   - fact_* : Fact layer - Transactional data (only when mart_* insufficient)" if is_databricks else ""}
         {"   - mart_* : Marts layer - Pre-aggregated analytics (MANDATORY for statistics)" if is_databricks else ""}
         {"   - Always use public.table_name format (e.g., public.mart_daily_active_users, public.fact_transactions)" if is_databricks else ""}
-        {"3. STATISTICAL/METRIC/TREND QUERIES - ALWAYS use mart_* tables (MANDATORY for data warehouse design):" if is_databricks else ""}
-        {"   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, MANDATORY to use mart_* tables" if is_databricks else ""}
+        {"3. ⚠️ CRITICAL RULE - STATISTICAL/METRIC/TREND QUERIES - ONLY USE mart_* TABLES (STRICTLY ENFORCED):" if is_databricks else ""}
+        {"   - For ANY aggregated statistics, metrics, summaries, trends, or pre-calculated data, YOU MUST ONLY USE mart_* tables" if is_databricks else ""}
+        {"   - DO NOT use fact_*, dim_*, stg_*, or src_* tables for statistical queries - ONLY mart_* tables are allowed" if is_databricks else ""}
         {"   - Design principle: mart_* tables follow Kimball/Medallion Architecture and contain pre-aggregated metrics optimized for analytical queries" if is_databricks else ""}
         {"   - mart_* tables are specifically designed for reporting and analytics, containing daily/weekly/monthly summaries, aggregations, and business metrics" if is_databricks else ""}
-        {"   - When querying for statistics (counts, sums, averages, trends, comparisons), ALWAYS look for mart_* tables first" if is_databricks else ""}
-        {"   - NEVER aggregate from fact_*/dim_* tables when equivalent mart_* tables exist - mart_* tables are pre-computed, more efficient, and follow best practices" if is_databricks else ""}
-        {"   - Only use fact_*/dim_* tables when mart_* tables don't provide the required granularity or specific metrics" if is_databricks else ""}
-        {"   - For monthly/yearly trends: Use mart_daily_active_users or mart_daily_topup_summary aggregated by month/year" if is_databricks else ""}
-        {"   - For daily trends: Use mart_daily_active_users or mart_daily_topup_summary directly" if is_databricks else ""}
+        {"   - When querying for statistics (counts, sums, averages, trends, comparisons), YOU MUST ONLY use mart_* tables" if is_databricks else ""}
+        {"   - STRICTLY FORBIDDEN: Do NOT aggregate from fact_*/dim_*/stg_*/src_* tables for statistical queries - ONLY mart_* tables are permitted" if is_databricks else ""}
+        {"   - If a mart_* table doesn't exist for your query, you must inform the user that the required mart table is not available" if is_databricks else ""}
+        {"   - For monthly/yearly trends: Use mart_daily_active_users or mart_daily_topup_summary WITH GROUP BY to aggregate by month/year" if is_databricks else ""}
+        {"     ⚠️ CRITICAL: For monthly trends, ALWAYS use: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(...) FROM mart_* WHERE ... GROUP BY Month" if is_databricks else ""}
+        {"     ⚠️ NEVER use: SELECT * FROM mart_* WHERE date >= ... ORDER BY date (this returns too many rows!)" if is_databricks else ""}
+        {"   - For daily trends: Use mart_daily_active_users or mart_daily_topup_summary directly, but ONLY for short date ranges (max 30 days) with LIMIT" if is_databricks else ""}
         {"   - For station/route comparisons: Use mart_station_flow_daily or mart_route_usage_summary" if is_databricks else ""}
         {"   - For category distributions: Use mart_user_card_type_summary" if is_databricks else ""}
         {"4. METADATA INFORMATION - Use RAG knowledge base first:" if is_databricks else "3. Use 'category' instead of 'customer_type' for product categorization"}
@@ -1975,9 +2065,11 @@ JOIN RESTRICTIONS:
         {"- If user asks for table list, use: SHOW TABLES IN catalog.schema; or SHOW TABLES;" if is_databricks else "- If user asks for table list, use: SELECT name FROM sqlite_master WHERE type='table';"}
         {"- For date-related queries in Databricks, use: DATE_FORMAT(date_column, 'yyyy-MM'), EXTRACT(YEAR FROM date_column), etc." if is_databricks else "- For date-related queries, use strftime() function with proper syntax: strftime('%Y-%m', date_column)"}
         - SQL clause order: SELECT ... FROM ... WHERE ... GROUP BY ... ORDER BY ...
-        {"- Example 1 (Monthly transaction trend - mart_daily_active_users): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Transaction_Amount, SUM(active_users) as Total_Active_Users, SUM(total_transactions) as Total_Transactions FROM public.mart_daily_active_users WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else "- Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;"}
-        {"- Example 2 (Daily active users trend - mart_daily_active_users): SELECT date, active_users, total_transactions, total_amount, avg_transactions_per_user, avg_amount_per_transaction FROM public.mart_daily_active_users WHERE date >= '2025-11-01' AND date <= '2025-12-31' ORDER BY date;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
-        {"- Example 3 (Monthly top-up summary - mart_daily_topup_summary): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups, SUM(unique_users) as Total_Users, AVG(avg_amount_per_topup) as Avg_Topup_Amount FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
+        {"- Example 1 (Monthly transaction trend - mart_daily_topup_summary) - ⚠️ MUST USE GROUP BY: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups, SUM(unique_users) as Total_Users FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else "- Example: SELECT strftime('%Y-%m', sale_date) as Month, SUM(total_amount) as Sales FROM dws_sales_cube WHERE strftime('%Y', sale_date) = '2025' GROUP BY Month ORDER BY Month;"}
+        {"- ⚠️ WRONG - DO NOT DO THIS for monthly trends: SELECT * FROM mart_daily_topup_summary WHERE date >= '2025-01-01' ORDER BY date (this returns 365 rows, too many!)" if is_databricks else ""}
+        {"- ⚠️ CORRECT for monthly trends: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total FROM mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month (this returns 12 rows, correct!)" if is_databricks else ""}
+        {"- Example 2 (Daily active users trend - ONLY for short date ranges, max 30 days): SELECT date, active_users, total_transactions, total_amount FROM public.mart_daily_active_users WHERE date >= '2025-12-01' AND date <= '2025-12-31' ORDER BY date LIMIT 31;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
+        {"- Example 3 (Monthly top-up summary - mart_daily_topup_summary) - ⚠️ MUST USE GROUP BY: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups, SUM(unique_users) as Total_Users, AVG(avg_amount_per_topup) as Avg_Topup_Amount FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
         {"- Example 4 (Top stations by flow - mart_station_flow_daily): SELECT station_name, SUM(total_transactions) as Total_Transactions, SUM(unique_users) as Total_Users, SUM(entry_count) as Total_Entries, SUM(exit_count) as Total_Exits, SUM(total_amount) as Total_Amount FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 10;" if is_databricks else ""}
         {"- Example 5 (Card type distribution - mart_user_card_type_summary): SELECT card_type, total_users, total_transactions, total_transaction_amount, total_topups, total_topup_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC;" if is_databricks else ""}
         {"- Example 6 (Route usage ranking - mart_route_usage_summary): SELECT route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10;" if is_databricks else ""}
@@ -2060,38 +2152,39 @@ JOIN RESTRICTIONS:
                     target = name
                     original_ref = referenced_with_schema.get(name, name)
                     
-                    # Check if table is from src/staging layer and query is statistical
+                    # Check if table is from src/staging/fact/dim layer and query is statistical - FORBIDDEN for statistical queries
                     if is_databricks and is_statistical_query:
-                        # Check if table reference is from src/staging layer
-                        is_src_staging = False
+                        # Check if table reference is NOT from mart_* layer
+                        is_non_mart = False
                         name_lower = name.lower()
                         ref_lower = original_ref.lower()
                         
-                        # Check if it's a src/staging table
-                        if name_lower.startswith('src_') or name_lower.startswith('stg_'):
-                            is_src_staging = True
-                        elif '.' in original_ref:
-                            schema = original_ref.split('.')[0].lower()
-                            if schema in ['src', 'staging', 'public'] and 'marts' not in ref_lower:
-                                is_src_staging = True
-                        elif name in src_staging_tables_in_whitelist:
-                            is_src_staging = True
+                        # Check if it's NOT a mart_* table
+                        if not name_lower.startswith('mart_') and 'mart_' not in ref_lower:
+                            is_non_mart = True
                         
-                        if is_src_staging and marts_tables_in_whitelist:
-                            # Try to find equivalent marts table based on context
-                            # Look for marts tables that might match the query intent
-                            marts_candidates = list(marts_tables_in_whitelist)
+                        # For statistical queries, ONLY mart_* tables are allowed
+                        if is_non_mart:
+                            # Try to find equivalent mart_* table
+                            marts_candidates = list(marts_tables_in_whitelist) if marts_tables_in_whitelist else []
                             
                             if marts_candidates:
                                 # Use fuzzy matching to find best marts table
                                 # Try to match based on table name similarity
+                                import difflib
                                 best_match = difflib.get_close_matches(name, marts_candidates, n=1, cutoff=0.2)
                                 if not best_match:
                                     # If no close match, try to find by keywords (e.g., transaction -> daily, flow, summary)
                                     if 'transaction' in name_lower or 'trans' in name_lower:
-                                        best_match = [t for t in marts_candidates if any(kw in t.lower() for kw in ['flow', 'daily', 'summary', 'transaction'])]
+                                        best_match = [t for t in marts_candidates if any(kw in t.lower() for kw in ['flow', 'daily', 'summary', 'transaction', 'active'])]
                                     elif 'topup' in name_lower or 'top' in name_lower:
                                         best_match = [t for t in marts_candidates if 'topup' in t.lower() or 'top' in t.lower()]
+                                    elif 'user' in name_lower:
+                                        best_match = [t for t in marts_candidates if 'user' in t.lower()]
+                                    elif 'station' in name_lower:
+                                        best_match = [t for t in marts_candidates if 'station' in t.lower()]
+                                    elif 'route' in name_lower:
+                                        best_match = [t for t in marts_candidates if 'route' in t.lower()]
                                 
                                 if best_match:
                                     target = best_match[0]
@@ -2111,8 +2204,16 @@ JOIN RESTRICTIONS:
                                             target = f"public.{table}"
                                     elif target.startswith('mart_') and not target.startswith('public.'):
                                         target = f"public.{target}"
-                                    logger.warning(f"⚠️  Statistical query detected using src/staging table '{original_ref}'. Auto-suggesting mart_* table: {target}")
-                                    logger.warning(f"   Design principle: Use mart_* tables for aggregated statistics instead of raw source tables")
+                                    logger.warning(f"⚠️  Statistical query detected using non-mart table '{original_ref}'. Auto-correcting to mart_* table: {target}")
+                                    logger.warning(f"   CRITICAL RULE: Statistical queries MUST ONLY use mart_* tables. Other table types are forbidden.")
+                                else:
+                                    # No equivalent mart_* table found, reject the query
+                                    logger.error(f"❌ Statistical query attempted with non-mart table '{original_ref}', but no equivalent mart_* table found. Query rejected.")
+                                    raise ValueError(f"Statistical queries MUST use mart_* tables only. Table '{original_ref}' is not a mart_* table and no equivalent mart_* table is available.")
+                            else:
+                                # No mart_* tables available, reject the query
+                                logger.error(f"❌ Statistical query attempted with non-mart table '{original_ref}', but no mart_* tables are available. Query rejected.")
+                                raise ValueError(f"Statistical queries MUST use mart_* tables only. Table '{original_ref}' is not a mart_* table and no mart_* tables are available.")
                     
                     if name in canonical:
                         target = canonical[name]
@@ -2246,6 +2347,35 @@ JOIN RESTRICTIONS:
                 }
             }
         }
+        '''  # End of fallback mode code block (commented out)
+        
+        # If we reach here, it means ReAct mode was not used and fallback is disabled
+        # This should not happen, but if it does, return an error
+        logger.error("ReAct mode was not used and fallback is disabled. This should not happen.")
+        error_msg = "SQL Agent execution failed: ReAct mode is required but was not available."
+        return {
+            **state,
+            "sql_agent_answer": error_msg,
+            "executed_sqls": [],
+            "structured_data": None,
+            "chart_suitable": False,
+            "agent_intermediate_steps": [],
+            "sql_execution_success": False,
+            "react_mode_used": False,
+            "error": "ReAct mode is required but was not available. Fallback mode is disabled.",
+            "node_outputs": {
+                **state.get("node_outputs", {}),
+                "sql_agent": {
+                    "status": "failed",
+                    "queries_count": 0,
+                    "steps_count": 0,
+                    "chart_suitable": False,
+                    "react_mode": False,
+                    "error": "ReAct mode required but not available",
+                    "timestamp": time.time()
+                }
+            }
+        }
         
     except Exception as e:
         logger.error(f"SQL Agent failed: {e}", exc_info=True)
@@ -2265,6 +2395,130 @@ JOIN RESTRICTIONS:
                 }
             }
         }
+
+def _validate_sql_for_mart_tables_only(sql_query: str, marts_tables: List[str], user_input: str) -> str:
+    """
+    Validate and correct SQL query to ensure statistical queries only use mart_* tables
+    and properly aggregate time series data.
+    
+    Args:
+        sql_query: The SQL query to validate
+        marts_tables: List of available mart_* tables
+        user_input: Original user query to detect if it's a statistical query
+        
+    Returns:
+        Corrected SQL query that uses only mart_* tables for statistical queries
+    """
+    import re as re_module
+    
+    # Detect if this is a statistical query
+    is_statistical_query = bool(
+        re_module.search(r'\b(SUM|COUNT|AVG|MAX|MIN|GROUP BY|aggregat|statistic|metric|trend|summary)\b', sql_query, re_module.IGNORECASE) or
+        any(keyword in user_input.lower() for keyword in ['trend', 'monthly', 'weekly', 'yearly', 'statistic', 'metric', 'summary', 'average', 'total', 'count'])
+    )
+    
+    if not is_statistical_query:
+        return sql_query  # Non-statistical queries don't need validation
+    
+    # Detect if this is a time series trend query that requires aggregation
+    is_trend_query = any(keyword in user_input.lower() for keyword in ['trend', 'monthly', 'yearly', 'weekly', 'over time', 'by month', 'by year', 'by week'])
+    has_group_by = bool(re_module.search(r'\bGROUP BY\b', sql_query, re_module.IGNORECASE))
+    has_aggregation = bool(re_module.search(r'\b(SUM|COUNT|AVG|MAX|MIN)\b', sql_query, re_module.IGNORECASE))
+    has_select_star = bool(re_module.search(r'SELECT\s+\*', sql_query, re_module.IGNORECASE))
+    
+    # If it's a trend query but doesn't have GROUP BY, it's likely wrong
+    if is_trend_query and not has_group_by and has_select_star:
+        logger.warning(f"⚠️  Trend query detected without GROUP BY aggregation. Query may return too many rows.")
+        logger.warning(f"   User query: {user_input}")
+        logger.warning(f"   SQL query: {sql_query[:200]}...")
+        # Try to suggest adding GROUP BY, but this is complex, so we'll just warn
+        # The guidance should prevent this, but we log it for debugging
+    
+    # Extract table names from SQL query
+    # Use a more precise regex that avoids matching FROM inside function calls
+    # Match FROM/JOIN followed by table name, but not inside parentheses (function calls)
+    # Strategy: Find FROM/JOIN that are not inside parentheses
+    table_refs = []
+    depth = 0
+    i = 0
+    sql_upper = sql_query.upper()
+    
+    while i < len(sql_query):
+        if sql_query[i] == '(':
+            depth += 1
+        elif sql_query[i] == ')':
+            depth -= 1
+        elif depth == 0:  # Only match FROM/JOIN at top level (not inside functions)
+            # Check for FROM or JOIN keyword
+            if sql_upper[i:i+4] == 'FROM' and (i == 0 or not sql_query[i-1].isalnum()):
+                # Find the table name after FROM
+                match = re_module.search(r'FROM\s+([\w\.]+)', sql_query[i:], re_module.IGNORECASE)
+                if match:
+                    table_refs.append(match.group(1))
+                    i += match.end()
+                    continue
+            elif sql_upper[i:i+4] == 'JOIN' and (i == 0 or not sql_query[i-1].isalnum()):
+                # Find the table name after JOIN
+                match = re_module.search(r'JOIN\s+([\w\.]+)', sql_query[i:], re_module.IGNORECASE)
+                if match:
+                    table_refs.append(match.group(1))
+                    i += match.end()
+                    continue
+        i += 1
+    
+    corrected_query = sql_query
+    needs_correction = False
+    
+    for table_ref in table_refs:
+        table_name = table_ref.split('.')[-1]  # Get table name without schema
+        table_lower = table_name.lower()
+        ref_lower = table_ref.lower()
+        
+        # Check if it's NOT a mart_* table
+        if not table_lower.startswith('mart_') and 'mart_' not in ref_lower:
+            # This is a non-mart table in a statistical query - FORBIDDEN
+            logger.warning(f"❌ Statistical query detected using non-mart table '{table_ref}'. This is forbidden.")
+            
+            # Try to find equivalent mart_* table
+            if marts_tables:
+                # Use fuzzy matching to find best mart table
+                import difflib
+                best_match = difflib.get_close_matches(table_name, [t.split('.')[-1] for t in marts_tables], n=1, cutoff=0.2)
+                
+                if not best_match:
+                    # Try keyword matching
+                    if 'transaction' in table_lower or 'trans' in table_lower:
+                        best_match = [t.split('.')[-1] for t in marts_tables if any(kw in t.lower() for kw in ['flow', 'daily', 'summary', 'transaction', 'active'])]
+                    elif 'topup' in table_lower or 'top' in table_lower:
+                        best_match = [t.split('.')[-1] for t in marts_tables if 'topup' in t.lower()]
+                    elif 'user' in table_lower:
+                        best_match = [t.split('.')[-1] for t in marts_tables if 'user' in t.lower()]
+                    elif 'station' in table_lower:
+                        best_match = [t.split('.')[-1] for t in marts_tables if 'station' in t.lower()]
+                    elif 'route' in table_lower:
+                        best_match = [t.split('.')[-1] for t in marts_tables if 'route' in t.lower()]
+                
+                if best_match:
+                    mart_table = best_match[0]
+                    # Ensure public schema prefix
+                    if not mart_table.startswith('public.'):
+                        mart_table = f"public.{mart_table}"
+                    
+                    # Replace table reference in SQL
+                    corrected_query = re_module.sub(
+                        rf"\b{re_module.escape(table_ref)}\b",
+                        mart_table,
+                        corrected_query,
+                        flags=re_module.IGNORECASE
+                    )
+                    logger.warning(f"✅ Auto-corrected '{table_ref}' to '{mart_table}' for statistical query")
+                    needs_correction = True
+                else:
+                    logger.error(f"❌ No equivalent mart_* table found for '{table_ref}'. Query may fail.")
+            else:
+                logger.error(f"❌ No mart_* tables available. Cannot execute statistical query with '{table_ref}'.")
+    
+    return corrected_query if needs_correction else sql_query
 
 def _parse_agent_query_result(observation: str) -> Dict[str, Any]:
     """Parse Agent query result with improved SQLite result handling"""
