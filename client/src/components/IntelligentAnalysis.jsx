@@ -372,7 +372,7 @@ function IntelligentAnalysis() {
       category: 'Chart',
       color: 'orange',
       examples: [
-        'Show monthly transaction trend for 2025.',
+        'Show monthly topup trend in 2025 with a line chart.',
         'Create a pie chart displaying the proportion of users by card type.'
       ]
     },

@@ -1024,16 +1024,16 @@ async def attempt_direct_query_fallback(query: str, db, table_name: str, active_
         # Generate simple SQL based on query content
         if "sales" in query.lower() or "trend" in query.lower():
             # Sales trend query
-            direct_sql = f"SELECT date, sales FROM {table_name} ORDER BY date LIMIT 10"
+            direct_sql = f"SELECT date, sales FROM {table_name} ORDER BY date LIMIT 100"
         elif "product" in query.lower():
             # Product query
-            direct_sql = f"SELECT product, SUM(sales) as total_sales FROM {table_name} GROUP BY product LIMIT 10"
+            direct_sql = f"SELECT product, SUM(sales) as total_sales FROM {table_name} GROUP BY product LIMIT 100"
         elif "total" in query.lower():
             # Total query
             direct_sql = f"SELECT SUM(sales) as total_sales FROM {table_name}"
         else:
             # Default query
-            direct_sql = f"SELECT * FROM {table_name} LIMIT 10"
+            direct_sql = f"SELECT * FROM {table_name} LIMIT 100"
         
         logger.info(f"Executing direct fallback query: {direct_sql}")
         result = db.run(direct_sql)

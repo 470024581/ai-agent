@@ -1986,13 +1986,13 @@ JOIN RESTRICTIONS:
         {"     Sample query: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month" if is_databricks and marts_tables_detected else ""}
         {"   - mart_station_flow_daily: Daily station flow metrics" if is_databricks and marts_tables_detected else ""}
         {"     Columns: date, station_id, station_name, station_type, total_transactions, unique_users, entry_count, exit_count, total_amount, is_weekend" if is_databricks and marts_tables_detected else ""}
-        {"     Sample query: SELECT station_name, SUM(total_transactions) as Total FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total DESC LIMIT 10" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT station_name, SUM(total_transactions) as Total FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total DESC LIMIT 100" if is_databricks and marts_tables_detected else ""}
         {"   - mart_user_card_type_summary: User metrics by card type" if is_databricks and marts_tables_detected else ""}
         {"     Columns: card_type, total_users, verified_users, total_transactions, total_transaction_amount, avg_transactions_per_user, total_topups, total_topup_amount, avg_topup_per_user" if is_databricks and marts_tables_detected else ""}
         {"     Sample query: SELECT card_type, total_users, total_transaction_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC" if is_databricks and marts_tables_detected else ""}
         {"   - mart_route_usage_summary: Route usage metrics" if is_databricks and marts_tables_detected else ""}
         {"     Columns: route_id, route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day, first_transaction_date, last_transaction_date" if is_databricks and marts_tables_detected else ""}
-        {"     Sample query: SELECT route_name, total_transactions, unique_users FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10" if is_databricks and marts_tables_detected else ""}
+        {"     Sample query: SELECT route_name, total_transactions, unique_users FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 100" if is_databricks and marts_tables_detected else ""}
         {"   DO NOT aggregate from fact_*/dim_* tables when equivalent mart_* tables exist!" if is_databricks and marts_tables_detected else ""}
         
         CRITICAL RULES - MUST FOLLOW:
@@ -2070,9 +2070,9 @@ JOIN RESTRICTIONS:
         {"- ⚠️ CORRECT for monthly trends: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total FROM mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month (this returns 12 rows, correct!)" if is_databricks else ""}
         {"- Example 2 (Daily active users trend - ONLY for short date ranges, max 30 days): SELECT date, active_users, total_transactions, total_amount FROM public.mart_daily_active_users WHERE date >= '2025-12-01' AND date <= '2025-12-31' ORDER BY date LIMIT 31;" if is_databricks else "- Example for pie chart by category: SELECT category, SUM(total_amount) as sales FROM dws_sales_cube WHERE strftime('%Y-%m', sale_date) BETWEEN '2025-07' AND '2025-09' GROUP BY category ORDER BY sales DESC;"}
         {"- Example 3 (Monthly top-up summary - mart_daily_topup_summary) - ⚠️ MUST USE GROUP BY: SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(total_amount) as Total_Topup_Amount, SUM(total_topups) as Total_Topups, SUM(unique_users) as Total_Users, AVG(avg_amount_per_topup) as Avg_Topup_Amount FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
-        {"- Example 4 (Top stations by flow - mart_station_flow_daily): SELECT station_name, SUM(total_transactions) as Total_Transactions, SUM(unique_users) as Total_Users, SUM(entry_count) as Total_Entries, SUM(exit_count) as Total_Exits, SUM(total_amount) as Total_Amount FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 10;" if is_databricks else ""}
+        {"- Example 4 (Top stations by flow - mart_station_flow_daily): SELECT station_name, SUM(total_transactions) as Total_Transactions, SUM(unique_users) as Total_Users, SUM(entry_count) as Total_Entries, SUM(exit_count) as Total_Exits, SUM(total_amount) as Total_Amount FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 100;" if is_databricks else ""}
         {"- Example 5 (Card type distribution - mart_user_card_type_summary): SELECT card_type, total_users, total_transactions, total_transaction_amount, total_topups, total_topup_amount FROM public.mart_user_card_type_summary ORDER BY total_users DESC;" if is_databricks else ""}
-        {"- Example 6 (Route usage ranking - mart_route_usage_summary): SELECT route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10;" if is_databricks else ""}
+        {"- Example 6 (Route usage ranking - mart_route_usage_summary): SELECT route_name, route_type, total_transactions, unique_users, total_amount, avg_transactions_per_day FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 100;" if is_databricks else ""}
         {"- Example 7 (Payment method breakdown - mart_daily_topup_summary): SELECT DATE_FORMAT(date, 'yyyy-MM') as Month, SUM(cash_topups) as Cash_Topups, SUM(card_topups) as Card_Topups, SUM(mobile_topups) as Mobile_Topups, SUM(online_topups) as Online_Topups FROM public.mart_daily_topup_summary WHERE EXTRACT(YEAR FROM date) = 2025 GROUP BY Month ORDER BY Month;" if is_databricks else ""}
         {"- Example 8 (Weekend vs weekday comparison - mart_daily_active_users): SELECT is_weekend, AVG(active_users) as Avg_Active_Users, AVG(total_transactions) as Avg_Transactions, AVG(total_amount) as Avg_Amount FROM public.mart_daily_active_users WHERE date >= '2025-11-01' GROUP BY is_weekend;" if is_databricks else ""}
         {"- IMPORTANT: All tables are in public schema. Use public.table_name format (e.g., public.src_users, public.stg_stations, public.dim_user, public.fact_transactions, public.mart_daily_active_users)" if is_databricks else "- IMPORTANT: strftime() function requires two parameters: format string and date column"}
@@ -2475,6 +2475,9 @@ def _validate_sql_for_mart_tables_only(sql_query: str, marts_tables: List[str], 
         ref_lower = table_ref.lower()
         
         # Check if it's NOT a mart_* table
+        # Allow time dimension helper table dim_time to pass through for joins
+        if table_lower == 'dim_time':
+            continue
         if not table_lower.startswith('mart_') and 'mart_' not in ref_lower:
             # This is a non-mart table in a statistical query - FORBIDDEN
             logger.warning(f"❌ Statistical query detected using non-mart table '{table_ref}'. This is forbidden.")
@@ -2518,6 +2521,15 @@ def _validate_sql_for_mart_tables_only(sql_query: str, marts_tables: List[str], 
             else:
                 logger.error(f"❌ No mart_* tables available. Cannot execute statistical query with '{table_ref}'.")
     
+    # Remove LIMIT for time series trend queries to avoid truncating months
+    if is_trend_query:
+        limit_pattern = re_module.compile(r'\bLIMIT\s+\d+\b', re_module.IGNORECASE)
+        if limit_pattern.search(corrected_query):
+            logger.warning("⚠️  Trend query detected with LIMIT clause. Removing LIMIT to keep full time series.")
+            corrected_query = limit_pattern.sub('', corrected_query)
+            corrected_query = corrected_query.strip()
+            needs_correction = True
+
     return corrected_query if needs_correction else sql_query
 
 def _parse_agent_query_result(observation: str) -> Dict[str, Any]:
@@ -3507,13 +3519,13 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         }}
         
         Example 4 - BAR CHART (Top stations from mart_station_flow_daily):
-        Query: "Show top 10 stations by transaction volume"
-        SQL: SELECT station_name, SUM(total_transactions) as Total_Transactions FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 10
+        Query: "Show top 100 stations by transaction volume"
+        SQL: SELECT station_name, SUM(total_transactions) as Total_Transactions FROM public.mart_station_flow_daily WHERE date >= '2025-11-01' GROUP BY station_name ORDER BY Total_Transactions DESC LIMIT 100
         Data columns: station_name (string), Total_Transactions (integer)
         Chart config:
         {{
             "chart_type": "bar",
-            "title": "Top 10 Stations by Transaction Volume",
+            "title": "Top 100 Stations by Transaction Volume",
             "x_axis_label": "Station Name",
             "y_axis_label": "Total Transactions",
             "data_field_for_labels": "station_name",
@@ -3542,12 +3554,12 @@ def generate_chart_config(data: Dict[str, Any], user_input: str) -> Dict[str, An
         
         Example 6 - BAR CHART (Route usage from mart_route_usage_summary):
         Query: "Show top routes by usage"
-        SQL: SELECT route_name, total_transactions, unique_users, total_amount FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 10
+        SQL: SELECT route_name, total_transactions, unique_users, total_amount FROM public.mart_route_usage_summary ORDER BY total_transactions DESC LIMIT 100
         Data columns: route_name (string), total_transactions (integer), unique_users (integer), total_amount (numeric)
         Chart config:
         {{
             "chart_type": "bar",
-            "title": "Top 10 Routes by Transaction Volume",
+            "title": "Top 100 Routes by Transaction Volume",
             "x_axis_label": "Route Name",
             "y_axis_label": "Total Transactions",
             "data_field_for_labels": "route_name",
