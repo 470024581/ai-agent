@@ -11,52 +11,54 @@ services:
     volumes:
       - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/postgres_data:/var/lib/postgresql/data
 
-  dbt:
-    image: fishtownanalytics/dbt:1.0.0
-    container_name: dbt
-    working_dir: /usr/app/dbt
-    volumes:
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/dbt:/usr/app/dbt
-    depends_on:
-      - postgres
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
     environment:
-      DBT_PROFILES_DIR: /usr/app/dbt
-
-  airflow:
-    image: apache/airflow
-    container_name: airflow
-    environment:
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
-    volumes:
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/dags:/opt/airflow/dags
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/logs:/opt/airflow/logs
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/airflow/plugins:/opt/airflow/plugins
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "8080:8080"
-    command: >
-      bash -c "airflow db init &&
-               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com &&
-               airflow scheduler & airflow webserver"
-    depends_on:
-      - postgres
-      - dbt
+      - "2181:2181"
 
-  superset:
-    image: apache/superset:pr-36338-8fb4ca3-ci
-    container_name: superset
-    environment:
-      SUPERSET_ENV: docker
+  kafka:
+    image: confluentinc/cp-kafka:7.4.1
+    container_name: kafka
     ports:
-      - "8088:8088"
-    volumes:
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/superset:/app/superset
-      - D:/Workspaces/ReactWorkspace/ai-agent/data_warehouse/superset/superset_config.py:/app/superset/superset_config.py
-    command: >
-      /bin/bash -c "
-      superset db upgrade &&
-      superset fab create-admin --username admin --password admin --firstname Admin --lastname User --email admin@example.com &&
-      superset init &&
-      superset run -p 8088 --with-threads --reload --debugger"
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     depends_on:
+      - zookeeper
+
+  connect:
+    image: debezium/connect:2.4
+    container_name: connect
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: connect-cluster-1
+
+      CONFIG_STORAGE_TOPIC: configs
+      OFFSET_STORAGE_TOPIC: offsets
+      STATUS_STORAGE_TOPIC: statuses
+
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+
+      PLUGIN_PATH: /kafka/connect
+    depends_on:
+      - kafka
       - postgres

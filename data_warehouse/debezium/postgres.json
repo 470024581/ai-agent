@@ -1,0 +1,40 @@
+{
+  "name": "postgres-transport-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "dbuser",
+    "database.password": "dbpass",
+    "database.dbname": "postgres",
+
+    "topic.prefix": "transport_dw",
+
+    "slot.name": "debezium_transport_slot",
+    "plugin.name": "pgoutput",
+
+    "publication.autocreate.mode": "filtered",
+
+    "snapshot.mode": "initial",
+    "snapshot.fetch.size": "2000",
+
+    "schema.include.list": "public",
+    "table.include.list": "public.*",
+
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "connect",
+
+    "tombstones.on.delete": "false",
+
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false",
+
+    "include.schema.changes": "true",
+    "schema.history.internal": "io.debezium.storage.kafka.history.KafkaSchemaHistory",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+    "schema.history.internal.kafka.topic": "transport_dw.schema.changes"
+  }
+}
